@@ -10,6 +10,7 @@ from typing import Dict, Any, Optional, List
 import math
 import random
 import time
+import os
 import pandas as pd
 import numpy as np
 
@@ -61,10 +62,9 @@ class MT5Connector:
         path: Optional[str] = None,
         use_simulation_if_unavailable: bool = True,
     ) -> Dict[str, Any]:
+        path = path or os.environ.get('MT5_TERMINAL_PATH')
         if MT5_AVAILABLE:
             kwargs: Dict[str, Any] = {}
-            if path:
-                kwargs["path"] = path
             if login:
                 kwargs["login"] = int(login)
             if password:
@@ -72,7 +72,7 @@ class MT5Connector:
             if server:
                 kwargs["server"] = server
 
-            initialized = mt5.initialize(**kwargs) if kwargs else mt5.initialize()
+            initialized = mt5.initialize(path, **kwargs) if path else mt5.initialize(**kwargs)
             if initialized:
                 info = mt5.account_info()
                 if info is not None:
@@ -120,13 +120,17 @@ class MT5Connector:
                 "H1": mt5.TIMEFRAME_H1,
             }
             mt5_tf = tf_map.get(timeframe, mt5.TIMEFRAME_M1)
-            mt5.symbol_select(symbol, True)
+            if not mt5.symbol_select(symbol, True):
+                error = mt5.last_error()
+                raise RuntimeError(f'MT5 não conseguiu selecionar {symbol}: {error}. Confira o nome exato na Observação do Mercado, incluindo sufixos.')
             rates = mt5.copy_rates_from_pos(symbol, mt5_tf, 0, count)
             if rates is not None and len(rates) > 0:
                 df = pd.DataFrame(rates)
                 df["time"] = pd.to_datetime(df["time"], unit="s")
                 df = df.rename(columns={"tick_volume": "volume"})
                 return df[["time", "open", "high", "low", "close", "volume"]]
+            error = mt5.last_error()
+            raise RuntimeError(f'MT5 sem histórico para {symbol} / {timeframe} (solicitadas {count} velas): {error}. Abra esse gráfico no terminal e carregue o histórico com Home; confira conexão e símbolo. Nenhum preço simulado será usado.')
 
         if self.connected and not self.simulation_mode:
             raise RuntimeError('MT5 não retornou dados reais; simulação automática de preços bloqueada.')
@@ -186,60 +190,5 @@ class MT5Connector:
 
         return self._sim_series_cache[cache_key].copy()
 
-    def execute_order(
-        self,
-        symbol: str,
-        action: str,
-        volume: float,
-        stop_loss: Optional[float] = None,
-        take_profit: Optional[float] = None,
-    ) -> Dict[str, Any]:
-        if self.connected and not self.simulation_mode and MT5_AVAILABLE:
-            mt5.symbol_select(symbol, True)
-            tick = mt5.symbol_info_tick(symbol)
-            if tick is None:
-                return {"success": False, "message": f"Símbolo {symbol} não encontrado no MT5."}
-
-            order_type = mt5.ORDER_TYPE_BUY if action == "BUY" else mt5.ORDER_TYPE_SELL
-            price = tick.ask if action == "BUY" else tick.bid
-
-            request = {
-                "action": mt5.TRADE_ACTION_DEAL,
-                "symbol": symbol,
-                "volume": float(volume),
-                "type": order_type,
-                "price": price,
-                "deviation": 20,
-                "magic": 202610,
-                "comment": "RoboTraderPro MT5",
-                "type_time": mt5.ORDER_TIME_GTC,
-                "type_filling": mt5.ORDER_FILLING_RETURN,
-            }
-            if stop_loss:
-                request["sl"] = float(stop_loss)
-            if take_profit:
-                request["tp"] = float(take_profit)
-
-            result = mt5.order_send(request)
-            if result is not None and result.retcode == mt5.TRADE_RETCODE_DONE:
-                return {
-                    "success": True,
-                    "ticket": result.order,
-                    "price": result.price,
-                    "mode": "LIVE_MT5",
-                    "message": f"Ordem {action} executada no MT5 ({symbol}) @ {result.price}",
-                }
-            code_msg = result.comment if result else "Sem resposta do terminal"
-            return {"success": False, "message": f"Falha na ordem MT5: {code_msg}"}
-
-        # Execução em Modo Simulador
-        df = self.get_candles(symbol, "M1", 5)
-        exec_price = float(df["close"].iloc[-1])
-        ticket_id = random.randint(100000, 999999)
-        return {
-            "success": True,
-            "ticket": ticket_id,
-            "price": round(exec_price, 5),
-            "mode": "SIMULATION_MT5",
-            "message": f"[SIMULAÇÃO MT5] Ordem {action} ({volume} lote) executada em {symbol} @ {exec_price:.5f}",
-        }
+    def execute_order(self, *args, **kwargs):
+        raise RuntimeError('Use MT5Executor e o diário de intenções; envio direto sem reconciliação está desativado.')

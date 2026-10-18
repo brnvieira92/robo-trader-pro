@@ -1,4 +1,4 @@
-"""Validated research configuration; execution stays in paper mode."""
+"""Validated research configuration; explicit paper or native MT5 execution."""
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -17,6 +17,14 @@ class StrategyParams(BaseModel):
     sl_atr_mult: float = Field(1.5, ge=.5, le=5)
     tp_atr_mult: float = Field(2.5, ge=.5, le=10)
     use_ml_filter: bool = True
+    use_structure_stops: bool = True
+    use_structure_targets: bool = True
+    structure_lookback: int = Field(20, ge=5, le=100)
+    structure_buffer_atr: float = Field(.15, ge=0, le=1)
+    target_buffer_atr: float = Field(.1, ge=0, le=1)
+    min_reward_risk: float = Field(1.5, ge=1, le=5)
+    max_stop_atr: float = Field(4, ge=1, le=10)
+    max_entry_drift_atr: float = Field(1, gt=0, le=5)
 
     @model_validator(mode='after')
     def ordered_emas(self):
@@ -26,7 +34,14 @@ class StrategyParams(BaseModel):
 
 class TradingConfig(BaseModel):
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
-    execution_mode: Literal['PAPER'] = 'PAPER'
+    execution_mode: Literal['PAPER', 'LIVE_MT5'] = 'PAPER'
+    mt5_account_login: int | None = Field(None, gt=0)
+    mt5_account_server: str | None = None
+    mt5_max_spread_points: float = Field(30, gt=0, le=100000)
+    mt5_deviation_points: int = Field(20, ge=0, le=1000)
+    mt5_volume_cap: float = Field(1, gt=0, le=10000)
+    mt5_cost_buffer: float = Field(0, ge=0, le=100000)
+    mt5_magic: int = Field(202610, gt=0, le=2147483647)
     market_type: Literal['SAFIRION_OB', 'MT5_B3', 'MT5_FOREX'] = 'SAFIRION_OB'
     safirion_sub_type: Literal['BINARY', 'DIGITAL', 'BLITZ'] = 'BINARY'
     symbol: str = Field('EURUSD', min_length=2, max_length=30, pattern=r'^[A-Za-z0-9_$./-]+$')
@@ -36,7 +51,11 @@ class TradingConfig(BaseModel):
     entry_amount: float = Field(5, ge=1, le=100000)
     bankroll_mode: Literal['FIXED', 'PERCENT', 'SMART_AI', 'SOROS'] = 'FIXED'
     expiration_minutes: int = Field(1, ge=1, le=60)
-    stop_gain: float = Field(500, gt=0, le=1000000)
+    stop_gain: float = Field(150, gt=0, le=1000000)
+    goal_currency: Literal['ACCOUNT','BRL'] = 'ACCOUNT'
+    goal_fx_symbol: str = Field('', max_length=40, pattern=r'^[A-Za-z0-9_$.+/-]*$')
+    profit_per_trade_cap: float = Field(15, gt=0, le=100000)
+    paper_cost_per_trade: float = Field(0, ge=0, le=100000)
     stop_loss: float = Field(250, gt=0, le=1000000)
     risk_per_trade_pct: float = Field(1, gt=0, le=2)
     max_consecutive_losses: int = Field(3, ge=1, le=10)
@@ -49,3 +68,11 @@ class TradingConfig(BaseModel):
     max_martingale_steps: Literal[0] = 0
     cooldown_seconds: int = Field(60, ge=5, le=3600)
     strategy_params: StrategyParams = Field(default_factory=StrategyParams)
+
+    @model_validator(mode='after')
+    def native_execution_market(self):
+        if self.execution_mode == 'LIVE_MT5' and (self.mt5_account_login is None or not self.mt5_account_server):
+            raise ValueError('Execução MT5 exige conta e servidor vinculados pela conexão do terminal.')
+        if self.execution_mode == 'LIVE_MT5' and self.market_type == 'SAFIRION_OB':
+            raise ValueError('Execução nativa MT5 exige mercado MT5 B3 ou MT5 Forex.')
+        return self

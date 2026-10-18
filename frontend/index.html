@@ -42,7 +42,7 @@
           </span>
         </div>
 
-        <div class="paper-pill" aria-label="Modo de execução">PAPER <span>sem ordens reais</span></div>
+        <div id="executionBadge" class="paper-pill" aria-label="Modo de execução">PAPER • sem ordens reais</div>
       </div>
 
       <!-- Live Bankroll & Profit Ribbon (Center) -->
@@ -146,7 +146,16 @@
         </div>
 
         <section class="audit-workspace" aria-label="Qualidade da análise">
-          <div class="audit-heading"><div><span class="eyebrow">PESQUISA & EXECUÇÃO VIRTUAL</span><h1>Decidir também é esperar.</h1><p>Sinais explicáveis, dados identificados e risco limitado antes de cada entrada.</p></div><span class="paper-pill">PAPER • SEM ORDENS REAIS</span></div>
+          <div class="audit-heading"><div><span class="eyebrow">ANÁLISE & EXECUÇÃO</span><h1>Decidir também é esperar.</h1><p>Sinais explicáveis, dados identificados e risco limitado antes de cada entrada.</p></div><span id="executionDetailBadge" class="paper-pill">PAPER • SEM ORDENS REAIS</span></div>
+          <div class="execution-controls">
+            <label>Modo de execução<select id="cfgExecutionMode" onchange="saveConfig()"><option value="PAPER">PAPER — ordens virtuais</option><option value="LIVE_MT5">MT5 — enviar ordens ao terminal conectado</option></select></label>
+            <div><strong id="mt5AccountSummary">MT5 não conectado</strong><p>O modo MT5 envia ordens à conta conectada, inclusive conta real. Selecione MT5 B3/Forex, conecte o terminal e confira conta, servidor e moeda.</p><p id="executionDiagnosis" role="status"></p></div>
+            <button onclick="reconcileMt5()" id="btnReconcile">Sincronizar posições MT5</button>
+          </div>
+          <div class="execution-controls telegram-controls">
+            <div><strong>Bot Telegram</strong><p id="telegramStatus" role="status">Não configurado. Use BotFather e o assistente local.</p><p>Comandos privados: /status e /pausar. Pausar impede novas entradas automáticas; não fecha posições abertas.</p></div>
+            <button onclick="testTelegram()" id="btnTelegramTest">Testar Telegram</button>
+          </div>
           <div class="audit-grid">
             <article class="audit-card"><span class="eyebrow">01 / ORIGEM DOS DADOS</span><strong id="dataSource">Aguardando servidor</strong><p id="dataDetail">Sem histórico validado.</p></article>
             <article class="audit-card"><span class="eyebrow">02 / VALIDAÇÃO TEMPORAL</span><strong id="validationScore">Sem evidência</strong><p id="validationDetail">Acurácia fora do treino, comparada à referência.</p></article>
@@ -154,7 +163,8 @@
             <article class="audit-card"><span class="eyebrow">04 / DECISÃO ATUAL</span><strong id="decisionGate">Aguardando análise</strong><p id="decisionDetail">O score técnico não é uma probabilidade de acerto.</p></article>
           </div>
           <div class="audit-notice" id="chartAvailability">Resultados PAPER são hipotéticos. O modelo estima direção de uma vela; isso não comprova lucro, nem acerto na expiração da corretora.</div>
-          <details class="research-panel"><summary>Laboratório de estratégia <span>Backtest binário de uma vela com seu CSV</span></summary>
+          <div id="pricePlanPreview" class="price-plan-grid" aria-live="polite"></div>
+          <details class="research-panel"><summary>Laboratório de estratégia <span>Backtest binário de uma vela — não valida SL/TP Forex</span></summary>
             <p>Envie entre 150 e 2.000 velas fechadas e contínuas. Colunas: <code>time,open,high,low,close,volume</code> (time em segundos Unix ou ISO; volume opcional). As últimas até 200 velas serão avaliadas sem usar dados futuros.</p>
             <div class="research-controls"><label>Histórico OHLCV<input id="researchFile" type="file" accept=".csv,text/csv"></label><label>Custo por entrada (R$)<input id="researchCost" type="number" value="0" min="0" step="0.01"></label><button id="researchRun" onclick="runResearch()">Avaliar estratégia selecionada</button></div>
             <p>Usa a estratégia, o score mínimo e o payout salvos. Horizonte fixo de uma vela; custos e payout constantes. Não representa o resultado da conta na corretora.</p>
@@ -201,7 +211,7 @@
             <div class="flex items-center justify-between gap-space-xs">
               <span class="font-label-caps text-label-caps uppercase text-on-surface-variant flex items-center gap-space-xs">
                 <span class="material-symbols-outlined text-primary text-[16px]">verified</span>
-                Acerto PAPER (inclui empates)
+                Acerto do modo selecionado
               </span>
               <span id="kpiTotalTradesCount" class="font-code-log text-code-log text-on-surface-variant">0 Execuções</span>
             </div>
@@ -347,16 +357,8 @@
                 <div class="flex flex-col gap-space-xs">
                   <label class="font-label-caps text-[11px] uppercase text-on-surface-variant">Ativo / Par</label>
                   <div class="relative">
-                    <select id="cfgSymbol" aria-label="Ativo" onchange="saveConfig()" class="w-full bg-surface-container-lowest text-on-surface font-code-log text-code-log px-space-sm py-space-sm rounded-lg appearance-none cursor-pointer focus:outline-none border border-surface-container-high/50">
-                      <option value="EURUSD" selected>EURUSD</option>
-                      <option value="GBPUSD">GBPUSD</option>
-                      <option value="USDJPY">USDJPY</option>
-                      <option value="XAUUSD">XAUUSD (Ouro)</option>
-                      <option value="BTCUSD">BTCUSD (Crypto)</option>
-                      <option value="WIN$N">WIN$N (B3)</option>
-                      <option value="WDO$N">WDO$N (B3)</option>
-                    </select>
-                    <span class="material-symbols-outlined absolute right-1.5 top-2.5 text-on-surface-variant pointer-events-none text-[16px]">expand_more</span>
+                    <input id="cfgSymbol" aria-label="Símbolo exato da corretora" list="symbolExamples" value="EURUSD" onchange="saveConfig()" class="w-full bg-surface-container-lowest text-on-surface font-code-log text-code-log px-space-sm py-space-sm rounded-lg border border-surface-container-high/50">
+                    <datalist id="symbolExamples"><option value="EURUSD"><option value="GBPUSD"><option value="USDJPY"><option value="XAUUSD"><option value="BTCUSD"></datalist>
                   </div>
                 </div>
                 <div class="flex flex-col gap-space-xs">
@@ -401,7 +403,7 @@
                   </div>
                 </div>
                 <div class="flex flex-col gap-space-xs">
-                  <span class="font-label-caps text-[10px] uppercase text-on-surface-variant">Expiração Vela</span>
+                  <span class="font-label-caps text-[10px] uppercase text-on-surface-variant">Expiração binária</span>
                   <div class="flex items-center bg-surface-container-lowest rounded-lg px-space-sm py-1.5 border border-surface-container-high/40">
                     <input id="cfgExpiration" aria-label="Expiração em minutos" type="number" step="1" min="1" max="15" value="1" onchange="saveConfig()" class="w-full bg-transparent text-on-surface font-code-log text-code-log focus:outline-none" />
                     <span class="font-code-log text-[11px] text-on-surface-variant">Min</span>
@@ -417,7 +419,7 @@
               <div class="flex items-center justify-between pb-space-xs border-b border-surface-container-high/30">
                 <div class="flex items-center gap-space-xs">
                   <span class="w-5 h-5 rounded-full bg-secondary/20 text-secondary font-code-log text-[11px] flex items-center justify-center font-bold">2</span>
-                  <h2 class="font-headline-md text-body-lg text-on-surface font-bold">Gestão de risco PAPER</h2>
+                  <h2 class="font-headline-md text-body-lg text-on-surface font-bold">Gestão de risco</h2>
                 </div>
                 <button onclick="resetStats()" class="font-label-caps text-[10px] text-on-surface-variant hover:text-on-surface uppercase underline transition-colors">Sobre o diário</button>
               </div>
@@ -427,14 +429,14 @@
                 <div class="bg-surface-container-lowest p-space-sm rounded-lg flex flex-col border border-surface-container-high/40">
                   <span class="font-label-caps text-[10px] uppercase text-on-surface-variant">Banca inicial PAPER</span>
                   <div class="flex items-center gap-1 mt-0.5">
-                    <span class="font-code-log text-[11px] text-on-surface-variant">R$</span>
+                    <span class="font-code-log text-[11px] text-on-surface-variant" data-money-prefix>BRL</span>
                     <input id="cfgCustomBalance" aria-label="Banca inicial virtual" type="number" step="0.01" min="5" value="1000" onchange="saveConfig()" class="w-full bg-transparent font-data-display text-[18px] text-on-surface font-bold focus:outline-none" />
                   </div>
                 </div>
                 <div class="bg-surface-container-lowest p-space-sm rounded-lg flex flex-col border border-surface-container-high/40">
                   <span id="lblEntryAmount" class="font-label-caps text-[10px] uppercase text-on-surface-variant">Entrada Mínima</span>
                   <div class="flex items-center gap-1 mt-0.5">
-                    <span class="font-code-log text-[11px] text-secondary">R$</span>
+                    <span class="font-code-log text-[11px] text-secondary" data-money-prefix>BRL</span>
                     <input id="cfgEntryAmount" aria-label="Valor nominal da entrada virtual" type="number" step="1" min="5" value="5" onchange="saveConfig()" class="w-full bg-transparent font-data-display text-[18px] text-secondary font-bold focus:outline-none" />
                   </div>
                 </div>
@@ -455,16 +457,16 @@
               <!-- Stop Gain & Stop Loss -->
               <div class="grid grid-cols-2 gap-space-xs">
                 <div class="flex flex-col gap-1">
-                  <span class="font-label-caps text-[10px] uppercase text-secondary">Stop Gain Diário</span>
+                  <span class="font-label-caps text-[10px] uppercase text-secondary">Meta diária (pausa entradas)</span>
                   <div class="flex items-center bg-surface-container-lowest rounded-lg px-space-sm py-1.5 border border-surface-container-high/40">
-                    <span class="font-code-log text-[11px] text-on-surface-variant mr-1">R$</span>
-                    <input id="cfgStopGain" aria-label="Stop gain da sessão" type="number" step="10" value="500" onchange="saveConfig()" class="w-full bg-transparent text-secondary font-code-log text-code-log font-bold focus:outline-none" />
+                    <span class="font-code-log text-[11px] text-on-surface-variant mr-1" id="goalMoneyPrefix">BRL</span>
+                    <input id="cfgStopGain" aria-label="Meta diária" type="number" step="10" value="150" onchange="saveConfig()" class="w-full bg-transparent text-secondary font-code-log text-code-log font-bold focus:outline-none" />
                   </div>
                 </div>
                 <div class="flex flex-col gap-1">
                   <span class="font-label-caps text-[10px] uppercase text-tertiary">Stop Loss Diário</span>
                   <div class="flex items-center bg-surface-container-lowest rounded-lg px-space-sm py-1.5 border border-surface-container-high/40">
-                    <span class="font-code-log text-[11px] text-on-surface-variant mr-1">R$</span>
+                    <span class="font-code-log text-[11px] text-on-surface-variant mr-1" data-money-prefix>BRL</span>
                     <input id="cfgStopLoss" aria-label="Stop loss da sessão" type="number" step="10" value="250" onchange="saveConfig()" class="w-full bg-transparent text-tertiary font-code-log text-code-log font-bold focus:outline-none" />
                   </div>
                 </div>
@@ -477,6 +479,36 @@
                 <label>Intervalo entre entradas (s)<input id="cfgCooldown" type="number" value="60" min="5" max="3600" onchange="saveConfig()"></label>
                 <label>Payout hipotético PAPER (%)<input id="cfgPayout" type="number" value="80" min="1" max="100" onchange="saveConfig()"></label>
               </div>
+              <div class="risk-controls">
+                <label>Moeda da meta diária<select id="cfgGoalCurrency" onchange="saveConfig()"><option value="ACCOUNT">Moeda da conta (PAPER: BRL)</option><option value="BRL">Reais — BRL</option></select></label>
+                <label>Símbolo de câmbio da corretora (opcional)<input id="cfgGoalFx" type="text" placeholder="USDBRL ou USDBRL.s" onchange="saveConfig()"></label>
+                <label>Teto de lucro projetado por entrada (moeda da conta)<input id="cfgProfitCap" type="number" min="0.01" step="0.01" value="15" onchange="saveConfig()"></label>
+                <label>Custo por operação PAPER (BRL virtual)<input id="cfgPaperCost" type="number" min="0" step="0.01" value="0" onchange="saveConfig()"></label>
+              </div>
+              <p id="goalSummary" class="text-xs text-on-surface-variant"></p>
+              <details id="pricePlanSettings" class="mt5-settings"><summary>Plano de saída Forex / B3 por preço</summary>
+                <p>Sem expiração. ATR mede volatilidade; suporte e resistência delimitam o espaço da entrada. O robô descarta planos com retorno/risco insuficiente.</p>
+                <div class="risk-controls">
+                  <label>Stop loss × ATR<input id="cfgSlAtr" type="number" min="0.5" max="5" step="0.1" value="1.5" onchange="saveConfig()"></label>
+                  <label>Take profit × ATR<input id="cfgTpAtr" type="number" min="0.5" max="10" step="0.1" value="2.5" onchange="saveConfig()"></label>
+                  <label>Retorno / risco mínimo (após custos)<input id="cfgMinRR" type="number" min="1" max="5" step="0.1" value="1.5" onchange="saveConfig()"></label>
+                  <label>Estrutura: últimas velas fechadas<input id="cfgStructureBars" type="number" min="5" max="100" value="20" onchange="saveConfig()"></label>
+                  <label><input id="cfgStructureStops" type="checkbox" checked onchange="saveConfig()"> SL além do suporte / resistência</label>
+                  <label><input id="cfgStructureTargets" type="checkbox" checked onchange="saveConfig()"> TP antes do obstáculo</label>
+                </div>
+
+              </details>
+
+              <details class="mt5-settings"><summary>Limites específicos do MT5</summary>
+                <p>Valores monetários são na moeda da conta. Entrada = orçamento de risco até o SL, não lotes. Volume é calculado pela especificação do símbolo.</p>
+                <div class="risk-controls">
+                  <label>Spread máximo (pontos MT5)<input id="cfgMt5Spread" type="number" value="30" min="1" onchange="saveConfig()"></label>
+                  <label>Desvio de preço (pontos)<input id="cfgMt5Deviation" type="number" value="20" min="0" onchange="saveConfig()"></label>
+                  <label>Teto de volume (lotes/contratos)<input id="cfgMt5VolumeCap" type="number" value="1" min="0.001" step="0.001" onchange="saveConfig()"></label>
+                  <label>Reserva para custos (moeda da conta)<input id="cfgMt5Buffer" type="number" value="0" min="0" step="0.01" onchange="saveConfig()"></label>
+                </div>
+                <p>SL/TP combinam ATR e estrutura de preços e são enviados ao servidor no modo LIVE_MT5. Gaps, slippage e custos reais podem exceder a estimativa. Sem expiração por cronômetro no MT5.</p>
+              </details>
               <!-- Martingale toggle -->
               <div class="pt-2 border-t border-surface-container-high/30 flex items-center justify-between gap-2">
                 <label class="flex items-center gap-2 text-xs text-on-surface-variant cursor-pointer">
@@ -509,7 +541,7 @@
                 <!-- CALL Button -->
                 <button onclick="sendManualOrder('BUY')" id="btn-call" class="relative group overflow-hidden flex flex-col items-center justify-center py-space-md px-space-xs rounded-xl bg-secondary-container hover:bg-secondary text-on-secondary transition-all shadow-[0_0_15px_rgba(78,222,163,0.25)] hover:shadow-[0_0_20px_rgba(78,222,163,0.4)] active:scale-95">
                   <div class="flex items-center gap-1">
-                    <span class="font-headline-md text-headline-md font-bold tracking-wider">CALL</span>
+                    <span class="font-headline-md text-headline-md font-bold tracking-wider" id="manualBuyLabel">CALL</span>
                     <span class="material-symbols-outlined text-[20px] font-bold">arrow_drop_up</span>
                   </div>
                   <span class="font-label-caps text-[10px] uppercase opacity-90 mt-0.5">Comprar / Acima</span>
@@ -517,7 +549,7 @@
                 <!-- PUT Button -->
                 <button onclick="sendManualOrder('SELL')" id="btn-put" class="relative group overflow-hidden flex flex-col items-center justify-center py-space-md px-space-xs rounded-xl bg-error-container hover:bg-error text-on-error transition-all shadow-[0_0_15px_rgba(244,63,94,0.25)] hover:shadow-[0_0_20px_rgba(244,63,94,0.4)] active:scale-95">
                   <div class="flex items-center gap-1">
-                    <span class="font-headline-md text-headline-md font-bold tracking-wider">PUT</span>
+                    <span class="font-headline-md text-headline-md font-bold tracking-wider" id="manualSellLabel">PUT</span>
                     <span class="material-symbols-outlined text-[20px] font-bold">arrow_drop_down</span>
                   </div>
                   <span class="font-label-caps text-[10px] uppercase opacity-90 mt-0.5">Vender / Abaixo</span>
@@ -525,7 +557,7 @@
               </div>
               <div class="flex items-center justify-between text-on-surface-variant font-code-log text-[10px] px-1">
                 <span>Execução virtual • sem corretora</span>
-                <span class="text-secondary font-semibold">Ordens PAPER</span>
+                <span id="manualModeLabel" class="text-secondary font-semibold">Ordens PAPER</span>
               </div>
             </div>
 
@@ -648,7 +680,7 @@
 
               <div class="flex items-center justify-between text-on-surface-variant font-code-log text-[10px] pt-1">
                 <span class="flex items-center gap-1">
-                  <span class="w-1.5 h-1.5 rounded-full bg-secondary"></span> Diário de eventos PAPER
+                  <span class="w-1.5 h-1.5 rounded-full bg-secondary"></span> Diário de eventos
                 </span>
                 <span id="telBufferStats">Buffer: 0/80</span>
               </div>
@@ -667,7 +699,7 @@
 
   <!-- MODAL DE CONFIGURAÇÃO DE CONEXÕES (SAFIRION & METATRADER 5) -->
   <div id="connectionsModal" role="dialog" aria-modal="true" aria-label="Fontes de dados MT5 e Safirion" class="fixed inset-0 bg-surface-container-lowest/80 backdrop-blur-md hidden items-center justify-center z-50 p-4">
-    <div class="bg-surface-container rounded-2xl max-w-2xl w-full p-6 border border-surface-container-high shadow-2xl">
+    <div class="bg-surface-container rounded-2xl max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto border border-surface-container-high shadow-2xl">
       <div class="flex items-center justify-between border-b border-surface-container-high pb-3 mb-5">
         <div class="flex items-center gap-2">
           <span class="material-symbols-outlined text-primary text-2xl">link</span>
@@ -684,7 +716,7 @@
             <span class="px-2 py-0.5 rounded bg-secondary/15 text-secondary font-label-caps text-[9px] font-bold">Minimizável</span>
           </div>
           <p class="text-xs text-on-surface-variant leading-relaxed">
-            Conecta diretamente por dentro da sua guia aberta em <code>trade.safirion.com/traderoom</code>, permitindo operar mesmo com a janela do navegador minimizada.
+            Recebe preços da sua guia em <code>trade.safirion.com/traderoom</code>. Nesta versão, a Safirion permanece em PAPER; somente o modo nativo MT5 envia ordens ao terminal.
           </p>
 
           <div class="bg-surface-container-low border border-primary/30 rounded-lg p-3 space-y-2">
@@ -726,6 +758,7 @@
             </div>
           </div>
           
+          <label class="text-xs text-on-surface-variant">Caminho do terminal (opcional)<input id="mt5Path" aria-label="Caminho terminal64.exe" type="text" placeholder="C:\Corretora\MetaTrader 5\terminal64.exe" class="w-full bg-surface-container-low border border-surface-container-high rounded px-3 py-2 text-xs"></label>
           <button onclick="connectMt5()" class="w-full py-2.5 rounded-lg bg-secondary-container hover:bg-secondary text-on-secondary font-bold text-xs transition-all mt-4 shadow-md">
             Sincronizar Terminal MT5
           </button>
@@ -842,13 +875,14 @@
 
       if (marketType === 'MT5_B3') {
         boxSafSub.classList.add('hidden');
-        symbolSelect.value = 'WIN$N';
-        lblEntry.textContent = 'Valor nominal PAPER (R$)';
+        symbolSelect.value = '';
+        showToast('Informe o contrato B3 negociável exato da corretora (ex.: contrato com vencimento); WIN$N pode ser apenas histórico.', 'info');
+        lblEntry.textContent = latestState?.execution_mode === 'LIVE_MT5' ? 'Risco monetário até SL' : 'Valor nominal PAPER';
         document.getElementById('cfgEntryAmount').value = 1;
       } else if (marketType === 'MT5_FOREX') {
         boxSafSub.classList.add('hidden');
         symbolSelect.value = 'EURUSD';
-        lblEntry.textContent = 'Valor nominal PAPER (R$)';
+        lblEntry.textContent = latestState?.execution_mode === 'LIVE_MT5' ? 'Risco monetário até SL' : 'Valor nominal PAPER';
         document.getElementById('cfgEntryAmount').value = 5;
       } else {
         boxSafSub.classList.remove('hidden');
@@ -856,11 +890,16 @@
         lblEntry.textContent = 'Entrada Mínima Base (R$)';
         document.getElementById('cfgEntryAmount').value = 5;
       }
-      saveConfig();
+      if (symbolSelect.value) saveConfig();
     }
 
     async function saveConfig() {
       const payload = {
+        execution_mode: document.getElementById('cfgExecutionMode').value,
+        mt5_max_spread_points: Number(document.getElementById('cfgMt5Spread').value),
+        mt5_deviation_points: Number(document.getElementById('cfgMt5Deviation').value),
+        mt5_volume_cap: Number(document.getElementById('cfgMt5VolumeCap').value),
+        mt5_cost_buffer: Number(document.getElementById('cfgMt5Buffer').value),
         market_type: document.getElementById('cfgMarketType').value,
         safirion_sub_type: document.getElementById('cfgSafirionSubType').value,
         symbol: document.getElementById('cfgSymbol').value,
@@ -873,10 +912,22 @@
         payout_pct: Number(document.getElementById('cfgPayout').value),
         min_confidence: parseFloat(document.getElementById('cfgMinConfidence').value || 78),
         expiration_minutes: parseInt(document.getElementById('cfgExpiration').value || 1),
-        custom_balance: parseFloat(document.getElementById('cfgCustomBalance').value || 137.09),
+        custom_balance: parseFloat(document.getElementById('cfgCustomBalance').value || 1000),
         entry_amount: parseFloat(document.getElementById('cfgEntryAmount').value || 5),
         bankroll_mode: document.getElementById('cfgBankrollMode').value,
-        stop_gain: parseFloat(document.getElementById('cfgStopGain').value || 500),
+        goal_currency: document.getElementById('cfgGoalCurrency').value,
+        goal_fx_symbol: document.getElementById('cfgGoalFx').value.trim(),
+        profit_per_trade_cap: Number(document.getElementById('cfgProfitCap').value),
+        paper_cost_per_trade: Number(document.getElementById('cfgPaperCost').value),
+        strategy_params: {
+          sl_atr_mult: Number(document.getElementById('cfgSlAtr').value),
+          tp_atr_mult: Number(document.getElementById('cfgTpAtr').value),
+          min_reward_risk: Number(document.getElementById('cfgMinRR').value),
+          structure_lookback: Number(document.getElementById('cfgStructureBars').value),
+          use_structure_stops: document.getElementById('cfgStructureStops').checked,
+          use_structure_targets: document.getElementById('cfgStructureTargets').checked,
+        },
+        stop_gain: parseFloat(document.getElementById('cfgStopGain').value || 150),
         stop_loss: parseFloat(document.getElementById('cfgStopLoss').value || 250),
         use_martingale: document.getElementById('cfgUseMartingale').checked,
         martingale_factor: parseFloat(document.getElementById('cfgMartingaleFactor').value || 2.0),
@@ -887,9 +938,12 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
+        isInitialized = false;
         await fetchState();
       } catch (err) {
         showToast(err.message, 'error');
+        isInitialized = false;
+        await fetchState();
       }
     }
 
@@ -914,7 +968,7 @@
         });
         const data = await res.json();
         if (data.success) {
-          showToast(`Ordem ${action} registrada em PAPER!`, 'success');
+          showToast(data.message || `Ordem ${action} registrada em ${data.mode}.`, data.pending ? 'info' : 'success');
         } else {
           showToast(`Aviso na ordem: ${data.message || 'bloqueada'}`, 'info');
         }
@@ -967,7 +1021,8 @@
           body: JSON.stringify({
             login: loginVal ? parseInt(loginVal) : null,
             server: serverVal || null,
-            use_simulation_if_unavailable: true,
+            path: document.getElementById('mt5Path').value || null,
+            use_simulation_if_unavailable: false,
           }),
         });
         const data = await res.json();
@@ -1001,6 +1056,8 @@
 
         // 1. Inicializa inputs uma única vez
         if (!isInitialized) {
+          document.getElementById('cfgExecutionMode').value = state.config.execution_mode;
+          for (const [id,key] of Object.entries({cfgMt5Spread:'mt5_max_spread_points',cfgMt5Deviation:'mt5_deviation_points',cfgMt5VolumeCap:'mt5_volume_cap',cfgMt5Buffer:'mt5_cost_buffer'})) document.getElementById(id).value = state.config[key];
           document.getElementById('cfgMarketType').value = state.config.market_type;
           if (state.config.safirion_sub_type) {
             document.getElementById('cfgSafirionSubType').value = state.config.safirion_sub_type;
@@ -1015,7 +1072,11 @@
           }
           document.getElementById('cfgUseMartingale').checked = Boolean(state.config.use_martingale);
           document.getElementById('cfgMartingaleFactor').value = state.config.martingale_factor ?? 2.0;
-          document.getElementById('cfgStopGain').value = state.config.stop_gain ?? 500;
+          document.getElementById('cfgStopGain').value = state.config.stop_gain ?? 150;
+          for (const [id,key] of Object.entries({cfgGoalCurrency:'goal_currency',cfgGoalFx:'goal_fx_symbol',cfgProfitCap:'profit_per_trade_cap',cfgPaperCost:'paper_cost_per_trade',cfgExpiration:'expiration_minutes'})) document.getElementById(id).value = state.config[key];
+          for (const [id,key] of Object.entries({cfgSlAtr:'sl_atr_mult',cfgTpAtr:'tp_atr_mult',cfgMinRR:'min_reward_risk',cfgStructureBars:'structure_lookback'})) document.getElementById(id).value = state.config.strategy_params[key];
+          document.getElementById('cfgStructureStops').checked = state.config.strategy_params.use_structure_stops;
+          document.getElementById('cfgStructureTargets').checked = state.config.strategy_params.use_structure_targets;
           document.getElementById('cfgStopLoss').value = state.config.stop_loss ?? 250;
 
           document.getElementById('cfgCustomBalance').value = state.config.paper_balance;
@@ -1030,25 +1091,25 @@
 
         if (state.is_running) {
           btnToggle.className = 'flex items-center gap-space-xs px-space-lg py-space-sm rounded-lg bg-error-container hover:bg-error text-on-error transition-all shadow-[0_0_15px_rgba(244,63,94,0.35)]';
-          btnText.textContent = 'PAUSAR PAPER';
+          btnText.textContent = `PAUSAR ${state.execution_mode === 'LIVE_MT5' ? 'MT5' : 'PAPER'}`;
         } else {
           btnToggle.className = 'flex items-center gap-space-xs px-space-lg py-space-sm rounded-lg bg-secondary-container hover:bg-secondary text-on-secondary transition-all shadow-[0_0_15px_rgba(78,222,163,0.3)]';
-          btnText.textContent = 'INICIAR PAPER';
+          btnText.textContent = `INICIAR ${state.execution_mode === 'LIVE_MT5' ? 'MT5' : 'PAPER'}`;
         }
 
         // 3. Header Bankroll & PnL
-        const currentBalance = state.paper_balance;
-        document.getElementById('topBalance').textContent = `R$ ${currentBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        const currentBalance = state.account_balance;
+        document.getElementById('topBalance').textContent = formatMoney(currentBalance,state.currency);
         
         const pnl = state.stats.daily_pnl || 0.0;
         const pnlPercent = currentBalance > 0 ? ((pnl / state.config.paper_balance) * 100).toFixed(1) : '0.0';
         const isPositivePnl = pnl >= 0;
-        const pnlFormatted = `${isPositivePnl ? '+R$ ' : '-R$ '}${Math.abs(pnl).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        const pnlFormatted = `${isPositivePnl ? '+' : '-'}${formatMoney(Math.abs(pnl),state.currency)}`;
 
         const topPnlEl = document.getElementById('topPnl');
         const topPnlPctEl = document.getElementById('topPnlPercent');
         topPnlEl.textContent = pnlFormatted;
-        topPnlPctEl.textContent = `(${isPositivePnl ? '+' : ''}${pnlPercent}%)`;
+        topPnlPctEl.textContent = state.execution_mode === 'LIVE_MT5' ? 'PnL do robô' : `(${isPositivePnl ? '+' : ''}${pnlPercent}%)`;
         topPnlEl.className = `font-data-display text-data-display ${isPositivePnl ? 'text-secondary' : 'text-tertiary'}`;
         topPnlPctEl.className = `font-data-metric text-data-metric font-bold ${isPositivePnl ? 'text-secondary' : 'text-tertiary'}`;
 
@@ -1081,15 +1142,15 @@
         const kpiPnl = document.getElementById('kpiPnl');
         kpiPnl.textContent = pnlFormatted;
         kpiPnl.className = `font-data-display text-data-display font-bold ${isPositivePnl ? 'text-secondary' : 'text-tertiary'}`;
-        document.getElementById('kpiPnlBadge').textContent = `${isPositivePnl ? '+' : ''}${pnlPercent}% Hoje`;
+        document.getElementById('kpiPnlBadge').textContent = state.execution_mode === 'LIVE_MT5' ? 'Negócios MT5' : `${isPositivePnl ? '+' : ''}${pnlPercent}% Hoje`;
         document.getElementById('kpiPnlBadge').className = `inline-flex items-center px-space-xs py-0.5 rounded-full font-label-caps text-label-caps font-bold ${isPositivePnl ? 'bg-secondary/15 text-secondary' : 'bg-error-container/40 text-tertiary'}`;
-        document.getElementById('kpiGale').textContent = 'PAPER';
+        document.getElementById('kpiGale').textContent = state.execution_mode;
 
-        const stopGain = state.config.stop_gain || 500;
+        const stopGain = state.goal.target;
         const stopLoss = state.config.stop_loss || 250;
-        document.getElementById('lblMetaGain').textContent = `Meta Gain: R$ ${stopGain.toFixed(2)}`;
-        document.getElementById('lblStopLoss').textContent = `Stop Loss: R$ ${stopLoss.toFixed(2)}`;
-        const metaProgress = Math.min(100, Math.max(0, (pnl / stopGain) * 100));
+        document.getElementById('lblMetaGain').textContent = `Meta diária: ${formatMoney(stopGain,state.goal.currency)}`;
+        document.getElementById('lblStopLoss').textContent = `Stop Loss: ${formatMoney(stopLoss,state.currency)}`;
+        const metaProgress = Math.min(100, Math.max(0, ((state.goal.realized || 0) / stopGain) * 100));
         document.getElementById('lblMetaPercent').textContent = `${metaProgress.toFixed(1)}%`;
         document.getElementById('barMetaGain').style.width = `${metaProgress}%`;
 
@@ -1229,11 +1290,15 @@
             
             let statusMarkup = '';
             if (isWin) {
-              statusMarkup = `<div class="text-right"><span class="font-code-log text-[12px] text-secondary font-bold">+R$ ${(t.pnl || 0).toFixed(2)}</span><div class="font-label-caps text-[9px] text-secondary uppercase font-bold">WIN</div></div>`;
+              statusMarkup = `<div class="text-right"><span class="font-code-log text-[12px] text-secondary font-bold">+${escapeHtml(formatMoney(t.pnl || 0,t.currency || state.currency))}</span><div class="font-label-caps text-[9px] text-secondary uppercase font-bold">WIN</div></div>`;
             } else if (isLoss) {
-              statusMarkup = `<div class="text-right"><span class="font-code-log text-[12px] text-tertiary font-bold">-R$ ${Math.abs(t.pnl || 0).toFixed(2)}</span><div class="font-label-caps text-[9px] text-tertiary uppercase font-bold">LOSS</div></div>`;
+              statusMarkup = `<div class="text-right"><span class="font-code-log text-[12px] text-tertiary font-bold">-${escapeHtml(formatMoney(Math.abs(t.pnl || 0),t.currency || state.currency))}</span><div class="font-label-caps text-[9px] text-tertiary uppercase font-bold">LOSS</div></div>`;
             } else if (t.status === 'DRAW' || t.status === 'INTERRUPTED') {
-              statusMarkup = `<div class="text-right text-xs">${t.status === 'DRAW' ? 'EMPATE' : 'INTERROMPIDA'}<br>R$ ${Number(t.pnl).toFixed(2)}</div>`;
+              statusMarkup = `<div class="text-right text-xs">${t.status === 'DRAW' ? 'EMPATE' : 'INTERROMPIDA'}<br>${escapeHtml(formatMoney(t.pnl,t.currency || state.currency))}</div>`;
+            } else if (t.mode === 'PAPER' && t.exit_policy === 'SL_TP') {
+              statusMarkup = `<div class="text-right text-xs">ABERTA • SL/TP<br>${escapeHtml(formatMoney(t.floating_pnl || 0,'BRL'))}<br><button type="button" class="underline text-primary" data-close-paper="${escapeHtml(t.id)}">Encerrar PAPER</button></div>`;
+            } else if (t.mode === 'LIVE_MT5') {
+              statusMarkup = `<div class="text-right text-xs">${escapeHtml(t.status)}<br>${t.filled_volume != null ? 'Volume '+escapeHtml(t.filled_volume) : 'Aguardando confirmação'}</div>`;
             } else {
               const remTxt = t.remaining_sec ? `${t.remaining_sec}s` : 'Ativa';
               statusMarkup = `<div class="text-right flex flex-col items-end"><span class="inline-flex items-center gap-1 font-code-log text-[11px] text-primary font-bold animate-pulse"><span class="material-symbols-outlined text-[13px]">timer</span> ${remTxt}</span><span class="font-code-log text-[9px] text-on-surface-variant">Em Andamento</span></div>`;
@@ -1246,12 +1311,17 @@
                     <span class="font-code-log text-[11px] text-on-surface font-bold">${escapeHtml(t.symbol)}</span>
                     <span class="px-1.5 py-0.2 rounded font-code-log text-[10px] font-bold ${badgeType}">${escapeHtml(t.action)}</span>
                   </div>
-                  <span class="font-code-log text-[10px] text-on-surface-variant">${escapeHtml(t.time)} • PAPER R$ ${escapeHtml(t.amount)} • ${escapeHtml(t.source)}</span>
+                  <span class="font-code-log text-[10px] text-on-surface-variant">${escapeHtml(t.time)} • ${escapeHtml(t.mode || 'PAPER')} • ${escapeHtml(formatMoney(t.amount,t.currency || state.currency))} de ${t.mode === 'LIVE_MT5' ? 'risco estimado' : 'entrada'}<br>${escapeHtml(t.sync_error || t.sync_note || t.source)}${t.exit_policy === 'SL_TP' ? `<br>Entrada ${escapeHtml(formatPrice(t.entry_price))} • SL ${escapeHtml(formatPrice(t.stop_loss))} • TP ${escapeHtml(formatPrice(t.take_profit))}${t.exit_reason ? ' • '+escapeHtml(t.exit_reason) : ''}` : ''}</span>
                 </div>
                 ${statusMarkup}
               </div>
             `;
           }).join('');
+          for (const button of tradesBox.querySelectorAll('[data-close-paper]')) button.onclick = async () => {
+            button.disabled = true;
+            try { await apiFetch('/api/paper/positions/'+encodeURIComponent(button.dataset.closePaper)+'/close',{method:'POST'}); await fetchState(); }
+            catch (error) { alert(error.message); button.disabled = false; }
+          };
         } else {
           tradesBox.innerHTML = '<div class="text-center py-8 text-on-surface-variant font-code-log text-xs">Nenhuma operação realizada ainda hoje.</div>';
         }
@@ -1289,29 +1359,67 @@
       }
     }
 
+    function formatPrice(value) { return Number.isFinite(Number(value)) ? Number(value).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:8}) : '—'; }
+
+    function formatMoney(value,currency='BRL') {
+      try { return new Intl.NumberFormat('pt-BR',{style:'currency',currency}).format(Number(value)||0); }
+      catch { return `${Number(value).toFixed(2)} ${currency}`; }
+    }
+    async function testTelegram() {
+      try { const res = await apiFetch('/api/telegram/test',{method:'POST'}); showToast((await res.json()).message); }
+      catch (err) { showToast(err.message,'error'); }
+    }
+    async function reconcileMt5() {
+      try { await apiFetch('/api/mt5/reconcile',{method:'POST'}); await fetchState(); showToast('Consulta de reconciliação concluída. Confira o estado das ordens.','info'); }
+      catch (err) { showToast(err.message,'error'); }
+    }
     function renderAudit(state) {
+      const live = state.execution_mode === 'LIVE_MT5';
+      const priceBased = state.config.market_type !== 'SAFIRION_OB';
+      const account = state.connections.mt5.account || {};
+      const badge = live ? `MT5 • ${account.account_type || 'CONTA VINCULADA'} • ENVIO AO TERMINAL` : 'PAPER • SEM ORDENS REAIS';
+      for (const id of ['executionBadge','executionDetailBadge']) document.getElementById(id).textContent = badge;
+      document.getElementById('manualModeLabel').textContent = live ? 'Ordens enviadas ao MT5' : 'Ordens PAPER';
+      document.getElementById('manualBuyLabel').textContent = priceBased ? 'BUY' : 'CALL';
+      document.getElementById('manualSellLabel').textContent = priceBased ? 'SELL' : 'PUT';
+      document.getElementById('lblEntryAmount').textContent = priceBased ? 'Orçamento de risco até SL' : 'Entrada PAPER';
+      document.getElementById('mt5AccountSummary').textContent = state.connections.mt5.simulation_mode || !state.connections.mt5.connected ? 'MT5 não conectado' : `${account.login} / ${account.server} • ${account.currency} • ${account.account_type || 'verificar tipo no terminal'}${live ? ' • vinculada '+state.config.mt5_account_login+' / '+state.config.mt5_account_server : ''}`;
+      document.getElementById('telegramStatus').textContent = state.telegram.configured ? (state.telegram.connected ? 'Bot conectado. ' : 'Bot configurado; conectando. ')+(state.telegram.last_error || '') : 'Não configurado. Execute python -m backend.telegram_setup após criar o bot no BotFather.';
+      document.getElementById('chartAvailability').textContent = live ? `Execução MT5: SL/TP no servidor; encerramento e PnL pelo histórico. Pausar não fecha posições. Moeda da conta: ${state.currency}.` : 'Resultados PAPER são hipotéticos e não comprovam lucro. Nenhuma ordem virtual é enviada à corretora.';
+      for (const el of document.querySelectorAll('[data-money-prefix]')) el.textContent = state.currency;
       document.getElementById('bridgeTelemetry').textContent = state.connections.safirion.connected ? 'conectada' : 'não conectada';
       document.getElementById('quoteRegime').textContent = state.signal?.indicators?.regime || '—';
-      document.getElementById('lblQuoteDelta').textContent = 'PAPER';
+      document.getElementById('lblQuoteDelta').textContent = state.execution_mode;
       const q = state.data_quality;
       const v = state.signal?.indicators?.ml_validation || {};
       document.getElementById('lastUpdated').textContent = 'Atualizado '+new Date().toLocaleTimeString('pt-BR',{timeZone:'America/Sao_Paulo'});
       document.getElementById('dataSource').textContent = q.synthetic ? 'SIMULADOR • preços artificiais' : q.source;
-      document.getElementById('dataDetail').textContent = `${q.closed_candles} velas fechadas • vela em formação excluída`+(q.tick_age_seconds != null ? ` • último tick há ${q.tick_age_seconds}s` : '');
+      document.getElementById('dataDetail').textContent = `${q.closed_candles} velas fechadas • vela em formação excluída${q.history_error ? ' • '+q.history_error : ''}`+(q.tick_age_seconds != null ? ` • último tick há ${q.tick_age_seconds}s` : '');
       document.getElementById('validationScore').textContent = v.enabled ? `${v.accuracy}% fora do treino` : 'Amostra insuficiente';
       document.getElementById('validationDetail').textContent = v.enabled ? `Referência ${v.baseline_accuracy}% • ${v.validation_samples} amostras • Brier ${v.brier_score}. ${v.validated ? 'Filtro temporal aprovado neste período.' : 'Sem vantagem demonstrada.'}` : (v.reason || 'Aguardando histórico real suficiente.');
       document.getElementById('riskBudget').textContent = `${state.risk.max_risk_pct}% por entrada`;
-      document.getElementById('riskDetail').textContent = `Próxima entrada R$ ${state.risk.next_amount.toFixed(2)} • orçamento de perda restante R$ ${state.risk.remaining_loss_budget.toFixed(2)}`;
+      document.getElementById('riskDetail').textContent = `Orçamento da próxima ordem ${formatMoney(state.risk.next_amount,state.currency)} • perda restante ${formatMoney(state.risk.remaining_loss_budget,state.currency)}`;
       document.getElementById('decisionGate').textContent = state.risk.blocked_reason ? 'AGUARDAR' : 'SETUP DISPONÍVEL';
       document.getElementById('decisionDetail').textContent = state.risk.blocked_reason || 'Score técnico é confluência de regras, não probabilidade de lucro.';
-      const open = state.trades.some(t => t.status === 'OPEN');
+      const open = state.has_open_trade;
       for (const input of document.querySelectorAll('[id^="cfg"]')) input.disabled = state.is_running || open;
-      document.getElementById('cfgCustomBalance').disabled = state.is_running || open || state.stats.total_trades > 0;
+      document.getElementById('cfgCustomBalance').disabled = state.execution_mode === 'LIVE_MT5' || state.is_running || open || state.stats.total_trades > 0;
       document.getElementById('cfgUseMartingale').disabled = true;
       document.getElementById('cfgMartingaleFactor').disabled = true;
       for (const id of ['btn-call','btn-put']) document.getElementById(id).disabled = open || state.risk.next_amount <= 0;
       document.getElementById('btnToggleBot').disabled = false;
       document.getElementById('researchRun').disabled = researchBusy || state.is_running || open;
+      document.getElementById('cfgExpiration').closest('.flex.flex-col').hidden = priceBased;
+      document.getElementById('cfgPayout').closest('label').hidden = priceBased;
+      document.getElementById('pricePlanSettings').hidden = !priceBased;
+      document.getElementById('pricePlanPreview').hidden = !priceBased;
+      document.getElementById('boxSafirionSubType').hidden = priceBased;
+      document.getElementById('goalMoneyPrefix').textContent = state.goal.currency;
+      document.getElementById('executionDiagnosis').textContent = `${state.diagnostics.reason} • ${state.diagnostics.version}`;
+      document.getElementById('goalSummary').textContent = state.goal.ready ? `Realizado: ${formatMoney(state.goal.realized,state.goal.currency)} • Falta: ${formatMoney(state.goal.remaining,state.goal.currency)}. ${state.goal.conversion_note || ''} A meta limita novas entradas; não garante lucro nem fecha posições abertas.` : state.goal.error;
+      document.getElementById('pricePlanPreview').innerHTML = Object.entries(state.trade_plans || {}).map(([side,p]) => `<div class="bg-surface-container-lowest rounded-lg p-space-sm text-xs price-plan-card"><strong>${side}</strong> ${p.ready ? `Entrada ${escapeHtml(formatPrice(p.entry_price))} • SL ${escapeHtml(formatPrice(p.stop_loss))} • TP ${escapeHtml(formatPrice(p.take_profit))}<br>Retorno/risco ${p.net_reward_risk.toFixed(2)} • perda estimada ${escapeHtml(formatMoney(p.estimated_loss,state.currency))} • lucro projetado ${escapeHtml(formatMoney(p.estimated_profit,state.currency))}<br>${escapeHtml(p.stop_basis)}; ${escapeHtml(p.target_basis)}. Prévia; revalidada na ordem.` : escapeHtml(p.reason)}</div>`).join('');
+      if (priceBased && !live) document.getElementById('chartAvailability').textContent = 'PAPER Forex/B3: saída por preço no SL/TP ou encerramento manual. Sem prazo de expiração. PnL e quantidade são virtuais; não simulam integralmente custos e liquidez da corretora.';
+      document.getElementById('cfgExpiration').disabled = priceBased || state.is_running || open;
     }
 
     async function runResearch() {

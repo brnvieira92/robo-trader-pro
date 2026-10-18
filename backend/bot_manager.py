@@ -1,5 +1,5 @@
 """Paper research orchestration, risk gates and auditable virtual settlements.
-Live market feeds may inform research; this manager never sends broker orders.
+PAPER stays virtual; LIVE_MT5 submits durable, risk-sized intents and reconciles broker deals.
 """
 
 import asyncio
@@ -7,10 +7,14 @@ from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 import math
 import uuid
+import hashlib
 import pandas as pd
 from backend.config import TradingConfig
 from backend.journal import PaperJournal
 from backend.market_data import validate_candles
+from backend.mt5_execution import MT5Executor, MT5ExecutionError, ACTIVE_LIVE
+from backend.telegram_bot import TelegramBot
+from backend.trade_plan import price_plan, goal_limited_budget, TradePlanError
 
 from backend.strategies import StrategyEngine, SignalResult
 from backend.mt5_connector import MT5Connector
@@ -22,13 +26,16 @@ class BotManager:
         self.mt5 = MT5Connector()
         self.safirion = SafirionConnector()
 
-        self.mt5.connect(use_simulation_if_unavailable=True)
+        self.live = MT5Executor(self.mt5)
 
         self.is_running = False
         self.journal = PaperJournal()
         self.config = TradingConfig.model_validate(self.journal.load_config() or {}).model_dump()
+        self.mt5.connect(use_simulation_if_unavailable=self.config['execution_mode']=='PAPER')
         self._session_day = datetime.now(timezone.utc).date().isoformat()
         self._order_lock = asyncio.Lock()
+        self._mt5_busy=False
+        self._last_snapshot=None
         self._last_signal_bar = None
         self._settlement_tasks = set()
 
@@ -58,20 +65,45 @@ class BotManager:
         self._has_open_trade: bool = False
 
         # Restarts retain session risk and never turn pending paper trades into wins.
-        self.trade_history = self.journal.today()
+        self.trade_history = self._session_trades()
         for trade in self.trade_history:
-            if trade['status'] == 'OPEN':
+            if trade['status'] == 'OPEN' and trade.get('mode','PAPER') == 'PAPER' and not (trade.get('exit_policy')=='SL_TP' and trade.get('source')=='MT5_LIVE'):
                 trade.update(status='INTERRUPTED', pnl=-float(trade['amount']), remaining_sec=0,
                              settlement_note='Simulação interrompida: reserva de risco integral debitada; não é resultado de mercado.')
                 self.journal.save(trade)
+        self._has_open_trade = any((t.get('mode')=='LIVE_MT5' and t['status'] in ACTIVE_LIVE) or (t.get('mode','PAPER')=='PAPER' and t['status']=='OPEN') for t in self.trade_history)
         self._refresh_stats()
+        self.notifier = TelegramBot(self.journal, self.telegram_status, self.pause_from_telegram)
         self._last_signal_bar = self.trade_history[0].get('bar_time') if self.trade_history else None
         self._last_trade_timestamp = max((t.get('settled_at', t.get('created_at', 0)) for t in self.trade_history), default=0)
-        self.add_log("INFO", "Modo PAPER: ordens virtuais, sem envio à corretora. Resultados não comprovam rentabilidade real.")
+        self.add_log("INFO", f"Modo {self.config['execution_mode']}; robô inicia pausado. Posições MT5 pendentes continuam sendo monitoradas.")
+
+    def _session_trades(self):
+        today = datetime.now(timezone.utc).date().isoformat()
+        mode = self.config['execution_mode']
+        result=[]
+        for t in self.journal.all_trades():
+            tmode=t.get('mode','PAPER')
+            pending=(tmode=='LIVE_MT5' and t['status'] in ACTIVE_LIVE) or (tmode=='PAPER' and t['status']=='OPEN' and t.get('exit_policy')=='SL_TP')
+            if tmode!=mode and not pending:
+                continue
+            if mode=='LIVE_MT5' and not pending and (t.get('account_login')!=self.config['mt5_account_login'] or t.get('account_server')!=self.config['mt5_account_server']):
+                continue
+            has_today_deal=any(datetime.fromtimestamp(d['time'],timezone.utc).date().isoformat()==today for d in t.get('deals',[]))
+            settled_today=t.get('settled_at') is not None and datetime.fromtimestamp(t['settled_at'],timezone.utc).date().isoformat()==today
+            if pending or t.get('day')==today or has_today_deal or settled_today:
+                result.append(t)
+        return result
 
     def _refresh_stats(self):
-        settled = [t for t in self.trade_history if t['status'] != 'OPEN']
-        self.stats['daily_pnl'] = round(sum(t['pnl'] for t in settled), 2)
+        mode=self.config['execution_mode']
+        relevant=[t for t in self.trade_history if t.get('mode','PAPER')==mode]
+        settled = [t for t in relevant if t['status'] in ('WIN','LOSS','DRAW','INTERRUPTED')]
+        today=datetime.now(timezone.utc).date().isoformat()
+        if mode=='LIVE_MT5':
+            self.stats['daily_pnl']=round(sum(d['pnl'] for t in relevant for d in t.get('deals',[]) if datetime.fromtimestamp(d['time'],timezone.utc).date().isoformat()==today),8)
+        else:
+            self.stats['daily_pnl'] = round(sum(t['pnl'] for t in settled if (datetime.fromtimestamp(t['settled_at'],timezone.utc).date().isoformat() if t.get('settled_at') else t.get('day'))==today), 2)
         self.stats['wins'] = sum(t['status'] == 'WIN' for t in settled)
         self.stats['losses'] = sum(t['status'] in ('LOSS', 'INTERRUPTED') for t in settled)
         self.stats['total_trades'] = len(settled)
@@ -82,6 +114,22 @@ class BotManager:
                 break
             streak += 1
         self.stats['loss_streak'] = streak
+        self.stats['floating_pnl']=sum(t.get('floating_pnl',0) for t in relevant if t['status'] in ACTIVE_LIVE)
+
+    def telegram_status(self):
+        c=self.config
+        account=f"{c['mt5_account_login']} / {c['mt5_account_server']}" if c['execution_mode']=='LIVE_MT5' else 'banca virtual'
+        currency=self.mt5.account_info.get('currency','') if c['execution_mode']=='LIVE_MT5' else 'BRL virtual'
+        pending=sum(t.get('mode')=='LIVE_MT5' and t['status'] in ACTIVE_LIVE for t in self.trade_history)
+        return (f"ProspeTraderBot\nModo: {c['execution_mode']} | {'ATIVO' if self.is_running else 'PAUSADO'}\n"
+                f"Conta: {account}\nAtivo: {c['symbol']} / {c['timeframe']}\n"
+                f"PnL realizado hoje (UTC): {self.stats['daily_pnl']:.2f} {currency}\n"
+                f"PnL aberto: {self.stats.get('floating_pnl',0):.2f} {currency}\nPosições/intenção MT5 pendentes: {pending}")
+
+    def pause_from_telegram(self):
+        self.is_running=False
+        self.stats['status_reason']='Novas entradas automáticas pausadas pelo Telegram; posições abertas continuam monitoradas.'
+        self.add_log('STOP',self.stats['status_reason'])
 
     def add_log(self, level: str, message: str):
         entry = {
@@ -93,7 +141,7 @@ class BotManager:
         self.logs = self.logs[:80]
 
     def update_config(self, new_cfg: Dict[str, Any]) -> Dict[str, Any]:
-        if self.is_running or self._has_open_trade:
+        if self.is_running or self._has_open_trade or self._mt5_busy:
             raise ValueError("Pause o robô e aguarde a operação encerrar antes de alterar parâmetros.")
         payload = dict(new_cfg)
         # Legacy dashboard balance is virtual only, never a broker balance override.
@@ -102,39 +150,69 @@ class BotManager:
         merged = {**self.config, **payload}
         if 'strategy_params' in payload:
             merged['strategy_params'] = {**self.config['strategy_params'], **payload['strategy_params']}
+        if merged.get('execution_mode')=='LIVE_MT5':
+            if merged.get('market_type')=='SAFIRION_OB':
+                raise ValueError('Selecione MT5 B3 ou Forex antes de ativar envio ao terminal.')
+            account=self.live.account(self.config['mt5_account_login'],self.config['mt5_account_server'],trading=True) if self.config['execution_mode']=='LIVE_MT5' else self.live.account(trading=True)
+            merged['mt5_account_login']=account['login']
+            merged['mt5_account_server']=account['server']
         validated = TradingConfig.model_validate(merged).model_dump()
         if self.trade_history and validated['paper_balance'] != self.config['paper_balance']:
             raise ValueError("Banca inicial não pode mudar após a primeira operação da sessão.")
         changed_stream = any(validated[k] != self.config[k] for k in ('symbol', 'timeframe', 'market_type'))
+        previous_mode=self.config['execution_mode']
         self.journal.save_config(validated)
         self.config = validated
+        if previous_mode != validated['execution_mode']:
+            self.trade_history=self._session_trades()
+            self._refresh_stats()
+            self._last_signal_bar=None
         if changed_stream:
             self.safirion.reset_candles()
             self._last_signal_bar = None
-        self.add_log("CONFIG", f"Parâmetros validados: {self.config['symbol']} / {self.config['timeframe']} / PAPER")
+        self.add_log("CONFIG", f"Parâmetros validados: {self.config['symbol']} / {self.config['timeframe']} / {self.config['execution_mode']}")
         return self.config
 
     def _calculate_smart_entry_amount(self, signal=None):
-        balance = max(0.0, self.config['paper_balance'] + self.stats['daily_pnl'])
+        live=self.config['execution_mode']=='LIVE_MT5'
+        if live:
+            try:
+                account=self.live.account(self.config['mt5_account_login'],self.config['mt5_account_server'])
+                balance=max(0.,account['equity'])
+            except MT5ExecutionError as exc:
+                return 0.,str(exc)
+        else:
+            balance = max(0.0, self.config['paper_balance'] + self.stats['daily_pnl'])
         cap = min(balance * self.config['risk_per_trade_pct'] / 100,
                   max(0.0, self.config['stop_loss'] + self.stats['daily_pnl']))
         amount = balance * self.config['risk_per_trade_pct'] / 100 if self.config['bankroll_mode'] == 'PERCENT' else self.config['entry_amount']
         amount = math.floor(min(amount, cap) * 100) / 100
-        minimum = 5 if self.config['market_type'] == 'SAFIRION_OB' else 1
+        minimum = 5 if self.config['market_type'] == 'SAFIRION_OB' else .01
         if amount < minimum:
             return 0.0, "Bloqueado: mínimo excede o orçamento de risco."
-        return amount, f"PAPER R$ {amount:.2f} • limite {self.config['risk_per_trade_pct']}% da banca • sem progressão"
+        currency=self.mt5.account_info.get('currency','') if live else 'BRL virtual'
+        return amount, f"{'RISCO ATÉ SL' if live else 'PAPER'} {amount:.2f} {currency} • limite {self.config['risk_per_trade_pct']}% • sem progressão"
 
     def _risk_block(self, signal=None, manual=False):
+        if self._mt5_busy:
+            return 'MT5 processando consulta/envio; aguarde a confirmação.'
         if self._has_open_trade:
             return "Já existe uma operação em andamento."
+        if self.config['execution_mode']=='LIVE_MT5':
+            try:
+                self.live.account(self.config['mt5_account_login'],self.config['mt5_account_server'],trading=True)
+            except MT5ExecutionError as exc:
+                return str(exc)
         if self.stats['daily_pnl'] <= -self.config['stop_loss']:
             return "Stop loss da sessão atingido."
-        if self.stats['daily_pnl'] >= self.config['stop_gain']:
-            return "Stop gain da sessão atingido."
+        goal=self.goal_status()
+        if not goal['ready']:
+            return goal['error']
+        if goal['reached']:
+            return 'Meta diária atingida; novas entradas pausadas.'
         if self.stats['loss_streak'] >= self.config['max_consecutive_losses']:
             return "Limite de perdas consecutivas atingido."
-        if len(self.trade_history) >= self.config['max_daily_trades']:
+        if self._entry_count() >= self.config['max_daily_trades']:
             return "Limite de operações da sessão atingido."
         if datetime.now().timestamp()-self._last_trade_timestamp < self.config['cooldown_seconds']:
             return "Intervalo mínimo entre operações ainda não cumprido."
@@ -151,19 +229,92 @@ class BotManager:
                 return "IA sem vantagem demonstrada na validação temporal."
         return None
 
+    def goal_status(self):
+        account_currency=self.mt5.account_info.get('currency','') if self.config['execution_mode']=='LIVE_MT5' else 'BRL'
+        currency='BRL' if self.config['goal_currency']=='BRL' else account_currency
+        rate=1.;fx_symbol=None;error=None
+        if currency!=account_currency:
+            try:
+                rate,fx_symbol=self.live.brl_rate(account_currency,self.config['goal_fx_symbol'])
+            except MT5ExecutionError as exc:
+                error=str(exc)
+        realized=self.stats['daily_pnl']*rate if error is None else None
+        remaining=max(0,self.config['stop_gain']-realized) if realized is not None else None
+        return dict(target=self.config['stop_gain'],currency=currency,account_currency=account_currency,
+                    realized=realized,remaining=remaining,remaining_account=remaining/rate if remaining is not None else None,
+                    reached=realized is not None and realized>=self.config['stop_gain'],ready=error is None,error=error,
+                    conversion_rate=rate if error is None else None,conversion_symbol=fx_symbol,
+                    conversion_note='Conversão indicativa pelo preço médio bid/ask MT5; não é câmbio liquidado.' if fx_symbol else None)
+
+    def execution_diagnostics(self):
+        native=self.config['execution_mode']=='LIVE_MT5'
+        permission_error=None
+        try:
+            self.live.account(self.config['mt5_account_login'] if native else None,
+                              self.config['mt5_account_server'] if native else None,trading=True)
+            permissions=True
+        except MT5ExecutionError as exc:
+            permissions=False;permission_error=str(exc)
+        forex=self.config['market_type']!='SAFIRION_OB'
+        if not native:
+            reason='PAPER selecionado: nenhuma ordem será enviada ao MT5, mesmo com AlgoTrading habilitado no terminal.'
+            if permission_error and self.mt5.connected and not self.mt5.simulation_mode:
+                reason+=' Diagnóstico do terminal: '+permission_error
+        else:
+            reason='Envio nativo habilitado para a conta vinculada; entradas dependem dos filtros e limites.' if permissions else permission_error
+        return dict(version='forex-price-exits-v1',mode=self.config['execution_mode'],market=self.config['market_type'],
+                    exit_policy='SL_TP' if forex else 'BINARY_EXPIRATION',native_available=self.live.sdk is not None,
+                    terminal_permissions=permissions,native_orders_enabled=native and permissions,
+                    reason=reason,terminal_error=permission_error)
+
+    def plan_preview(self, signal, entry=None):
+        if self.config['market_type']=='SAFIRION_OB':
+            return dict(ready=False,reason='Opções binárias usam expiração; plano Forex não se aplica.')
+        try:
+            goal=self.goal_status()
+            if not goal['ready']:
+                raise TradePlanError(goal['error'])
+            plan=price_plan(self.config,signal,float(entry if entry is not None else signal['price']))
+            budget,_=self._calculate_smart_entry_amount(signal)
+            budget=goal_limited_budget(self.config,budget,goal['remaining_account'],plan['reward_risk'])
+            cost=self.config['mt5_cost_buffer'] if self.config['execution_mode']=='LIVE_MT5' else self.config['paper_cost_per_trade']
+            if budget<=cost:
+                raise TradePlanError('Orçamento insuficiente após custos para outra entrada.')
+            quantity=(budget-cost)/plan['risk_distance']
+            profit=quantity*plan['reward_distance']-cost
+            net_rr=profit/budget
+            if net_rr+1e-8<self.config['strategy_params']['min_reward_risk']:
+                raise TradePlanError('Retorno/risco insuficiente após custos.')
+            return {**plan,'risk_budget':budget,'estimated_loss':budget,'estimated_profit':profit,
+                    'net_reward_risk':net_rr,'paper_quantity':quantity,
+                    'note':'Prévia indicativa; execução nativa revalida bid/ask, lote, margem, custos e regras do símbolo.'}
+        except (TradePlanError,ValueError) as exc:
+            return dict(ready=False,reason=str(exc),exit_policy='SL_TP')
+
+    def _entry_count(self):
+        day=datetime.now(timezone.utc).date().isoformat()
+        return sum(t.get('mode','PAPER')==self.config['execution_mode'] and t.get('day')==day and t['status']!='REJECTED' for t in self.trade_history)
+
     def get_market_snapshot(self) -> Dict[str, Any]:
+        if self._mt5_busy and self._last_snapshot is None:
+            raise RuntimeError('Conexão MT5 em andamento; aguarde a primeira atualização.')
+        if self._mt5_busy and self._last_snapshot is not None:
+            return {**self._last_snapshot,'is_running':self.is_running,'has_open_trade':True,
+                    'stats':dict(self.stats),'trades':self.trade_history[:25], 'telegram':self.notifier.public_status(),
+                    'risk':{**self._last_snapshot['risk'],'blocked_reason':'MT5 processando; nenhuma segunda ordem será enviada.'}}
         day = datetime.now(timezone.utc).date().isoformat()
         if day != self._session_day and not self._has_open_trade:
             self._session_day = day
-            self.trade_history = self.journal.today()
+            self.trade_history = self._session_trades()
             self._refresh_stats()
             self._last_signal_bar = None
-            self.add_log('INFO', 'Nova sessão PAPER (dia UTC); diário anterior preservado no SQLite.')
+            self.add_log('INFO', 'Nova sessão UTC; histórico anterior preservado no SQLite.')
         symbol = self.config["symbol"]
         timeframe = self.config["timeframe"]
         market_type = self.config["market_type"]
         strategy_id = self.config["strategy_id"]
 
+        history_error = None
         saf_live_df = (
             self.safirion.get_live_candles_df(timeframe)
             if market_type == "SAFIRION_OB"
@@ -174,8 +325,19 @@ class BotManager:
             df = saf_live_df if saf_live_df is not None else pd.DataFrame(columns=['time','open','high','low','close','volume'])
             source = 'SAFIRION_LIVE'
         else:
-            df = self.mt5.get_candles(symbol, timeframe, count=240)
-            source = 'SIMULATED' if self.mt5.simulation_mode else 'MT5_LIVE'
+            if self.config['execution_mode']=='LIVE_MT5' and (self.mt5.simulation_mode or not self.mt5.connected):
+                df=pd.DataFrame(columns=['time','open','high','low','close','volume'])
+                source='MT5_UNAVAILABLE'
+            else:
+                try:
+                    df = self.mt5.get_candles(symbol, timeframe, count=240)
+                    source = 'SIMULATED' if self.mt5.simulation_mode else 'MT5_LIVE'
+                except RuntimeError as exc:
+                    history_error = str(exc)
+                    if self.config['execution_mode']!='LIVE_MT5':
+                        raise
+                    df=pd.DataFrame(columns=['time','open','high','low','close','volume'])
+                    source='MT5_UNAVAILABLE'
         validate_candles(df)
         # The last candle is forming, so neither its signal nor label is usable.
         closed = df.iloc[:-1].copy()
@@ -205,6 +367,8 @@ class BotManager:
             },
         )
         self.last_signal = signal.to_dict()
+        if history_error:
+            self.last_signal.update(action='NEUTRAL',confidence=0,reason=history_error)
         self.last_signal['bar_time'] = str(closed.iloc[-1]['time']) if len(closed) else None
         self.last_signal['price'] = float(df.iloc[-1]['close']) if len(df) else 0.0
         tick_age = max(0, datetime.now().timestamp()-self.safirion.last_tick_timestamp) if live_safirion else None
@@ -214,6 +378,19 @@ class BotManager:
                             forming_candle_excluded=True, dropped_gap_candles=dropped_gap_candles, synthetic=source == 'SIMULATED')
 
 
+        data_quality['history_error']=history_error
+        data_quality['history_fresh']=source!='MT5_UNAVAILABLE'
+        if source=='MT5_LIVE':
+            latest=df.iloc[-1]['time'] if len(df) else None
+            latest_epoch=(latest.tz_localize('UTC').timestamp() if latest.tzinfo is None else latest.timestamp()) if latest is not None else 0
+            history_age=datetime.now().timestamp()-latest_epoch
+            data_quality['history_fresh']=-5 <= history_age <= self.mt5.TIMEFRAME_MAP.get(timeframe,1)*120
+            if not data_quality['history_fresh']:
+                self.last_signal.update(action='NEUTRAL',confidence=0,reason='Histórico MT5 antigo ou inconsistente com a cotação atual.')
+            data_quality['tick_age_seconds']=self.live.quote_age(symbol)
+            age=data_quality['tick_age_seconds']
+            if age is None or age>self.config['max_tick_age_seconds'] or age < -5:
+                self.last_signal.update(action='NEUTRAL',confidence=0,reason='Cotação MT5 desatualizada ou indisponível.')
         if not data_quality['symbol_verified']:
             self.last_signal.update(action='NEUTRAL', confidence=0, reason='Ativo da ponte não corresponde ao ativo selecionado.')
         # Atualiza sugestão de lote em tempo real pela Gestão de Banca IA
@@ -225,7 +402,7 @@ class BotManager:
         for _, row in enriched.tail(60).iterrows():
             candles_out.append(
                 {
-                    "time": int(row["time"].timestamp()),
+                    "time": int(row["time"].tz_localize("UTC").timestamp() if source=="MT5_LIVE" and row["time"].tzinfo is None else row["time"].timestamp()),
                     "time_str": row["time"].strftime("%H:%M"),
                     "open": round(float(row["open"]), 5),
                     "high": round(float(row["high"]), 5),
@@ -239,8 +416,15 @@ class BotManager:
                 }
             )
 
-        return {
-            "execution_mode": "PAPER",
+        snapshot = {
+            "goal": self.goal_status(),
+            "diagnostics": self.execution_diagnostics(),
+            "trade_plans": {side:self.plan_preview({**self.last_signal,'action':side}) for side in ('BUY','SELL')} if market_type!='SAFIRION_OB' else {},
+            "execution_mode": self.config['execution_mode'],
+            "has_open_trade": self._has_open_trade,
+            "currency": self.mt5.account_info.get('currency','') if self.config['execution_mode']=='LIVE_MT5' else 'BRL',
+            "account_balance": self.mt5.account_info.get('balance',0) if self.config['execution_mode']=='LIVE_MT5' else round(self.config['paper_balance']+self.stats['daily_pnl'],2),
+            "telegram": self.notifier.public_status(),
             "paper_balance": round(self.config['paper_balance'] + self.stats['daily_pnl'], 2),
             "data_quality": data_quality,
             "risk": {"blocked_reason": self._risk_block(self.last_signal), "max_risk_pct": self.config['risk_per_trade_pct'],
@@ -273,6 +457,9 @@ class BotManager:
                 },
             },
         }
+
+        self._last_snapshot=snapshot
+        return snapshot
 
     def _calculate_target_expiration_time(self) -> tuple[datetime, int]:
         from datetime import timedelta
@@ -308,6 +495,10 @@ class BotManager:
             if blocked:
                 return {"success": False, "message": blocked}
             snapshot = self.get_market_snapshot()
+            if self.config['execution_mode']=='LIVE_MT5':
+                return await self._execute_mt5(signal, snapshot, manual)
+            if self.config['market_type']!='SAFIRION_OB':
+                return await self._open_paper_position(signal,snapshot)
             quality = snapshot['data_quality']
             if quality['source'] == 'SAFIRION_LIVE':
                 if not quality['symbol_verified'] or quality['closed_candles'] < 50 or quality['tick_age_seconds'] > self.config['max_tick_age_seconds']:
@@ -337,7 +528,202 @@ class BotManager:
             self.add_log('TRADE', f"PAPER {trade['action']} {trade['symbol']} • R$ {amount:.2f} • {quality['source']}")
             return dict(success=True, ticket=trade['id'], mode='PAPER', message='Ordem virtual registrada; nenhum envio à corretora.')
 
+    def _paper_position_quote(self, trade):
+        source='SIMULATED' if self.mt5.simulation_mode else 'MT5_LIVE'
+        if source!=trade['source'] or not self.mt5.connected:
+            raise ValueError('Fonte da posição PAPER indisponível ou alterada; aguardando a mesma fonte.')
+        if source=='MT5_LIVE':
+            self.live.account(trade.get('account_login'),trade.get('account_server'))
+            tick=self.live._tick(trade['symbol'],self.config)
+            return float(tick.bid if trade['action']=='BUY' else tick.ask)
+        raw=self.mt5.get_candles(trade['symbol'],trade['timeframe'],count=240)
+        price=float(raw['close'].iloc[-1])
+        if not math.isfinite(price) or price<=0:
+            raise ValueError('Preço inválido na posição PAPER.')
+        return price
+
+    async def _open_paper_position(self, signal, snapshot):
+        entry=float(snapshot['signal']['price'])
+        if snapshot['data_quality']['source']=='MT5_LIVE':
+            if not snapshot['data_quality'].get('history_fresh',False):
+                return dict(success=False,message='Histórico MT5 desatualizado; aguarde velas atuais para a entrada PAPER.')
+            try:
+                self.live.account()
+                tick=self.live._tick(self.config['symbol'],self.config)
+                entry=float(tick.ask if signal['action']=='BUY' else tick.bid)
+            except MT5ExecutionError as exc:
+                return dict(success=False,message=str(exc))
+        plan=self.plan_preview(signal,entry)
+        if not plan['ready']:
+            return dict(success=False,message=plan['reason'])
+        trade=dict(id='PAPER-'+uuid.uuid4().hex,day=datetime.now(timezone.utc).date().isoformat(),
+                   time=datetime.now().strftime('%H:%M:%S'),created_at=datetime.now().timestamp(),
+                   symbol=self.config['symbol'],market=self.config['market_type'],action=signal['action'],
+                   mode='PAPER',source=snapshot['data_quality']['source'],status='OPEN',exit_policy='SL_TP',
+                   expiration_time=None,remaining_sec=None,pnl=0.,amount=plan['risk_budget'],currency='BRL',
+                   entry_price=entry,stop_loss=plan['stop_loss'],take_profit=plan['take_profit'],
+                   quantity=plan['paper_quantity'],cost=self.config['paper_cost_per_trade'],plan=plan,
+                   timeframe=self.config['timeframe'],strategy=self.config['strategy_id'],confidence=signal['confidence'],
+                   bar_time=signal.get('bar_time'),sync_note='PAPER por preço: aguarda SL, TP ou encerramento manual; sem expiração.')
+        if trade['source']=='MT5_LIVE':
+            account=self.live.account()
+            trade.update(account_login=account['login'],account_server=account['server'])
+        self.journal.save(trade);self.trade_history.insert(0,trade)
+        self._has_open_trade=True;self._last_signal_bar=signal.get('bar_time');self._last_trade_timestamp=trade['created_at']
+        self._track_paper_position(trade)
+        self.add_log('TRADE',f"PAPER {trade['action']} {trade['symbol']} • SL {trade['stop_loss']} • TP {trade['take_profit']} • sem expiração")
+        return dict(success=True,ticket=trade['id'],mode='PAPER',message='Posição PAPER aberta com SL/TP por preço, sem expiração.')
+
+    def _track_paper_position(self, trade):
+        task=asyncio.create_task(self._monitor_paper_position(trade))
+        self._settlement_tasks.add(task);task.add_done_callback(self._settlement_tasks.discard)
+
+    def _finalize_paper_position(self, trade, price, reason):
+        if trade['status']!='OPEN':
+            return
+        direction=1 if trade['action']=='BUY' else -1
+        pnl=(price-trade['entry_price'])*trade['quantity']*direction-trade['cost']
+        trade.update(status='WIN' if pnl>0 else ('LOSS' if pnl<0 else 'DRAW'),exit_price=price,pnl=round(pnl,8),
+                     settled_at=datetime.now().timestamp(),exit_reason=reason,floating_pnl=0.,
+                     settlement_note='PAPER: preenchimento no preço observado, incluindo gaps e custo configurado; não é execução da corretora.')
+        self.journal.save(trade);self._refresh_stats()
+        self._has_open_trade=any(t['status']=='OPEN' for t in self.trade_history) or any(t.get('mode')=='LIVE_MT5' and t['status'] in ACTIVE_LIVE for t in self.trade_history)
+        self._last_trade_timestamp=datetime.now().timestamp()
+        self.add_log('INFO',f"PAPER {reason}: {pnl:.2f} BRL virtuais")
+        if self.goal_status()['reached']:
+            self.is_running=False;self.stats['status_reason']='Meta diária atingida; novas entradas pausadas.'
+
+    async def _monitor_paper_position(self, trade):
+        while trade['status']=='OPEN':
+            try:
+                if self._mt5_busy:
+                    await asyncio.sleep(.5);continue
+                price=self._paper_position_quote(trade)
+                buy=trade['action']=='BUY'
+                reason='STOP_LOSS' if (price<=trade['stop_loss'] if buy else price>=trade['stop_loss']) else (
+                    'TAKE_PROFIT' if (price>=trade['take_profit'] if buy else price<=trade['take_profit']) else None)
+                async with self._order_lock:
+                    if reason:
+                        self._finalize_paper_position(trade,price,reason)
+                    elif trade['status']=='OPEN':
+                        trade['floating_pnl']=(price-trade['entry_price'])*trade['quantity']*(1 if buy else -1)-trade['cost']
+                        self.stats['floating_pnl']=trade['floating_pnl']
+                        trade.pop('sync_error',None)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                trade['sync_error']='Cotação indisponível. Posição PAPER permanece aberta; resultado não estimado.'
+                self.is_running=False
+            await asyncio.sleep(.5)
+
+    async def close_paper_position(self, identifier):
+        async with self._order_lock:
+            trade=next((t for t in self.trade_history if t['id']==identifier),None)
+            if trade is None or trade.get('mode')!='PAPER' or trade.get('exit_policy')!='SL_TP' or trade['status']!='OPEN':
+                raise ValueError('Somente posições PAPER Forex/B3 abertas podem ser encerradas por esta ação.')
+            price=self._paper_position_quote(trade)
+            self._finalize_paper_position(trade,price,'MANUAL')
+            return dict(success=True,message='Posição PAPER encerrada pelo preço observado.',trade=trade)
+
+    async def _execute_mt5(self, signal, snapshot, manual=False):
+        if snapshot['data_quality']['source']!='MT5_LIVE' or not snapshot['data_quality'].get('history_fresh',False):
+            return dict(success=False,message='Sem dados reais do MT5. Fallback para simulador não é permitido neste modo.')
+        client_tag='PT'+uuid.uuid4().hex[:22]
+        # Every side, including a discretionary SELL after a BUY signal, gets fresh directional stops.
+        self._mt5_busy=True
+        try:
+            prepared=await asyncio.to_thread(self.live.prepare,self.config,signal,max(0,self.config['stop_loss']+self.stats['daily_pnl']),client_tag,self.goal_status()['remaining_account'])
+        except Exception as exc:
+            self.is_running=False
+            note=str(exc) if isinstance(exc,MT5ExecutionError) else 'Falha na pré-validação do terminal MT5. Nenhuma ordem enviada.'
+            self.add_log('ALERT',note)
+            self.notifier.enqueue('preflight:'+client_tag,'MT5: entrada bloqueada. '+note)
+            return dict(success=False,message=note)
+        finally:
+            self._mt5_busy=False
+        if not manual and not self.is_running:
+            return dict(success=False,message='Entrada automática cancelada: robô pausado durante a pré-validação.')
+        account=prepared['account']
+        trade=dict(id='MT5-'+uuid.uuid4().hex,client_tag=client_tag,magic=self.config['mt5_magic'],
+                   day=datetime.now(timezone.utc).date().isoformat(),created_at=datetime.now().timestamp(),
+                   time=datetime.now().strftime('%H:%M:%S'),symbol=self.config['symbol'],market=self.config['market_type'],
+                   mode='LIVE_MT5',source='MT5_LIVE',status='SUBMITTING',pnl=0.,remaining_sec=0,
+                   action=signal['action'],amount=prepared['estimated_risk'],risk_budget=prepared['risk_budget'],
+                   exit_policy='SL_TP',plan=prepared['plan'],
+                   requested_volume=prepared['volume'],entry_price=prepared['price'],stop_loss=prepared['stop_loss'],
+                   take_profit=prepared['take_profit'],account_login=account['login'],account_server=account['server'],
+                   currency=account['currency'],account_type=account['account_type'],request=prepared['request'],
+                   strategy=self.config['strategy_id'],timeframe=self.config['timeframe'],confidence=signal['confidence'],
+                   bar_time=signal.get('bar_time'),manual=manual)
+        try:
+            self.journal.reserve_live(trade)
+        except ValueError as exc:
+            self._has_open_trade=True
+            self.trade_history=self._session_trades()
+            return dict(success=False,message=str(exc))
+        self.trade_history.insert(0,trade)
+        self._has_open_trade=True
+        self._last_signal_bar=signal.get('bar_time')
+        self._last_trade_timestamp=trade['created_at']
+        self._mt5_busy=True
+        try:
+            result=await asyncio.to_thread(self.live.send,trade)
+        except Exception:
+            # An intent may have reached MT5 even if the local invocation failed.
+            result=dict(status='PENDING',success=False,pending=True,message='Envio inconclusivo; aguarde reconciliação no MT5, sem repetir a entrada.')
+        finally:
+            self._mt5_busy=False
+        trade.update({k:v for k,v in result.items() if k in ('status','retcode','order_ticket','deal_ticket')})
+        trade['sync_note']=result['message']
+        self.journal.save(trade)
+        self._has_open_trade=trade['status'] in ACTIVE_LIVE
+        if trade['status']=='REJECTED':
+            self.is_running=False
+        self.add_log('TRADE' if result.get('success') else 'ALERT',result['message'])
+        self.notifier.enqueue(trade['id']+':submission',f"MT5 {trade['account_type']} {trade['action']} {trade['symbol']}\nConta {trade['account_login']} / {trade['account_server']}\nVolume solicitado: {trade['requested_volume']} | SL {trade['stop_loss']} | TP {trade['take_profit']}\n{result['message']}")
+        return {**result,'mode':'LIVE_MT5','ticket':trade['id']}
+
+    async def reconcile_live(self):
+        if self._mt5_busy:
+            return
+        for trade in list(self.trade_history):
+            if trade.get('mode')!='LIVE_MT5' or trade['status'] not in ACTIVE_LIVE:
+                continue
+            old_status=trade['status']
+            self._mt5_busy=True
+            try:
+                update=await asyncio.to_thread(self.live.reconcile,trade)
+                trade.update(update)
+                trade.pop('sync_error',None)
+                if trade['status']=='OPEN' and not trade.get('protected',False):
+                    self.is_running=False
+                    self.notifier.enqueue(trade['id']+':unprotected','ALERTA MT5: '+trade['sync_note'])
+            except Exception as exc:
+                note=str(exc) if isinstance(exc,MT5ExecutionError) else 'Falha ao consultar o terminal MT5; novas entradas bloqueadas até reconciliação.'
+                self.is_running=False
+                if trade.get('sync_error')!=note:
+                    self.add_log('ERROR',note)
+                    self.notifier.enqueue(trade['id']+':sync:'+hashlib.sha256(note.encode()).hexdigest()[:12],'ALERTA MT5: '+note+' Posição não foi fechada pelo robô; monitoramento será retomado quando a conexão correta voltar.')
+                trade['sync_error']=note
+            finally:
+                self._mt5_busy=False
+            self.journal.save(trade)
+            if trade['status']!=old_status:
+                if trade['status'] in ('WIN','LOSS','DRAW'):
+                    self._last_trade_timestamp=datetime.now().timestamp()
+                    self.notifier.enqueue(trade['id']+':closed',f"MT5 {trade['status']} {trade['symbol']}\nPosição {trade.get('position_id')} | PnL confirmado {trade['pnl']:.2f} {trade['currency']}\n{trade['sync_note']}")
+                elif trade['status']=='REJECTED':
+                    self.is_running=False
+                    self.notifier.enqueue(trade['id']+':rejected',f"MT5 {trade['symbol']}: {trade['sync_note']}")
+                elif trade['status']=='OPEN':
+                    self.notifier.enqueue(trade['id']+':filled',f"MT5: preenchimento confirmado {trade['symbol']} {trade['action']}\nPosição {trade['position_id']} | Volume {trade['filled_volume']} | Preço médio {trade['entry_price']}\n{trade['sync_note']}")
+                self.add_log('MT5',trade.get('sync_note',trade['status']))
+        self._has_open_trade=any(t.get('mode')=='LIVE_MT5' and t['status'] in ACTIVE_LIVE for t in self.trade_history) or any(t.get('mode','PAPER')=='PAPER' and t['status']=='OPEN' for t in self.trade_history)
+        self._refresh_stats()
+
     async def _settle_trade_after_real_expiration(self, trade, target_dt):
+        if trade['market']!='SAFIRION_OB':
+            raise ValueError('Forex/B3 não podem ser liquidados por expiração; use monitoramento SL/TP.')
         try:
             while datetime.now() < target_dt:
                 trade['remaining_sec'] = max(0, int((target_dt-datetime.now()).total_seconds()))
@@ -359,10 +745,6 @@ class BotManager:
             if trade['market'] == 'SAFIRION_OB':
                 pnl = 0 if change == 0 else (trade['amount']*trade['payout_pct']/100 if change*direction>0 else -trade['amount'])
                 note = 'PAPER: payout configurado, empate devolve a entrada; sem confirmação da corretora.'
-            else:
-                # Virtual unlevered notional, not MT5 lots or a made-up fixed win.
-                pnl = trade['amount'] * change / trade['entry_price'] * direction
-                note = 'PAPER: retorno sobre valor nominal, sem alavancagem, custos ou execução de stops; não representa lotes MT5.'
             trade.update(status='WIN' if pnl>0 else ('LOSS' if pnl<0 else 'DRAW'),
                          exit_price=close_price, pnl=round(pnl, 6), settlement_note=note)
         except asyncio.CancelledError:
@@ -388,11 +770,20 @@ class BotManager:
         for task in tuple(self._settlement_tasks):
             task.cancel()
         await asyncio.gather(*self._settlement_tasks, return_exceptions=True)
+        await self.notifier.close()
         await self.safirion.close()
+        self.journal.release_runtime_lock()
 
     async def run_loop(self):
+        for trade in self.trade_history:
+            if trade.get('mode')=='PAPER' and trade['status']=='OPEN' and trade.get('exit_policy')=='SL_TP':
+                self._track_paper_position(trade)
         while True:
             try:
+                if self._mt5_busy:
+                    await asyncio.sleep(.2)
+                    continue
+                await self.reconcile_live()
                 snapshot = self.get_market_snapshot()
                 if self.is_running:
                     signal = snapshot['signal']
@@ -402,9 +793,10 @@ class BotManager:
                     else:
                         result = await self.execute_trade_from_signal(signal)
                         self.stats['status_reason'] = result['message']
-                    if self.stats['daily_pnl'] <= -self.config['stop_loss'] or self.stats['daily_pnl'] >= self.config['stop_gain'] or self.stats['loss_streak'] >= self.config['max_consecutive_losses'] or len(self.trade_history) >= self.config['max_daily_trades']:
+                    if self.stats['daily_pnl'] <= -self.config['stop_loss'] or self.goal_status()['reached'] or self.stats['loss_streak'] >= self.config['max_consecutive_losses'] or self._entry_count() >= self.config['max_daily_trades']:
                         self.is_running = False
                         self.add_log('ALERT', 'Limite de risco da sessão: robô pausado.')
+                        self.notifier.enqueue('risk-stop:'+self.config['execution_mode']+':'+self._session_day,'Proteção de risco: robô pausado. '+self.telegram_status())
             except Exception as exc:
                 self.is_running = False
                 self.stats['status_reason'] = 'Análise indisponível: execução pausada.'

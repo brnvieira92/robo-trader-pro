@@ -1,6 +1,8 @@
 # ProspeTraderBot — pesquisa e simulação de estratégias
 
-Dashboard FastAPI para estudar sinais de EMA/RSI, Bollinger, rompimentos, confluência e Random Forest. O modo de execução desta revisão é **PAPER**: nenhuma ordem do painel é enviada à corretora, mesmo com uma ponte Safirion ou terminal MT5 conectado. Dados reais e dados artificiais são identificados separadamente.
+Dashboard FastAPI para estudar sinais de EMA/RSI, Bollinger, rompimentos, confluência e Random Forest. O padrão é **PAPER**, com ordens virtuais. O modo **LIVE_MT5**, selecionado explicitamente no painel, envia ordens ao terminal Windows conectado, tanto em conta demo quanto real. Inclui cálculo de volume pelo risco até o SL, intenção persistida antes do envio e apuração por posições/negócios reais. A Safirion permanece em PAPER. Dados reais e artificiais são identificados separadamente.
+
+Consulte o [manual MT5 e Telegram](docs/MT5_TELEGRAM.md) para habilitar o terminal, configurar o BotFather e vincular seu chat sem expor credenciais.
 
 Score técnico mede confluência de regras; não é probabilidade de acerto. As estimativas da IA não são calibradas para lucro. Não há promessa de retorno ou acerto em todas as entradas.
 
@@ -18,7 +20,7 @@ npm run build --prefix frontend
 
 No Windows, use `.venv\Scripts\python` nos comandos Python; o inicializador `iniciar_robo.bat` também inicia o servidor. A dependência nativa MetaTrader5 é instalada apenas no Windows. A ausência desse pacote no Linux é suportada pelo simulador. Os recursos compilados do painel estão em `frontend/vendor`, portanto o painel não exige CDNs nem Node em tempo de execução. Licenças dos recursos distribuídos acompanham esses arquivos. Lightweight Charts: [TradingView](https://www.tradingview.com/).
 
-Use um único processo Uvicorn. A aplicação é local, sem autenticação multiusuário; não exponha sua porta diretamente à Internet. Uma instância equivale a uma sessão de pesquisa, não a um serviço de execução financeira de produção.
+Use um único processo Uvicorn. A aplicação é local, sem autenticação multiusuário; não exponha sua porta diretamente à Internet. Use um único processo por diário e uma única instância do robô por conta; o diário possui bloqueio de instância. O uso real depende da validação operacional do terminal e da corretora, detalhada no manual MT5.
 
 ## O que foi revisado
 
@@ -36,9 +38,11 @@ Use um único processo Uvicorn. A aplicação é local, sem autenticação multi
 
 Padrões: banca virtual de R$ 1.000, entrada de R$ 5, risco máximo de 1% por entrada, três perdas consecutivas, vinte entradas por sessão e intervalo de sessenta segundos. São parâmetros de pesquisa, não uma recomendação de investimento. Configuração, operações e resultados são gravados em `data/paper.sqlite3`, ignorado pelo Git. Para testes isolados, defina `TRADER_JOURNAL_PATH` apontando a outro arquivo.
 
-O dia da sessão é UTC. O histórico de dias anteriores permanece no diário. Reiniciar o processo não apaga perdas nem operações do dia. Ao reiniciar com uma operação PAPER aberta, ela é marcada `INTERRUPTED` e sua reserva integral é debitada como hipótese conservadora; **isso não é uma perda confirmada de mercado**. Não há botão para apagar o histórico e contornar limites. Faça backup do SQLite com o servidor parado.
+O dia da sessão é UTC. O histórico de dias anteriores permanece no diário. Reiniciar o processo não apaga perdas nem operações do dia. Ao reiniciar com uma operação PAPER binária ou baseada no simulador aberta, ela é marcada `INTERRUPTED` e sua reserva integral é debitada como hipótese conservadora; **isso não é uma perda confirmada de mercado**. Posições PAPER Forex/B3 com fonte MT5 real permanecem abertas e aguardam reconexão à mesma conta para retomar o monitoramento por preço, inclusive de um dia para outro. Não há botão para apagar o histórico e contornar limites. Faça backup do SQLite com o servidor parado.
 
-No PAPER binário, o payout é um parâmetro hipotético, sem alegação de valor real da Safirion; empate devolve a entrada. Em dados de MT5, o PAPER calcula retorno não alavancado sobre o valor nominal até o encerramento, **não lotes, contratos ou execução de stops**. Custos e slippage não entram no painel PAPER; podem ser modelados como custo fixo no laboratório binário. Não confunda esses resultados com saldo ou extrato de corretora.
+No PAPER binário, o payout é hipotético; empate devolve a entrada. **PAPER Forex/B3 usa SL/TP por preço, sem expiração**: dimensiona uma quantidade virtual pelo orçamento de risco, desconta o custo fixo configurado e encerra no preço observado ao cruzar SL/TP ou por ação manual. Gaps podem exceder o risco estimado. Essa quantidade não representa o lote negociável da corretora e não modela integralmente liquidez, slippage ou swaps. No modo LIVE_MT5, o lote é calculado pela especificação real do símbolo e os stops são enviados ao servidor.
+
+O plano combina ATR e suporte/resistência de velas fechadas. Descarta entradas sem retorno/risco mínimo após custos ou que se afastaram do sinal. A meta diária pausa novas entradas; o teto de lucro projetado por operação limita o tamanho, sem elevar exposição após perdas. Metas em BRL exigem conversão MT5 válida quando a conta usa outra moeda. Consulte o [manual Forex e meta diária](docs/FOREX_META_DIARIA.md).
 
 ## Laboratório CSV
 
@@ -60,8 +64,9 @@ A análise usa payout e custo fixos; não modela latência, gaps de execução o
 
 A extensão `safirion-extension` pode fornecer ticks da aba autenticada. Escolha o mesmo ativo no painel e na corretora. O backend aguarda histórico observado suficiente e interrompe a análise se a cotação ficar velha. Heartbeats sem identidade de ativo não são preços. A extensão permanece uma integração experimental por DOM/WebSocket.
 
-A execução real pelo painel está bloqueada porque o fluxo anterior tratava envio de comando como preenchimento e estimava resultados financeiros sem confirmação. Para reativá-la é necessário implementar e testar confirmação de preenchimentos, identificadores de conta/ativo/ordem, resultados correlacionados por ordem, reconciliação após falhas, custos, limites específicos do instrumento e persistência de ordens pendentes. Não basta trocar um rótulo de conta na interface.
+A execução MT5 é habilitada pelo modo LIVE_MT5, com a conta e servidor vinculados e terminal autorizado para a API Python. O backend não substitui um envio real que falhou por uma simulação. Pausar não fecha posições abertas; elas mantêm os stops no servidor e o acompanhamento por histórico, inclusive após reinício. A aplicação inicia a automação pausada. A extensão Safirion continua uma fonte experimental para PAPER.
 
+O Telegram é opcional: `/status`, `/pausar` e alertas de ordens, resultados e falhas, restritos ao chat configurado. Use `python -m backend.telegram_setup` depois de criar um bot dedicado no BotFather. O token fica no `.env` local ignorado pelo Git. Veja o manual acima.
 Também não há calendário econômico integrado nem validação de múltiplos usuários. O filtro de notícias que existia apenas visualmente foi removido.
 
 ## Validar
@@ -72,4 +77,6 @@ Também não há calendário econômico integrado nem validação de múltiplos 
 npm run build --prefix frontend
 ```
 
-Os testes cobrem separação temporal, ausência de dados futuros, RSI, estimativas da IA, validação OHLCV, cálculo de custos no backtest, limites de risco, concorrência, ausência de envio real, empate, fonte desatualizada, reinício, persistência e rotas HTTP/WebSocket. Um teste de navegador reproduzível está em `tests/browser_smoke.py`.
+Os testes cobrem separação temporal, ausência de dados futuros, RSI, estimativas da IA, validação OHLCV, cálculo de custos no backtest, limites de risco, concorrência, ausência de envio real em PAPER, envio/reconciliação MT5 com SDK controlado, notificações Telegram, empate, fonte desatualizada, reinício, persistência e rotas HTTP/WebSocket. Um teste de navegador reproduzível está em `tests/browser_smoke.py`.
+
+Para verificar a interface Forex em um servidor isolado PAPER: `python tests/browser_forex.py http://127.0.0.1:8001`. Esse roteiro altera apenas a configuração do servidor de teste, abre e encerra posições virtuais e usa parâmetros permissivos para testar a interface; não valida a estratégia.
