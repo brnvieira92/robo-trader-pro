@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "RoboTrader Pro — Safirion Bridge v2.5 (Velas Reais + Cliques 2º Plano)",
+  "version": "2.5.0",
+  "description": "Captura os pacotes WebSocket e cotações em tempo real da Safirion desde o carregamento da página e executa ordens em 2º plano.",
+  "permissions": ["activeTab", "scripting"],
+  "host_permissions": [
+    "https://*.safirion.com/*",
+    "https://*.safirion.io/*",
+    "https://*.safirion.net/*",
+    "http://localhost:8000/*",
+    "http://127.0.0.1:8000/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.safirion.com/*",
+        "https://*.safirion.io/*",
+        "https://*.safirion.net/*"
+      ],
+      "js": ["page_ws_hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "https://*.safirion.com/*",
+        "https://*.safirion.io/*",
+        "https://*.safirion.net/*"
+      ],
+      "js": ["content_bridge.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}

@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RoboTrader Pro — Safirion (OB) & MetaTrader 5 (Forex / B3)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    body {
+      background-color: #0b0f19;
+      color: #e2e8f0;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    }
+    .glass-card {
+      background: rgba(17, 24, 39, 0.85);
+      border: 1px solid rgba(51, 65, 85, 0.6);
+      backdrop-filter: blur(8px);
+    }
+    .pulse-dot {
+      animation: pulse 1.8s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.45; transform: scale(1.15); }
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+  <!-- TOPBAR -->
+  <header class="border-b border-slate-800 bg-slate-900/90 px-6 py-3 flex flex-wrap items-center justify-between gap-4">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center font-bold text-slate-950 text-xl shadow-lg shadow-emerald-500/20">
+        RT
+      </div>
+      <div>
+        <h1 class="text-lg font-bold tracking-tight text-white flex items-center gap-2">
+          RoboTrader Pro
+          <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-400 border border-cyan-500/30">
+            MT5 + Safirion Unified
+          </span>
+        </h1>
+        <p id="statusReasonBanner" class="text-xs text-slate-400">Inicializando motor de análise...</p>
+      </div>
+    </div>
+
+    <!-- Conexões e Botão Ligar/Desligar -->
+    <div class="flex items-center gap-3 flex-wrap">
+      <div id="badgeMt5" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+        <span>MT5: Simulador</span>
+      </div>
+      <div id="badgeSafirion" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
+        <span>Safirion: Simulador</span>
+      </div>
+
+      <button onclick="openConnectionsModal()" class="px-3.5 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition">
+        Conectar Contas (MT5 / Safirion)
+      </button>
+
+      <button id="btnToggleBot" onclick="toggleBot()" class="px-5 py-2 rounded-lg text-sm font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-lg shadow-emerald-500/25 transition flex items-center gap-2">
+        <span id="botDot" class="w-2.5 h-2.5 rounded-full bg-slate-950"></span>
+        <span id="btnToggleText">LIGAR ROBÔ AUTOMÁTICO</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- MAIN GRID -->
+  <main class="flex-1 p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 max-w-[1600px] w-full mx-auto">
+
+    <!-- COLUNA ESQUERDA: Configurações de Mercado, Estratégia e Gerenciamento de Risco (4 cols) -->
+    <section class="lg:col-span-4 flex flex-col gap-5">
+
+      <!-- Card 1: Seleção de Mercado e Ativo -->
+      <div class="glass-card rounded-xl p-5">
+        <h2 class="text-sm font-bold uppercase tracking-wider text-slate-400 mb-4 flex items-center justify-between">
+          <span>1. Mercado, Ativo & Estratégia</span>
+          <span id="activeMarketTag" class="text-[11px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300">Safirion OB</span>
+        </h2>
+
+        <div class="space-y-3.5">
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Plataforma / Modalidade de Execução</label>
+            <select id="cfgMarketType" onchange="onMarketTypeChange()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-cyan-500 focus:outline-none">
+              <option value="SAFIRION_OB">Safirion — Opções (Binárias / Digital / Blitz)</option>
+              <option value="MT5_B3">MetaTrader 5 — B3 (Mini Índice WIN / Mini Dólar WDO)</option>
+              <option value="MT5_FOREX">MetaTrader 5 — Forex Internacional & Ouro</option>
+            </select>
+          </div>
+
+          <div id="boxSafirionSubType">
+            <label class="block text-xs text-cyan-400 font-semibold mb-1">Classe do Ativo na Safirion (Importante!)</label>
+            <select id="cfgSafirionSubType" onchange="saveConfig()" class="w-full bg-slate-900 border border-cyan-500/40 rounded-lg px-3 py-2 text-sm text-white focus:border-cyan-400 focus:outline-none">
+              <option value="BINARY">Binárias (Tradicional - Expiração 1m / 5m)</option>
+              <option value="DIGITAL">Digital (Opções Digitais - Strike Price)</option>
+              <option value="BLITZ">Blitz (Expiração Rápida 5s / 15s / 30s)</option>
+            </select>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">Ativo (Símbolo)</label>
+              <select id="cfgSymbol" onchange="saveConfig()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-cyan-500 focus:outline-none">
+                <option value="EURUSD">EURUSD (Euro / Dólar)</option>
+                <option value="GBPUSD">GBPUSD (Libra / Dólar)</option>
+                <option value="USDJPY">USDJPY (Dólar / Iene)</option>
+                <option value="XAUUSD">XAUUSD (Ouro)</option>
+                <option value="BTCUSD">BTCUSD (Bitcoin)</option>
+                <option value="WIN$N">WIN$N (Mini Índice B3)</option>
+                <option value="WDO$N">WDO$N (Mini Dólar B3)</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">Timeframe Gráfico</label>
+              <select id="cfgTimeframe" onchange="saveConfig()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-cyan-500 focus:outline-none">
+                <option value="M1">M1 (1 Minuto)</option>
+                <option value="M5">M5 (5 Minutos)</option>
+                <option value="M15">M15 (15 Minutos)</option>
+                <option value="H1">H1 (1 Hora)</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Motor de Estratégia + Inteligência Artificial</label>
+            <select id="cfgStrategy" onchange="saveConfig()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-cyan-500 focus:outline-none">
+              <option value="bollinger_rsi_reversal">1. Bandas de Bollinger + RSI + Juiz IA</option>
+              <option value="ema_rsi_crossover">2. Cruzamento de Médias (EMA 9/21) + RSI + Juiz IA</option>
+              <option value="price_action_breakout">3. Price Action: Rompimento Máx/Mín + Volume + Juiz IA</option>
+              <option value="multi_confluence">4. Confluência Multi-Indicadores (EMA + RSI + MACD) + Juiz IA</option>
+              <option value="ml_random_forest">5. 🧠 IA Pura — Machine Learning (Random Forest scikit-learn)</option>
+            </select>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">Confiança Mínima (%)</label>
+              <input id="cfgMinConfidence" type="number" step="1" min="50" max="99" value="75" onchange="saveConfig()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">Expiração OB (Min)</label>
+              <input id="cfgExpiration" type="number" step="1" min="1" max="15" value="1" onchange="saveConfig()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Card 2: Gerenciamento de Risco e Banca -->
+      <div class="glass-card rounded-xl p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-sm font-bold uppercase tracking-wider text-slate-400">2. Gestão de Risco & Banca</h2>
+          <button onclick="resetStats()" class="text-xs text-slate-400 hover:text-white underline">Zerar Placar</button>
+        </div>
+
+        <div class="grid grid-cols-3 gap-3 mb-3">
+          <div>
+            <label id="lblEntryAmount" class="block text-xs text-slate-400 mb-1">Valor Entrada (R$)</label>
+            <input id="cfgEntryAmount" type="number" step="1" min="1" value="50" onchange="saveConfig()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
+          </div>
+          <div>
+            <label class="block text-xs text-emerald-400 mb-1">Stop Gain (R$)</label>
+            <input id="cfgStopGain" type="number" step="10" value="500" onchange="saveConfig()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
+          </div>
+          <div>
+            <label class="block text-xs text-rose-400 mb-1">Stop Loss (R$)</label>
+            <input id="cfgStopLoss" type="number" step="10" value="250" onchange="saveConfig()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
+          </div>
+        </div>
+
+        <div class="pt-3 border-t border-slate-800 flex items-center justify-between gap-2">
+          <label class="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+            <input id="cfgUseMartingale" type="checkbox" onchange="saveConfig()" class="rounded bg-slate-800 border-slate-600 text-cyan-500" />
+            <span>Usar Proteção Martingale (1 Gale)</span>
+          </label>
+          <div class="flex items-center gap-1.5">
+            <span class="text-xs text-slate-400">Fator:</span>
+            <input id="cfgMartingaleFactor" type="number" step="0.1" value="2.0" onchange="saveConfig()" class="w-16 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white text-center" />
+          </div>
+        </div>
+      </div>
+
+      <!-- Card 3: Boleta de Execução Instantânea Manual / Teste -->
+      <div class="glass-card rounded-xl p-5">
+        <h2 class="text-sm font-bold uppercase tracking-wider text-slate-400 mb-3">3. Boleta Manual / Disparo Rápido</h2>
+        <p class="text-xs text-slate-400 mb-3">
+          Envie uma ordem imediata na corretora selecionada para testar a velocidade de execução ou operar manualmente junto com o robô:
+        </p>
+        <div class="grid grid-cols-2 gap-3">
+          <button onclick="sendManualOrder('BUY')" class="py-3 rounded-xl font-bold text-sm bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/20 transition flex flex-col items-center">
+            <span>COMPRAR / CALL ▲</span>
+            <span class="text-[11px] font-normal opacity-80">Acima / Tendência Alta</span>
+          </button>
+          <button onclick="sendManualOrder('SELL')" class="py-3 rounded-xl font-bold text-sm bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-600/20 transition flex flex-col items-center">
+            <span>VENDER / PUT ▼</span>
+            <span class="text-[11px] font-normal opacity-80">Abaixo / Tendência Baixa</span>
+          </button>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- COLUNA DIREITA: KPIs, Gráfico em Tempo Real, Termômetro de Sinal e Histórico (8 cols) -->
+    <section class="lg:col-span-8 flex flex-col gap-5">
+
+      <!-- KPIs Superiores -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div class="glass-card rounded-xl p-4">
+          <span class="text-xs text-slate-400">Resultado do Dia (PnL)</span>
+          <div id="kpiPnl" class="text-2xl font-extrabold mt-1 text-white">R$ 0,00</div>
+          <span id="kpiGale" class="text-[11px] text-slate-500">Gale Atual: 0</span>
+        </div>
+        <div class="glass-card rounded-xl p-4">
+          <span class="text-xs text-slate-400">Taxa de Acerto (Win Rate)</span>
+          <div id="kpiWinRate" class="text-2xl font-extrabold mt-1 text-cyan-400">0.0%</div>
+          <span id="kpiTradesCount" class="text-[11px] text-slate-400">0 Wins / 0 Losses</span>
+        </div>
+        <div class="glass-card rounded-xl p-4">
+          <span class="text-xs text-slate-400">Sinal da Estratégia Atual</span>
+          <div id="kpiSignalAction" class="text-2xl font-extrabold mt-1 text-slate-300">NEUTRO</div>
+          <span id="kpiConfidence" class="text-[11px] text-slate-400">Confiança: 0%</span>
+        </div>
+        <div class="glass-card rounded-xl p-4">
+          <span class="text-xs text-slate-400">Cotação Atual & RSI</span>
+          <div id="kpiPrice" class="text-2xl font-extrabold mt-1 text-white">--</div>
+          <span id="kpiIndicators" class="text-[11px] text-slate-400">RSI(14): -- | ATR: --</span>
+        </div>
+      </div>
+
+      <!-- Gráfico de Candles em Tempo Real + Diagnóstico do Sinal -->
+      <div class="glass-card rounded-xl p-5 flex flex-col gap-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 id="chartTitle" class="text-sm font-bold text-white">Gráfico em Tempo Real — EURUSD (M1)</h2>
+            <p id="signalReasonBox" class="text-xs text-cyan-400 mt-0.5">Analisando candles...</p>
+          </div>
+          <div class="flex items-center gap-4 text-xs text-slate-400 flex-wrap">
+            <span class="flex items-center gap-1.5"><span class="w-3 h-0.5 bg-cyan-400 inline-block"></span> EMA Rápida (9)</span>
+            <span class="flex items-center gap-1.5"><span class="w-3 h-0.5 bg-amber-400 inline-block"></span> EMA Lenta (21)</span>
+            <span class="flex items-center gap-1.5"><span class="w-3 h-0.5 bg-purple-400 inline-block"></span> Bandas de Bollinger (20, 2.0)</span>
+          </div>
+        </div>
+
+        <!-- Barra de Telemetria ao Vivo dos Indicadores + IA Machine Learning -->
+        <div class="grid grid-cols-2 sm:grid-cols-6 gap-2 bg-slate-950/80 border border-slate-800 rounded-lg p-2.5 text-[11px]">
+          <div><span class="text-slate-500">Fonte de Dados:</span> <b id="telSource" class="text-emerald-400 block">Sincronizando...</b></div>
+          <div><span class="text-slate-500">EMA 9 / EMA 21:</span> <b id="telEmas" class="text-cyan-300 block">-- / --</b></div>
+          <div><span class="text-slate-500">Bollinger Sup / Inf:</span> <b id="telBb" class="text-purple-300 block">-- / --</b></div>
+          <div><span class="text-slate-500">RSI (14):</span> <b id="telRsi" class="text-white block">--</b></div>
+          <div><span class="text-slate-500">🧠 IA (Alta / Queda):</span> <b id="telMacd" class="text-emerald-300 block">--% / --%</b></div>
+          <div><span class="text-slate-500">Ticks Safirion:</span> <b id="telTicks" class="text-amber-300 block">0</b></div>
+        </div>
+
+        <div id="chartContainer" class="w-full h-[340px] rounded-lg overflow-hidden border border-slate-800/80"></div>
+      </div>
+
+      <!-- Histórico de Operações e Logs do Sistema -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <!-- Tabela de Operações -->
+        <div class="glass-card rounded-xl p-5 flex flex-col">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Últimas Entradas Executadas</h3>
+          <div class="overflow-y-auto max-h-56 pr-1">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr class="border-b border-slate-800 text-slate-400">
+                  <th class="pb-2">Hora</th>
+                  <th class="pb-2">Ativo</th>
+                  <th class="pb-2">Tipo</th>
+                  <th class="pb-2">Valor</th>
+                  <th class="pb-2 text-right">Resultado</th>
+                </tr>
+              </thead>
+              <tbody id="tradesTableBody" class="divide-y divide-slate-800/60">
+                <tr><td colspan="5" class="py-6 text-center text-slate-500">Nenhuma operação realizada ainda.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Console de Logs em Tempo Real -->
+        <div class="glass-card rounded-xl p-5 flex flex-col">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Diário de Execução (Logs)</h3>
+          <div id="logsContainer" class="overflow-y-auto max-h-56 space-y-1.5 font-mono text-[11px] bg-slate-950/70 p-3 rounded-lg border border-slate-800">
+          </div>
+        </div>
+      </div>
+
+    </section>
+  </main>
+
+  <!-- MODAL DE CONEXÃO COM SAFIRION E METATRADER 5 -->
+  <div id="connectionsModal" class="fixed inset-0 bg-black/75 hidden items-center justify-center z-50 p-4">
+    <div class="glass-card rounded-2xl max-w-2xl w-full p-6 border border-slate-700 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3 mb-5">
+        <h2 class="text-base font-bold text-white">Configurar Conexões: Safirion & MetaTrader 5</h2>
+        <button onclick="closeConnectionsModal()" class="text-slate-400 hover:text-white text-sm font-bold">✕</button>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <!-- Safirion Config — Ponte em 2º Plano (Abordagem 2: Funciona Minimizado!) -->
+        <div class="bg-slate-900/90 p-4 rounded-xl border border-slate-800 space-y-3">
+          <h3 class="text-sm font-bold text-cyan-400">1. Safirion — Ponte em 2º Plano (Funciona Minimizado!)</h3>
+          <p class="text-xs text-slate-300 leading-relaxed">
+            Conecta direto por dentro da sua guia aberta em <code>trade.safirion.com/traderoom</code>, lendo os preços de <b>Binárias, Digital ou Blitz</b> e enviando cliques via DOM (você pode minimizar a janela!).
+          </p>
+
+          <div class="bg-slate-950 border border-cyan-500/30 rounded-lg p-3 space-y-2">
+            <div class="text-xs font-bold text-cyan-300">Opção Rápida (10 segundos — Sem instalar nada):</div>
+            <ol class="text-[11px] text-slate-300 list-decimal list-inside space-y-1">
+              <li>Clique no botão abaixo para <b>Copiar o Script da Ponte</b>.</li>
+              <li>Vá na sua guia aberta da <b>Safirion</b>, aperte <b>F12</b> (ou <code>Ctrl+Shift+I</code>), clique na aba <b>Console</b>, cole (<code>Ctrl+V</code>) e dê <b>Enter</b>!</li>
+              <li>Uma barra azul (<b>🤖 RoboTrader Bridge</b>) vai aparecer no topo da Safirion para você vincular o botão CALL e PUT com 1 clique!</li>
+            </ol>
+            <button onclick="copyBridgeScript()" class="w-full py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs transition">
+              📋 Copiar Script de Conexão Direta (Colar no F12 da Safirion)
+            </button>
+          </div>
+
+          <div class="text-[11px] text-slate-400 bg-slate-950/60 border border-slate-800 rounded-lg p-2.5">
+            <b>Ou instale como Extensão Fixa do Chrome:</b> Abra <code>chrome://extensions</code>, ative o <i>Modo do desenvolvedor</i>, clique em <i>Carregar sem compactação</i> e selecione a pasta:<br/>
+            <code class="text-emerald-400 select-all">C:\Users\bruno\.gemini\antigravity\scratch\robo-trader-pro\safirion-extension</code>
+          </div>
+        </div>
+
+        <!-- MetaTrader 5 Config -->
+        <div class="bg-slate-900/90 p-4 rounded-xl border border-slate-800 space-y-3">
+          <h3 class="text-sm font-bold text-emerald-400">2. MetaTrader 5 (Forex & B3 WIN/WDO)</h3>
+          <p class="text-xs text-slate-400">
+            Se o MT5 estiver aberto no seu Windows, deixe os campos em branco para conectar direto ao terminal logado.
+          </p>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Login MT5 (Opcional se já aberto)</label>
+            <input id="mt5Login" type="number" placeholder="Ex: 10293847" class="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-xs text-white" />
+          </div>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Servidor da Corretora (Opcional)</label>
+            <input id="mt5Server" type="text" placeholder="Ex: XPInvestimentos-PRD ou Exness-MT5Real" class="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-xs text-white" />
+          </div>
+          <button onclick="connectMt5()" class="w-full py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs transition mt-4">
+            Sincronizar Terminal MT5
+          </button>
+        </div>
+      </div>
+
+      <div id="modalFeedback" class="mt-4 text-xs text-center text-amber-300 font-semibold"></div>
+    </div>
+  </div>
+
+  <script>
+    let chart, candleSeries, emaFastSeries, emaSlowSeries, bbUpperSeries, bbLowerSeries;
+    let isInitialized = false;
+
+    function initChart() {
+      const container = document.getElementById('chartContainer');
+      chart = LightweightCharts.createChart(container, {
+        layout: {
+          background: { type: 'solid', color: '#090d16' },
+          textColor: '#94a3b8',
+        },
+        grid: {
+          vertLines: { color: '#1e293b' },
+          horzLines: { color: '#1e293b' },
+        },
+        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+        rightPriceScale: { borderColor: '#1e293b' },
+        timeScale: { borderColor: '#1e293b', timeVisible: true, secondsVisible: false },
+      });
+
+      candleSeries = chart.addCandlestickSeries({
+        upColor: '#10b981',
+        downColor: '#f43f5e',
+        borderVisible: false,
+        wickUpColor: '#10b981',
+        wickDownColor: '#f43f5e',
+      });
+
+      emaFastSeries = chart.addLineSeries({ color: '#22d3ee', lineWidth: 2 });
+      emaSlowSeries = chart.addLineSeries({ color: '#f59e0b', lineWidth: 2 });
+      bbUpperSeries = chart.addLineSeries({ color: 'rgba(192, 132, 252, 0.65)', lineWidth: 1, lineStyle: 2 });
+      bbLowerSeries = chart.addLineSeries({ color: 'rgba(192, 132, 252, 0.65)', lineWidth: 1, lineStyle: 2 });
+
+      window.addEventListener('resize', () => {
+        chart.applyOptions({ width: container.clientWidth, height: 340 });
+      });
+    }
+
+    function onMarketTypeChange() {
+      const marketType = document.getElementById('cfgMarketType').value;
+      const symbolSelect = document.getElementById('cfgSymbol');
+      const lblEntry = document.getElementById('lblEntryAmount');
+      const boxSafSub = document.getElementById('boxSafirionSubType');
+
+      if (marketType === 'MT5_B3') {
+        boxSafSub.classList.add('hidden');
+        symbolSelect.value = 'WIN$N';
+        lblEntry.textContent = 'Contratos (Lotes)';
+        document.getElementById('cfgEntryAmount').value = 1;
+      } else if (marketType === 'MT5_FOREX') {
+        boxSafSub.classList.add('hidden');
+        symbolSelect.value = 'EURUSD';
+        lblEntry.textContent = 'Volume (Lotes)';
+        document.getElementById('cfgEntryAmount').value = 0.1;
+      } else {
+        boxSafSub.classList.remove('hidden');
+        symbolSelect.value = 'EURUSD';
+        lblEntry.textContent = 'Valor Entrada (R$)';
+        document.getElementById('cfgEntryAmount').value = 50;
+      }
+      saveConfig();
+    }
+
+    async function saveConfig() {
+      const payload = {
+        market_type: document.getElementById('cfgMarketType').value,
+        safirion_sub_type: document.getElementById('cfgSafirionSubType').value,
+        symbol: document.getElementById('cfgSymbol').value,
+        timeframe: document.getElementById('cfgTimeframe').value,
+        strategy_id: document.getElementById('cfgStrategy').value,
+        min_confidence: parseFloat(document.getElementById('cfgMinConfidence').value || 75),
+        expiration_minutes: parseInt(document.getElementById('cfgExpiration').value || 1),
+        entry_amount: parseFloat(document.getElementById('cfgEntryAmount').value || 50),
+        stop_gain: parseFloat(document.getElementById('cfgStopGain').value || 500),
+        stop_loss: parseFloat(document.getElementById('cfgStopLoss').value || 250),
+        use_martingale: document.getElementById('cfgUseMartingale').checked,
+        martingale_factor: parseFloat(document.getElementById('cfgMartingaleFactor').value || 2.0),
+      };
+      await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      await fetchState();
+    }
+
+    async function toggleBot() {
+      await fetch('/api/bot/toggle', { method: 'POST' });
+      await fetchState();
+    }
+
+    async function sendManualOrder(action) {
+      await fetch('/api/order/manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      await fetchState();
+    }
+
+    async function resetStats() {
+      await fetch('/api/stats/reset', { method: 'POST' });
+      await fetchState();
+    }
+
+    function openConnectionsModal() {
+      document.getElementById('connectionsModal').classList.remove('hidden');
+      document.getElementById('connectionsModal').classList.add('flex');
+    }
+
+    function closeConnectionsModal() {
+      document.getElementById('connectionsModal').classList.add('hidden');
+      document.getElementById('connectionsModal').classList.remove('flex');
+    }
+
+    async function copyBridgeScript() {
+      const feedback = document.getElementById('modalFeedback');
+      try {
+        const res = await fetch('/api/safirion/bridge.js');
+        const code = await res.text();
+        await navigator.clipboard.writeText(code);
+        feedback.textContent = '✅ Script copiado! Agora vá na guia da Safirion, aperte F12 -> aba Console, cole (Ctrl+V) e aperte Enter!';
+      } catch (e) {
+        feedback.textContent = 'Erro ao copiar script: ' + e;
+      }
+    }
+
+    async function connectMt5() {
+      const feedback = document.getElementById('modalFeedback');
+      feedback.textContent = 'Buscando terminal MetaTrader 5 no Windows...';
+      const loginVal = document.getElementById('mt5Login').value;
+      const serverVal = document.getElementById('mt5Server').value;
+      const res = await fetch('/api/connect/mt5', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          login: loginVal ? parseInt(loginVal) : null,
+          server: serverVal || null,
+          use_simulation_if_unavailable: true,
+        }),
+      });
+      const data = await res.json();
+      feedback.textContent = data.message;
+      await fetchState();
+    }
+
+    async function fetchState() {
+      try {
+        const res = await fetch('/api/state');
+        const state = await res.json();
+
+        // Sincroniza inputs na primeira carga
+        if (!isInitialized) {
+          document.getElementById('cfgMarketType').value = state.config.market_type;
+          if (state.config.safirion_sub_type) {
+            document.getElementById('cfgSafirionSubType').value = state.config.safirion_sub_type;
+          }
+          document.getElementById('cfgSymbol').value = state.config.symbol;
+          document.getElementById('cfgTimeframe').value = state.config.timeframe;
+          document.getElementById('cfgStrategy').value = state.config.strategy_id;
+          isInitialized = true;
+        }
+
+        // Status do Robô
+        const btnToggle = document.getElementById('btnToggleBot');
+        const btnText = document.getElementById('btnToggleText');
+        const botDot = document.getElementById('botDot');
+        document.getElementById('statusReasonBanner').textContent = state.stats.status_reason;
+
+        if (state.is_running) {
+          btnToggle.className = 'px-5 py-2 rounded-lg text-sm font-bold bg-rose-500 hover:bg-rose-400 text-white shadow-lg shadow-rose-500/25 transition flex items-center gap-2';
+          btnText.textContent = 'PAUSAR ROBÔ AUTOMÁTICO';
+          botDot.className = 'w-2.5 h-2.5 rounded-full bg-white pulse-dot';
+        } else {
+          btnToggle.className = 'px-5 py-2 rounded-lg text-sm font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-lg shadow-emerald-500/25 transition flex items-center gap-2';
+          btnText.textContent = 'LIGAR ROBÔ AUTOMÁTICO';
+          botDot.className = 'w-2.5 h-2.5 rounded-full bg-slate-950';
+        }
+
+        // Tag de mercado ativo
+        const subName = state.config.safirion_sub_type || 'BINARY';
+        const marketLabels = {
+          'SAFIRION_OB': `Safirion (${subName})`,
+          'MT5_B3': 'MT5 B3 (WIN/WDO)',
+          'MT5_FOREX': 'MT5 Forex'
+        };
+        document.getElementById('activeMarketTag').textContent = marketLabels[state.config.market_type] || state.config.market_type;
+
+        // Badges de conexão
+        const mt5Conn = state.connections.mt5;
+        document.getElementById('badgeMt5').innerHTML = mt5Conn.simulation_mode
+          ? '<span class="w-2 h-2 rounded-full bg-amber-400"></span><span>MT5: Simulador Ativo</span>'
+          : '<span class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></span><span>MT5: Conectado Ao Vivo</span>';
+
+        const safConn = state.connections.safirion;
+        document.getElementById('badgeSafirion').innerHTML = safConn.simulation_mode
+          ? `<span class="w-2 h-2 rounded-full bg-amber-400"></span><span>Safirion: Ponte Desconectada (Simulador)</span>`
+          : `<span class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></span><span>Safirion: PONTE 2º PLANO ATIVA (${safConn.sub_type})</span>`;
+
+        // KPIs
+        const pnl = state.stats.daily_pnl;
+        const kpiPnl = document.getElementById('kpiPnl');
+        kpiPnl.textContent = `${pnl >= 0 ? '+ ' : '- '}R$ ${Math.abs(pnl).toFixed(2)}`;
+        kpiPnl.className = `text-2xl font-extrabold mt-1 ${pnl > 0 ? 'text-emerald-400' : pnl < 0 ? 'text-rose-400' : 'text-white'}`;
+        document.getElementById('kpiGale').textContent = `Gale Atual: ${state.stats.current_gale_step}`;
+
+        document.getElementById('kpiWinRate').textContent = `${state.stats.win_rate.toFixed(1)}%`;
+        document.getElementById('kpiTradesCount').textContent = `${state.stats.wins} Wins / ${state.stats.losses} Losses (${state.stats.total_trades} total)`;
+
+        if (state.signal) {
+          const act = state.signal.action;
+          const kpiSig = document.getElementById('kpiSignalAction');
+          if (act === 'BUY') {
+            kpiSig.textContent = state.config.market_type === 'SAFIRION_OB' ? 'COMPRA (CALL ▲)' : 'COMPRA (BUY ▲)';
+            kpiSig.className = 'text-xl font-extrabold mt-1 text-emerald-400';
+          } else if (act === 'SELL') {
+            kpiSig.textContent = state.config.market_type === 'SAFIRION_OB' ? 'VENDA (PUT ▼)' : 'VENDA (SELL ▼)';
+            kpiSig.className = 'text-xl font-extrabold mt-1 text-rose-400';
+          } else {
+            kpiSig.textContent = 'AGUARDANDO GATILHO';
+            kpiSig.className = 'text-lg font-bold mt-1 text-slate-400';
+          }
+          document.getElementById('kpiConfidence').textContent = `Confiança do Sinal: ${state.signal.confidence}%`;
+          document.getElementById('kpiPrice').textContent = state.signal.price;
+          const ind = state.signal.indicators || {};
+          document.getElementById('kpiIndicators').textContent = `RSI(14): ${ind.rsi ?? '--'} | ATR: ${ind.atr ?? '--'}`;
+          document.getElementById('signalReasonBox').textContent = state.signal.reason;
+
+          // Atualiza Barra de Telemetria ao Vivo dos Indicadores
+          const isSafLive = (state.config.market_type === 'SAFIRION_OB' && safConn.ws_messages_received > 0);
+          document.getElementById('telSource').textContent = isSafLive
+            ? `Safirion Ao Vivo (${safConn.sub_type})`
+            : (state.config.market_type === 'SAFIRION_OB' ? 'Base Ancorada / Simulador' : 'MetaTrader 5');
+          document.getElementById('telEmas').textContent = `${ind.ema_fast ?? '--'} / ${ind.ema_slow ?? '--'}`;
+          document.getElementById('telBb').textContent = `${ind.bb_upper ?? '--'} / ${ind.bb_lower ?? '--'}`;
+          document.getElementById('telRsi').textContent = `${ind.rsi ?? '--'}`;
+          document.getElementById('telMacd').textContent = (ind.ml_prob_up !== undefined)
+            ? `▲ ${ind.ml_prob_up}% | ▼ ${ind.ml_prob_down}%`
+            : `${ind.macd_hist ?? '--'}`;
+          document.getElementById('telTicks').textContent = `${safConn.ws_messages_received || 0} recebidos`;
+        }
+
+        document.getElementById('chartTitle').textContent = `Gráfico em Tempo Real — ${state.config.symbol} (${state.config.timeframe})`;
+
+        // Atualiza Candles e Indicadores no Gráfico
+        if (state.candles && state.candles.length > 0) {
+          candleSeries.setData(state.candles.map(c => ({
+            time: c.time,
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+          })));
+          emaFastSeries.setData(state.candles.map(c => ({ time: c.time, value: c.ema_fast })));
+          emaSlowSeries.setData(state.candles.map(c => ({ time: c.time, value: c.ema_slow })));
+          bbUpperSeries.setData(state.candles.map(c => ({ time: c.time, value: c.bb_upper })));
+          bbLowerSeries.setData(state.candles.map(c => ({ time: c.time, value: c.bb_lower })));
+        }
+
+        // Atualiza Tabela de Operações
+        const tbody = document.getElementById('tradesTableBody');
+        if (state.trades && state.trades.length > 0) {
+          tbody.innerHTML = state.trades.map(t => {
+            const isBuy = t.action === 'BUY' || t.action === 'CALL';
+            const badgeColor = isBuy ? 'text-emerald-400 bg-emerald-500/10' : 'text-rose-400 bg-rose-500/10';
+            const remTxt = t.remaining_sec ? ` (${t.remaining_sec}s)` : '';
+            const expClock = t.expiration_time ? ` às ${t.expiration_time}` : '';
+            let resHtml = `<span class="text-amber-400 font-semibold">⏳ Fecha${expClock}${remTxt}</span>`;
+            if (t.status === 'WIN') {
+              resHtml = `<span class="text-emerald-400 font-bold">+R$ ${t.pnl.toFixed(2)} (WIN)</span>`;
+            } else if (t.status === 'LOSS') {
+              resHtml = `<span class="text-rose-400 font-bold">-R$ ${Math.abs(t.pnl).toFixed(2)} (LOSS)</span>`;
+            }
+            return `
+              <tr>
+                <td class="py-2 text-slate-400">${t.time}</td>
+                <td class="py-2 font-semibold text-white">${t.symbol} <span class="text-[10px] text-slate-500">@${t.entry_price}</span></td>
+                <td class="py-2"><span class="px-2 py-0.5 rounded font-bold ${badgeColor}">${t.action}</span></td>
+                <td class="py-2 text-slate-300">R$ ${t.amount}</td>
+                <td class="py-2 text-right">${resHtml}</td>
+              </tr>
+            `;
+          }).join('');
+        } else {
+          tbody.innerHTML = '<tr><td colspan="5" class="py-6 text-center text-slate-500">Nenhuma operação realizada ainda.</td></tr>';
+        }
+
+        // Atualiza Logs
+        const logsBox = document.getElementById('logsContainer');
+        if (state.logs) {
+          logsBox.innerHTML = state.logs.map(l => {
+            let color = 'text-slate-300';
+            if (l.level === 'WIN' || l.level === 'SUCCESS') color = 'text-emerald-400';
+            else if (l.level === 'LOSS' || l.level === 'ALERT' || l.level === 'ERROR') color = 'text-rose-400';
+            else if (l.level === 'TRADE' || l.level === 'START') color = 'text-cyan-400';
+            return `<div><span class="text-slate-500">[${l.time}]</span> <span class="font-bold ${color}">[${l.level}]</span> <span class="text-slate-200">${l.message}</span></div>`;
+          }).join('');
+        }
+      } catch (err) {
+        console.error('Erro ao buscar estado:', err);
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      initChart();
+      fetchState();
+      setInterval(fetchState, 1500);
+    });
+  </script>
+</body>
+</html>
