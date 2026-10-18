@@ -31,3 +31,6 @@ data/
 # Frontend build dependencies
 node_modules/
 .pytest_cache/
+
+# Safe configuration template (contains no credential values)
+!.env.example
