@@ -1,6 +1,6 @@
-# 🤖 RoboTrader Pro — Plataforma Unificada de Trading Automatizado (Safirion + MetaTrader 5 + IA)
+# 🤖 ProspeTraderBot — Plataforma Unificada de Trading Automatizado (Safirion + MetaTrader 5 + IA)
 
-O **RoboTrader Pro** é um sistema completo de análise técnica quantitativa e **Machine Learning (`RandomForestClassifier`)** em tempo real, com execução automática e manual para:
+O **ProspeTraderBot** é um sistema completo de análise técnica quantitativa e **Machine Learning (`RandomForestClassifier`)** em tempo real, com execução automática e manual para:
 
 1. **Opções Binárias, Digital, Blitz e OTC** na corretora **Safirion** (`https://trade.safirion.com/traderoom`), operando 100% em segundo plano (mesmo com a janela do navegador minimizada) via Ponte WebSocket + Extensão Chrome Manifest V3.
 2. **B3 (Mini Índice `WIN$N` e Mini Dólar `WDO$N`)** e **Forex (`EURUSD`, `GBPUSD`, `USDJPY`, `XAUUSD`)** via integração direta com o terminal **MetaTrader 5 (MT5)**.

@@ -1,388 +1,975 @@
 <!DOCTYPE html>
 <html lang="pt-BR" class="dark">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>RoboTrader Pro — Safirion (OB) & MetaTrader 5 (Forex / B3)</title>
+  <meta name="theme-color" content="#031427" />
+  <title>ProspeTraderBot — Dashboard Operacional (MT5 & Safirion Unified)</title>
+
+  <!-- Google Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
+
+  <!-- Tailwind CSS & Lightweight Charts -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+
+  <!-- Tailwind Configuration - Obsidian Algorithmic Terminal Design System -->
+  <script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "surface-container-lowest": "#000f21",
+            "on-tertiary-fixed": "#40000d",
+            "inverse-primary": "#00687a",
+            "on-secondary-fixed": "#002113",
+            "error": "#ffb4ab",
+            "surface": "#031427",
+            "outline": "#869397",
+            "background": "#031427",
+            "on-primary-container": "#00424f",
+            "outline-variant": "#3d494c",
+            "on-secondary-container": "#00311f",
+            "on-surface": "#d3e4fe",
+            "secondary-container": "#00a572",
+            "on-primary": "#003640",
+            "on-primary-fixed-variant": "#004e5c",
+            "tertiary-container": "#ff7f8b",
+            "on-primary-fixed": "#001f26",
+            "primary-fixed-dim": "#4cd7f6",
+            "secondary": "#4edea3",
+            "surface-container-high": "#1b2b3f",
+            "tertiary": "#ffb2b7",
+            "tertiary-fixed-dim": "#ffb2b7",
+            "inverse-on-surface": "#213145",
+            "surface-container-highest": "#26364a",
+            "on-tertiary": "#67001b",
+            "primary": "#4cd7f6",
+            "surface-container-low": "#0b1c30",
+            "secondary-fixed-dim": "#4edea3",
+            "secondary-fixed": "#6ffbbe",
+            "surface-variant": "#26364a",
+            "surface-container": "#102034",
+            "on-background": "#d3e4fe",
+            "primary-container": "#06b6d4",
+            "on-tertiary-fixed-variant": "#92002a",
+            "surface-tint": "#4cd7f6",
+            "primary-fixed": "#acedff",
+            "tertiary-fixed": "#ffdadb",
+            "on-surface-variant": "#bcc9cd",
+            "on-secondary": "#003824",
+            "inverse-surface": "#d3e4fe",
+            "on-error": "#690005",
+            "on-tertiary-container": "#7d0023",
+            "surface-bright": "#2a3a4f",
+            "surface-dim": "#031427",
+            "on-secondary-fixed-variant": "#005236",
+            "error-container": "#93000a",
+            "on-error-container": "#ffdad6"
+          },
+          borderRadius: {
+            "DEFAULT": "0.25rem",
+            "lg": "0.5rem",
+            "xl": "0.75rem",
+            "full": "9999px"
+          },
+          spacing: {
+            "space-xl": "2rem",
+            "gutter-desktop": "1.25rem",
+            "space-xs": "0.25rem",
+            "space-lg": "1.25rem",
+            "margin-desktop": "1.5rem",
+            "gutter": "1rem",
+            "space-md": "0.75rem",
+            "space-sm": "0.5rem",
+            "margin": "1rem"
+          },
+          fontFamily: {
+            "headline-xl-mobile": ["Inter", "sans-serif"],
+            "headline-lg": ["Inter", "sans-serif"],
+            "body-md": ["Inter", "sans-serif"],
+            "code-log": ["JetBrains Mono", "monospace"],
+            "headline-xl": ["Inter", "sans-serif"],
+            "body-sm": ["Inter", "sans-serif"],
+            "data-metric": ["JetBrains Mono", "monospace"],
+            "headline-md": ["Inter", "sans-serif"],
+            "label-caps": ["Inter", "sans-serif"],
+            "data-display": ["JetBrains Mono", "monospace"],
+            "body-lg": ["Inter", "sans-serif"]
+          },
+          fontSize: {
+            "headline-xl-mobile": ["24px", { "lineHeight": "32px", "fontWeight": "700" }],
+            "headline-lg": ["24px", { "lineHeight": "32px", "fontWeight": "600" }],
+            "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+            "code-log": ["12px", { "lineHeight": "18px", "fontWeight": "400" }],
+            "headline-xl": ["32px", { "lineHeight": "40px", "fontWeight": "700" }],
+            "body-sm": ["12px", { "lineHeight": "16px", "fontWeight": "400" }],
+            "data-metric": ["14px", { "lineHeight": "18px", "fontWeight": "500" }],
+            "headline-md": ["18px", { "lineHeight": "26px", "fontWeight": "600" }],
+            "label-caps": ["11px", { "lineHeight": "14px", "letterSpacing": "0.06em", "fontWeight": "600" }],
+            "data-display": ["22px", { "lineHeight": "28px", "fontWeight": "600" }],
+            "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "400" }]
+          }
+        }
+      }
+    };
+  </script>
+
   <style>
-    body {
-      background-color: #0b0f19;
-      color: #e2e8f0;
-      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    @layer base {
+      html, body {
+        margin: 0;
+        padding: 0;
+        background-color: #031427;
+        color: #d3e4fe;
+      }
+      body {
+        overscroll-behavior: none;
+      }
     }
-    .glass-card {
-      background: rgba(17, 24, 39, 0.85);
-      border: 1px solid rgba(51, 65, 85, 0.6);
-      backdrop-filter: blur(8px);
+    /* Estilização elegante de barra de rolagem Obsidian */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #000f21;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #1b2b3f;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #06b6d4;
     }
     .pulse-dot {
-      animation: pulse 1.8s infinite;
+      animation: pulseGlow 1.8s infinite;
     }
-    @keyframes pulse {
+    @keyframes pulseGlow {
       0%, 100% { opacity: 1; transform: scale(1); }
       50% { opacity: 0.45; transform: scale(1.15); }
     }
   </style>
 </head>
-<body class="min-h-screen flex flex-col">
 
-  <!-- TOPBAR -->
-  <header class="border-b border-slate-800 bg-slate-900/90 px-6 py-3 flex flex-wrap items-center justify-between gap-4">
-    <div class="flex items-center gap-3">
-      <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center font-bold text-slate-950 text-xl shadow-lg shadow-emerald-500/20">
-        RT
-      </div>
-      <div>
-        <h1 class="text-lg font-bold tracking-tight text-white flex items-center gap-2">
-          RoboTrader Pro
-          <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-400 border border-cyan-500/30">
-            MT5 + Safirion Unified
+<body class="bg-background font-body-md text-on-surface antialiased min-h-screen flex flex-col">
+
+  <!-- TOP HEADER FIXED BAR -->
+  <header class="fixed top-0 left-0 right-0 z-50 bg-surface-container-low/95 backdrop-blur-xl border-b border-surface-container-high/40 shadow-[0_1px_8px_rgba(0,0,0,0.45)]">
+    <div class="h-20 w-full px-margin-desktop flex items-center justify-between gap-space-md">
+      
+      <!-- Brand & Status -->
+      <div class="flex items-center gap-space-lg shrink-0">
+        <div class="flex items-center gap-space-sm cursor-pointer" onclick="window.scrollTo({top: 0, behavior: 'smooth'})">
+          <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-container via-cyan-500 to-secondary flex items-center justify-center font-bold text-surface-container-lowest text-lg shadow-lg shadow-primary/20">
+            PT
+          </div>
+          <span class="font-headline-md text-headline-md text-primary tracking-tight hidden sm:inline">ProspeTraderBot</span>
+        </div>
+
+        <!-- Connection Pill -->
+        <div id="connectionStatusBadge" class="flex items-center gap-space-xs px-space-md py-space-xs rounded-full bg-surface-container-highest border border-surface-container-high/50">
+          <span class="relative flex h-2 w-2">
+            <span id="connPulsePing" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-secondary opacity-75"></span>
+            <span id="connPulseDot" class="relative inline-flex rounded-full h-2 w-2 bg-secondary"></span>
           </span>
-        </h1>
-        <p id="statusReasonBanner" class="text-xs text-slate-400">Inicializando motor de análise...</p>
-      </div>
-    </div>
+          <span class="font-label-caps text-label-caps uppercase text-on-surface-variant font-medium">
+            Broker: <span id="connStatusText" class="text-secondary font-bold">Safirion Live</span>
+          </span>
+        </div>
 
-    <!-- Conexões e Botão Ligar/Desligar -->
-    <div class="flex items-center gap-3 flex-wrap">
-      <div id="badgeMt5" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 flex items-center gap-2">
-        <span class="w-2 h-2 rounded-full bg-amber-400"></span>
-        <span>MT5: Simulador</span>
-      </div>
-      <div id="badgeSafirion" class="text-xs px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 flex items-center gap-2">
-        <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
-        <span>Safirion: Simulador</span>
+        <!-- Real / Demo Account Switcher -->
+        <div class="hidden md:flex items-center bg-surface-container-lowest p-space-xs rounded-lg border border-surface-container-high/40">
+          <button id="btnRealAccount" onclick="setAccountMode('REAL')" class="px-space-md py-space-xs rounded-lg font-label-caps text-label-caps font-bold transition-all bg-primary-container text-on-primary-container shadow-sm">CONTA REAL</button>
+          <button id="btnDemoAccount" onclick="setAccountMode('DEMO')" class="px-space-md py-space-xs rounded-lg font-label-caps text-label-caps font-bold transition-all text-on-surface-variant hover:text-on-surface">DEMO</button>
+        </div>
       </div>
 
-      <button onclick="openConnectionsModal()" class="px-3.5 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition">
-        Conectar Contas (MT5 / Safirion)
-      </button>
+      <!-- Live Bankroll & Profit Ribbon (Center) -->
+      <div class="hidden xl:flex items-center gap-space-xl px-space-lg py-space-xs rounded-xl bg-surface-container-lowest/90 border border-surface-container-high/40 shrink-0">
+        <div class="flex flex-col">
+          <span class="font-label-caps text-label-caps uppercase text-on-surface-variant">Saldo da Banca</span>
+          <span id="topBalance" class="font-data-display text-data-display text-on-surface">R$ 1.250,00</span>
+        </div>
+        <div class="w-px h-8 bg-surface-container-high"></div>
+        <div class="flex flex-col">
+          <span class="font-label-caps text-label-caps uppercase text-on-surface-variant">Lucro Hoje</span>
+          <div class="flex items-center gap-space-xs">
+            <span id="topPnl" class="font-data-display text-data-display text-secondary">+R$ 0,00</span>
+            <span id="topPnlPercent" class="font-data-metric text-data-metric text-secondary font-bold">(+0.0%)</span>
+          </div>
+        </div>
+      </div>
 
-      <button id="btnToggleBot" onclick="toggleBot()" class="px-5 py-2 rounded-lg text-sm font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-lg shadow-emerald-500/25 transition flex items-center gap-2">
-        <span id="botDot" class="w-2.5 h-2.5 rounded-full bg-slate-950"></span>
-        <span id="btnToggleText">LIGAR ROBÔ AUTOMÁTICO</span>
-      </button>
+      <!-- Right Actions: Robot Toggle, Connection Modal & User -->
+      <div class="flex items-center gap-space-md shrink-0">
+        <!-- Power Toggle Button -->
+        <button id="btnToggleBot" onclick="toggleBot()" class="flex items-center gap-space-xs px-space-lg py-space-sm rounded-lg bg-secondary-container hover:bg-secondary text-on-secondary transition-all shadow-[0_0_15px_rgba(78,222,163,0.3)]">
+          <span class="material-symbols-outlined text-lg">power_settings_new</span>
+          <span id="btnToggleText" class="font-headline-md text-body-md uppercase tracking-wider font-bold">LIGAR ROBÔ AUTOMÁTICO</span>
+        </button>
+
+        <!-- Conexões Modal Trigger -->
+        <button onclick="openConnectionsModal()" class="flex items-center gap-1.5 p-space-sm rounded-lg bg-surface-container hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface transition-colors border border-surface-container-high/60" title="Configurações de Conexão MT5 & Safirion">
+          <span class="material-symbols-outlined text-[20px] text-primary">link</span>
+          <span class="font-code-log text-xs hidden lg:inline font-semibold">Conexões</span>
+        </button>
+
+        <!-- Notifications -->
+        <button class="relative p-space-sm rounded-lg bg-surface-container hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface transition-colors" title="Notificações">
+          <span class="material-symbols-outlined text-[20px]">notifications</span>
+          <span class="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-secondary ring-2 ring-surface-container-low"></span>
+        </button>
+
+        <!-- User Avatar -->
+        <div class="w-8 h-8 rounded-full bg-primary/20 border border-primary/40 flex items-center justify-center text-primary font-bold text-xs">
+          OP
+        </div>
+      </div>
+
     </div>
   </header>
 
-  <!-- MAIN GRID -->
-  <main class="flex-1 p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 max-w-[1600px] w-full mx-auto">
+  <!-- LEFT SIDEBAR NAVIGATION DRAWER -->
+  <aside class="fixed left-0 top-20 h-[calc(100vh-5rem)] w-64 bg-surface-container-low z-40 flex flex-col justify-between py-space-lg border-r border-surface-container-high/30 shadow-[0_1px_8px_rgba(0,0,0,0.3)]">
+    <div class="flex flex-col gap-space-md px-space-sm">
+      <div class="px-space-md pb-space-xs">
+        <span class="font-label-caps text-label-caps uppercase text-on-surface-variant tracking-widest">Navegação do Sistema</span>
+      </div>
+      <nav class="flex flex-col gap-space-xs">
+        <a href="#sec-dashboard" class="flex items-center px-space-md py-space-sm transition-all bg-primary-container text-on-primary-container font-bold rounded-lg shadow-sm">
+          <span class="material-symbols-outlined mr-space-md text-[20px]">query_stats</span>
+          Dashboard Operacional
+        </a>
+        <a href="#sec-setup" class="flex items-center px-space-md py-space-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-all font-body-md text-body-md">
+          <span class="material-symbols-outlined mr-space-md text-[20px]">tune</span>
+          Gestão de Estratégias
+        </a>
+        <a href="#sec-bankroll" class="flex items-center px-space-md py-space-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-all font-body-md text-body-md">
+          <span class="material-symbols-outlined mr-space-md text-[20px]">account_balance_wallet</span>
+          Gestão de Banca
+        </a>
+        <a href="#sec-trades" class="flex items-center px-space-md py-space-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-all font-body-md text-body-md">
+          <span class="material-symbols-outlined mr-space-md text-[20px]">history</span>
+          Histórico de Entradas
+        </a>
+        <a href="#sec-logs" class="flex items-center px-space-md py-space-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface transition-all font-body-md text-body-md">
+          <span class="material-symbols-outlined mr-space-md text-[20px]">terminal</span>
+          Configurações &amp; Logs
+        </a>
+      </nav>
+    </div>
 
-    <!-- COLUNA ESQUERDA: Configurações de Mercado, Estratégia e Gerenciamento de Risco (4 cols) -->
-    <section class="lg:col-span-4 flex flex-col gap-5">
+    <!-- Bottom Telemetry Mini Card -->
+    <div class="px-space-md pt-space-md bg-surface-container-lowest/70 border border-surface-container-high/40 mx-space-sm p-space-sm rounded-xl">
+      <div class="flex items-center justify-between mb-space-xs">
+        <span class="font-label-caps text-label-caps text-on-surface-variant uppercase">Latência API</span>
+        <span id="telLatency" class="font-code-log text-code-log text-secondary font-bold">12ms</span>
+      </div>
+      <div class="flex items-center justify-between mb-space-xs">
+        <span class="font-label-caps text-label-caps text-on-surface-variant uppercase">Sinais Processados</span>
+        <span id="telSignalsProcessed" class="font-code-log text-code-log text-primary font-bold">1.482</span>
+      </div>
+      <div class="text-[10px] font-code-log text-on-surface-variant/80 border-t border-surface-container-high/40 pt-1 mt-1">
+        Ponte WebSocket: <span class="text-secondary font-semibold">Ativa (2º Plano)</span>
+      </div>
+    </div>
+  </aside>
 
-      <!-- Card 1: Seleção de Mercado e Ativo -->
-      <div class="glass-card rounded-xl p-5">
-        <h2 class="text-sm font-bold uppercase tracking-wider text-slate-400 mb-4 flex items-center justify-between">
-          <span>1. Mercado, Ativo & Estratégia</span>
-          <span id="activeMarketTag" class="text-[11px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300">Safirion OB</span>
-        </h2>
+  <!-- MAIN VIEWPORT CONTAINER -->
+  <div class="pl-64 flex-1">
+    <main class="w-full pt-20 px-gutter-desktop pb-space-xl min-h-screen bg-background">
+      <div class="flex flex-col w-full pb-space-xl gap-space-lg" id="sec-dashboard">
 
-        <div class="space-y-3.5">
-          <div>
-            <label class="block text-xs text-slate-400 mb-1">Plataforma / Modalidade de Execução</label>
-            <select id="cfgMarketType" onchange="onMarketTypeChange()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-cyan-500 focus:outline-none">
-              <option value="SAFIRION_OB">Safirion — Opções (Binárias / Digital / Blitz)</option>
-              <option value="MT5_B3">MetaTrader 5 — B3 (Mini Índice WIN / Mini Dólar WDO)</option>
-              <option value="MT5_FOREX">MetaTrader 5 — Forex Internacional & Ouro</option>
-            </select>
+        <!-- Status Reason Banner -->
+        <div class="bg-surface-container-lowest/80 border border-surface-container-high/50 rounded-xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs font-code-log shadow-sm">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-secondary pulse-dot"></span>
+            <span id="statusReasonBanner" class="text-on-surface font-medium">Inicializando motor algorítmico do ProspeTraderBot...</span>
           </div>
-
-          <div id="boxSafirionSubType">
-            <label class="block text-xs text-cyan-400 font-semibold mb-1">Classe do Ativo na Safirion (Importante!)</label>
-            <select id="cfgSafirionSubType" onchange="saveConfig()" class="w-full bg-slate-900 border border-cyan-500/40 rounded-lg px-3 py-2 text-sm text-white focus:border-cyan-400 focus:outline-none">
-              <option value="BINARY">Binárias (Tradicional - Expiração 1m / 5m)</option>
-              <option value="DIGITAL">Digital (Opções Digitais - Strike Price)</option>
-              <option value="BLITZ">Blitz (Expiração Rápida 5s / 15s / 30s)</option>
-            </select>
+          <div class="flex items-center gap-3">
+            <span id="activeMarketTag" class="px-2.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/30 font-semibold">Safirion (BINARY)</span>
+            <span class="text-on-surface-variant">RoboTrader Core v4.7</span>
           </div>
+        </div>
 
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="block text-xs text-slate-400 mb-1">Ativo (Símbolo)</label>
-              <select id="cfgSymbol" onchange="saveConfig()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-cyan-500 focus:outline-none">
-                <option value="EURUSD">EURUSD (Euro / Dólar)</option>
-                <option value="GBPUSD">GBPUSD (Libra / Dólar)</option>
-                <option value="USDJPY">USDJPY (Dólar / Iene)</option>
-                <option value="XAUUSD">XAUUSD (Ouro)</option>
-                <option value="BTCUSD">BTCUSD (Bitcoin)</option>
-                <option value="WIN$N">WIN$N (Mini Índice B3)</option>
-                <option value="WDO$N">WDO$N (Mini Dólar B3)</option>
-              </select>
+        <!-- TOP 4 KPI METRIC RIBBON -->
+        <section class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-space-md w-full">
+          
+          <!-- KPI 1: PnL & Metas -->
+          <div class="relative overflow-hidden bg-surface-container rounded-xl p-space-md shadow-md border border-surface-container-high/40 flex flex-col justify-between">
+            <div class="absolute -right-6 -bottom-6 w-24 h-24 rounded-full bg-secondary/5 blur-xl pointer-events-none"></div>
+            <div class="flex items-center justify-between gap-space-xs">
+              <span class="font-label-caps text-label-caps uppercase text-on-surface-variant flex items-center gap-space-xs">
+                <span class="material-symbols-outlined text-secondary text-[16px]">trending_up</span>
+                Resultado do Dia (PnL)
+              </span>
+              <span id="kpiPnlBadge" class="inline-flex items-center px-space-xs py-0.5 rounded-full bg-secondary/15 text-secondary font-label-caps text-label-caps font-bold">
+                +0.0% Hoje
+              </span>
             </div>
-            <div>
-              <label class="block text-xs text-slate-400 mb-1">Timeframe Gráfico</label>
-              <select id="cfgTimeframe" onchange="saveConfig()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-cyan-500 focus:outline-none">
-                <option value="M1">M1 (1 Minuto)</option>
-                <option value="M5">M5 (5 Minutos)</option>
-                <option value="M15">M15 (15 Minutos)</option>
-                <option value="H1">H1 (1 Hora)</option>
-              </select>
+            <div class="flex items-baseline gap-space-sm my-space-xs">
+              <span id="kpiPnl" class="font-data-display text-data-display text-secondary font-bold">R$ 0,00</span>
+              <span id="kpiGale" class="font-code-log text-code-log text-on-surface-variant">Gale: 0</span>
+            </div>
+            <div class="flex flex-col gap-1 mt-space-xs">
+              <div class="flex justify-between items-center text-on-surface-variant font-code-log text-[10px]">
+                <span id="lblMetaGain">Meta Gain: R$ 500,00</span>
+                <span id="lblMetaPercent" class="text-secondary font-bold">0.0%</span>
+              </div>
+              <div class="w-full h-1.5 bg-surface-container-lowest rounded-full overflow-hidden border border-surface-container-high/40">
+                <div id="barMetaGain" class="h-full bg-secondary rounded-full transition-all duration-500" style="width: 0%;"></div>
+              </div>
+              <div class="flex justify-between text-on-surface-variant font-code-log text-[10px] mt-0.5">
+                <span id="lblStopLoss">Stop Loss: R$ 250,00</span>
+                <span class="text-primary font-semibold">Trava Segura</span>
+              </div>
             </div>
           </div>
 
-          <div>
-            <label class="block text-xs text-slate-400 mb-1">Motor de Estratégia + Inteligência Artificial</label>
-            <select id="cfgStrategy" onchange="saveConfig()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:border-cyan-500 focus:outline-none">
-              <option value="bollinger_rsi_reversal">1. Bandas de Bollinger + RSI + Juiz IA</option>
-              <option value="ema_rsi_crossover">2. Cruzamento de Médias (EMA 9/21) + RSI + Juiz IA</option>
-              <option value="price_action_breakout">3. Price Action: Rompimento Máx/Mín + Volume + Juiz IA</option>
-              <option value="multi_confluence">4. Confluência Multi-Indicadores (EMA + RSI + MACD) + Juiz IA</option>
-              <option value="ml_random_forest">5. 🧠 IA Pura — Machine Learning (Random Forest scikit-learn)</option>
-            </select>
-          </div>
-
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="block text-xs text-slate-400 mb-1">Confiança Mínima (%)</label>
-              <input id="cfgMinConfidence" type="number" step="1" min="50" max="99" value="75" onchange="saveConfig()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
+          <!-- KPI 2: Assertividade (Win Rate) -->
+          <div class="relative overflow-hidden bg-surface-container rounded-xl p-space-md shadow-md border border-surface-container-high/40 flex flex-col justify-between">
+            <div class="flex items-center justify-between gap-space-xs">
+              <span class="font-label-caps text-label-caps uppercase text-on-surface-variant flex items-center gap-space-xs">
+                <span class="material-symbols-outlined text-primary text-[16px]">verified</span>
+                Taxa de Acerto (Win Rate)
+              </span>
+              <span id="kpiTotalTradesCount" class="font-code-log text-code-log text-on-surface-variant">0 Execuções</span>
             </div>
-            <div>
-              <label class="block text-xs text-slate-400 mb-1">Expiração OB (Min)</label>
-              <input id="cfgExpiration" type="number" step="1" min="1" max="15" value="1" onchange="saveConfig()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
+            <div class="flex items-center justify-between my-space-xs">
+              <div>
+                <span id="kpiWinRate" class="font-data-display text-data-display text-primary font-bold">0.0%</span>
+                <div class="flex items-center gap-space-xs mt-1">
+                  <span id="kpiWinsBadge" class="px-space-xs py-0.5 rounded bg-secondary/15 text-secondary font-code-log text-[11px] font-bold">0 WINS</span>
+                  <span id="kpiLossesBadge" class="px-space-xs py-0.5 rounded bg-error-container/40 text-tertiary font-code-log text-[11px] font-bold">0 LOSSES</span>
+                </div>
+              </div>
+              <!-- Mini Circular Progress Gauge -->
+              <div class="relative w-12 h-12 flex items-center justify-center shrink-0">
+                <svg class="w-full h-full -rotate-90" viewBox="0 0 36 36">
+                  <path class="text-surface-container-highest" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-width="3.5"></path>
+                  <path id="svgGaugeCircle" class="text-primary transition-all duration-700" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-dasharray="0, 100" stroke-linecap="round" stroke-width="3.5"></path>
+                </svg>
+                <span id="svgGaugeText" class="absolute font-code-log text-[10px] text-on-surface font-bold">0:0</span>
+              </div>
+            </div>
+            <!-- Streak pills -->
+            <div id="streakContainer" class="flex items-center gap-1.5 pt-1">
+              <div class="flex-1 h-1.5 rounded-full bg-surface-container-highest"></div>
+              <div class="flex-1 h-1.5 rounded-full bg-surface-container-highest"></div>
+              <div class="flex-1 h-1.5 rounded-full bg-surface-container-highest"></div>
+              <div class="flex-1 h-1.5 rounded-full bg-surface-container-highest"></div>
+              <div class="flex-1 h-1.5 rounded-full bg-surface-container-highest"></div>
+              <div class="flex-1 h-1.5 rounded-full bg-surface-container-highest"></div>
+              <span class="font-label-caps text-[9px] text-on-surface-variant uppercase ml-1">Sequência</span>
             </div>
           </div>
+
+          <!-- KPI 3: Juiz IA & Sinal Atual -->
+          <div class="relative overflow-hidden bg-surface-container rounded-xl p-space-md shadow-md border border-surface-container-high/40 flex flex-col justify-between">
+            <div class="flex items-center justify-between gap-space-xs">
+              <span class="font-label-caps text-label-caps uppercase text-on-surface-variant flex items-center gap-space-xs">
+                <span class="material-symbols-outlined text-secondary text-[16px]">psychology</span>
+                Juiz de IA &amp; Sinal
+              </span>
+              <div class="flex items-center gap-1">
+                <span class="relative flex h-2 w-2">
+                  <span id="sigPulsePing" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-secondary opacity-75"></span>
+                  <span id="sigPulseDot" class="relative inline-flex rounded-full h-2 w-2 bg-secondary"></span>
+                </span>
+                <span id="sigTriggerBadge" class="font-label-caps text-[10px] uppercase text-secondary font-bold">Monitorando</span>
+              </div>
+            </div>
+            <div class="my-space-xs">
+              <div class="flex items-center gap-space-xs">
+                <span id="kpiSignalAction" class="font-headline-md text-headline-md text-secondary font-bold tracking-tight">AGUARDANDO GATILHO</span>
+                <span id="kpiSignalArrow" class="material-symbols-outlined text-secondary text-[20px]">sync</span>
+              </div>
+              <div class="flex items-center gap-space-sm mt-0.5">
+                <span id="kpiSignalAsset" class="font-code-log text-code-log text-primary font-semibold">EURUSD M1</span>
+                <span class="font-code-log text-[11px] text-on-surface-variant">Confiança: <b id="kpiConfidence" class="text-secondary">0%</b></span>
+              </div>
+            </div>
+            <!-- Technical Indicator Sub-grid -->
+            <div class="grid grid-cols-3 gap-1 pt-space-xs text-center font-code-log text-[10px]">
+              <div class="bg-surface-container-lowest/80 border border-surface-container-high/30 py-1 rounded">
+                <div class="text-on-surface-variant text-[9px]">RSI(14)</div>
+                <div id="subIndRsi" class="text-secondary font-semibold">--</div>
+              </div>
+              <div class="bg-surface-container-lowest/80 border border-surface-container-high/30 py-1 rounded">
+                <div class="text-on-surface-variant text-[9px]">Bollinger</div>
+                <div id="subIndBb" class="text-primary font-semibold">--</div>
+              </div>
+              <div class="bg-surface-container-lowest/80 border border-surface-container-high/30 py-1 rounded">
+                <div class="text-on-surface-variant text-[9px]">EMA / IA</div>
+                <div id="subIndEma" class="text-secondary font-semibold">--</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- KPI 4: Cotação Atual & Telemetria -->
+          <div class="relative overflow-hidden bg-surface-container rounded-xl p-space-md shadow-md border border-surface-container-high/40 flex flex-col justify-between">
+            <div class="flex items-center justify-between gap-space-xs">
+              <span class="font-label-caps text-label-caps uppercase text-on-surface-variant flex items-center gap-space-xs">
+                <span class="material-symbols-outlined text-primary text-[16px]">sync_alt</span>
+                <span id="lblLiveQuotePair">EURUSD Cotação Ao Vivo</span>
+              </span>
+              <span class="font-code-log text-[11px] text-secondary flex items-center gap-1 font-semibold">
+                <span class="w-1.5 h-1.5 rounded-full bg-secondary"></span> <span id="lblQuotePing">18ms</span>
+              </span>
+            </div>
+            <div class="flex items-baseline justify-between my-space-xs">
+              <span id="kpiPrice" class="font-data-display text-data-display text-on-surface font-bold tracking-tight">--</span>
+              <span id="lblQuoteDelta" class="font-code-log text-code-log text-secondary font-semibold bg-secondary/15 px-space-xs py-0.5 rounded">+0.00%</span>
+            </div>
+            <div class="flex items-center justify-between font-code-log text-[11px] text-on-surface-variant pt-space-xs border-t border-surface-container-high/40">
+              <span>Spread: <span id="lblQuoteSpread" class="text-on-surface font-semibold">0.8 pips</span></span>
+              <span>ATR: <span id="lblQuoteAtr" class="text-on-surface font-semibold">--</span></span>
+              <span>Vol: <span class="text-primary font-semibold">Normal</span></span>
+            </div>
+          </div>
+
+        </section>
+
+        <!-- 3-COLUMN MASTER WORKSPACE -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-space-lg w-full items-start">
+          
+          <!-- LEFT COLUMN: SETUP, BANCA & DISPARO (3 cols) -->
+          <div class="lg:col-span-3 flex flex-col gap-space-md">
+
+            <!-- Card 1: Setup Operacional -->
+            <div class="bg-surface-container rounded-xl p-space-md shadow-md border border-surface-container-high/40 flex flex-col gap-space-md" id="sec-setup">
+              <div class="flex items-center justify-between pb-space-xs border-b border-surface-container-high/30">
+                <div class="flex items-center gap-space-xs">
+                  <span class="w-5 h-5 rounded-full bg-primary/20 text-primary font-code-log text-[11px] flex items-center justify-center font-bold">1</span>
+                  <h2 class="font-headline-md text-body-lg text-on-surface font-bold">Setup Operacional</h2>
+                </div>
+                <span id="badgeBrokerTag" class="px-space-xs py-0.5 rounded bg-secondary/15 text-secondary font-label-caps text-[10px] font-bold uppercase">Safirion Live</span>
+              </div>
+
+              <!-- Corretora / Modalidade -->
+              <div class="flex flex-col gap-space-xs">
+                <label class="font-label-caps text-[11px] uppercase text-on-surface-variant">Plataforma / Modalidade</label>
+                <div class="relative">
+                  <select id="cfgMarketType" onchange="onMarketTypeChange()" class="w-full bg-surface-container-lowest text-on-surface font-body-md text-body-md px-space-md py-space-sm rounded-lg appearance-none cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary border border-surface-container-high/50">
+                    <option value="SAFIRION_OB" selected>Safirion — Opções (Binárias / Digital / Blitz)</option>
+                    <option value="MT5_B3">MetaTrader 5 — B3 (Mini Índice WIN / Mini Dólar WDO)</option>
+                    <option value="MT5_FOREX">MetaTrader 5 — Forex Internacional & Ouro</option>
+                  </select>
+                  <span class="material-symbols-outlined absolute right-2.5 top-2.5 text-on-surface-variant pointer-events-none text-[18px]">expand_more</span>
+                </div>
+              </div>
+
+              <!-- Sub-tipo Safirion -->
+              <div id="boxSafirionSubType" class="flex flex-col gap-space-xs">
+                <label class="font-label-caps text-[11px] uppercase text-primary">Classe do Ativo na Safirion</label>
+                <div class="relative">
+                  <select id="cfgSafirionSubType" onchange="saveConfig()" class="w-full bg-surface-container-lowest text-on-surface font-code-log text-code-log px-space-md py-space-sm rounded-lg appearance-none cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary border border-primary/40">
+                    <option value="BINARY" selected>Binárias (Tradicional - Expiração 1m / 5m)</option>
+                    <option value="DIGITAL">Digital (Opções Digitais - Strike Price)</option>
+                    <option value="BLITZ">Blitz (Expiração Rápida 5s / 15s / 30s)</option>
+                  </select>
+                  <span class="material-symbols-outlined absolute right-2.5 top-2.5 text-on-surface-variant pointer-events-none text-[18px]">expand_more</span>
+                </div>
+              </div>
+
+              <!-- Ativo & Timeframe -->
+              <div class="grid grid-cols-2 gap-space-xs">
+                <div class="flex flex-col gap-space-xs">
+                  <label class="font-label-caps text-[11px] uppercase text-on-surface-variant">Ativo / Par</label>
+                  <div class="relative">
+                    <select id="cfgSymbol" onchange="saveConfig()" class="w-full bg-surface-container-lowest text-on-surface font-code-log text-code-log px-space-sm py-space-sm rounded-lg appearance-none cursor-pointer focus:outline-none border border-surface-container-high/50">
+                      <option value="EURUSD" selected>EURUSD (87%)</option>
+                      <option value="GBPUSD">GBPUSD (85%)</option>
+                      <option value="USDJPY">USDJPY (89%)</option>
+                      <option value="XAUUSD">XAUUSD (Ouro)</option>
+                      <option value="BTCUSD">BTCUSD (Crypto)</option>
+                      <option value="WIN$N">WIN$N (B3)</option>
+                      <option value="WDO$N">WDO$N (B3)</option>
+                    </select>
+                    <span class="material-symbols-outlined absolute right-1.5 top-2.5 text-on-surface-variant pointer-events-none text-[16px]">expand_more</span>
+                  </div>
+                </div>
+                <div class="flex flex-col gap-space-xs">
+                  <label class="font-label-caps text-[11px] uppercase text-on-surface-variant">Timeframe</label>
+                  <div class="relative">
+                    <select id="cfgTimeframe" onchange="saveConfig()" class="w-full bg-surface-container-lowest text-on-surface font-code-log text-code-log px-space-sm py-space-sm rounded-lg appearance-none cursor-pointer focus:outline-none border border-surface-container-high/50">
+                      <option value="M1" selected>M1 (1 Minuto)</option>
+                      <option value="M5">M5 (5 Minutos)</option>
+                      <option value="M15">M15 (15 Min)</option>
+                      <option value="H1">H1 (1 Hora)</option>
+                    </select>
+                    <span class="material-symbols-outlined absolute right-1.5 top-2.5 text-on-surface-variant pointer-events-none text-[16px]">expand_more</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Estratégia de IA -->
+              <div class="flex flex-col gap-space-xs">
+                <label class="font-label-caps text-[11px] uppercase text-on-surface-variant flex items-center justify-between">
+                  <span>Estratégia de Sinais IA</span>
+                  <span class="text-primary cursor-pointer hover:underline text-[10px]">Parâmetros</span>
+                </label>
+                <div class="relative">
+                  <select id="cfgStrategy" onchange="saveConfig()" class="w-full bg-surface-container-lowest text-on-surface font-body-md text-body-md px-space-md py-space-sm rounded-lg appearance-none cursor-pointer focus:outline-none border border-surface-container-high/50">
+                    <option value="bollinger_rsi_reversal" selected>1. Bandas de Bollinger + RSI + Juiz Algorítmico</option>
+                    <option value="ema_rsi_crossover">2. Cruzamento EMA 9/21 + RSI + Juiz IA</option>
+                    <option value="price_action_breakout">3. Price Action Rompimento + Volume Spike</option>
+                    <option value="multi_confluence">4. Confluência Multi-Indicadores (EMA+RSI+MACD)</option>
+                    <option value="ml_random_forest">5. 🧠 IA Pura — Machine Learning (Random Forest)</option>
+                  </select>
+                  <span class="material-symbols-outlined absolute right-2.5 top-2.5 text-on-surface-variant pointer-events-none text-[18px]">expand_more</span>
+                </div>
+              </div>
+
+              <!-- Confiança Mínima & Expiração -->
+              <div class="grid grid-cols-2 gap-space-xs">
+                <div class="flex flex-col gap-space-xs">
+                  <span class="font-label-caps text-[10px] uppercase text-on-surface-variant">Confiança Mín.</span>
+                  <div class="flex items-center bg-surface-container-lowest rounded-lg px-space-sm py-1.5 border border-surface-container-high/40">
+                    <input id="cfgMinConfidence" type="number" step="1" min="50" max="99" value="75" onchange="saveConfig()" class="w-full bg-transparent text-on-surface font-code-log text-code-log focus:outline-none" />
+                    <span class="font-code-log text-[11px] text-on-surface-variant">%</span>
+                  </div>
+                </div>
+                <div class="flex flex-col gap-space-xs">
+                  <span class="font-label-caps text-[10px] uppercase text-on-surface-variant">Expiração Vela</span>
+                  <div class="flex items-center bg-surface-container-lowest rounded-lg px-space-sm py-1.5 border border-surface-container-high/40">
+                    <input id="cfgExpiration" type="number" step="1" min="1" max="15" value="1" onchange="saveConfig()" class="w-full bg-transparent text-on-surface font-code-log text-code-log focus:outline-none" />
+                    <span class="font-code-log text-[11px] text-on-surface-variant">Min</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Filtro de Notícias -->
+              <div class="flex items-center justify-between pt-space-xs bg-surface-container-lowest/60 p-space-sm rounded-lg border border-surface-container-high/30">
+                <div class="flex items-center gap-space-xs">
+                  <span class="material-symbols-outlined text-primary text-[18px]">shield</span>
+                  <span class="font-body-sm text-body-sm text-on-surface">Filtro de Notícias Globais</span>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" id="cfgNewsFilter" checked class="sr-only peer" />
+                  <div class="w-8 h-4 bg-surface-container-highest peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-on-surface after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-primary-container"></div>
+                </label>
+              </div>
+            </div>
+
+            <!-- Card 2: Gestão de Banca Inteligente -->
+            <div class="bg-surface-container rounded-xl p-space-md shadow-md border border-surface-container-high/40 flex flex-col gap-space-md" id="sec-bankroll">
+              <div class="flex items-center justify-between pb-space-xs border-b border-surface-container-high/30">
+                <div class="flex items-center gap-space-xs">
+                  <span class="w-5 h-5 rounded-full bg-secondary/20 text-secondary font-code-log text-[11px] flex items-center justify-center font-bold">2</span>
+                  <h2 class="font-headline-md text-body-lg text-on-surface font-bold">Gestão de Banca IA</h2>
+                </div>
+                <button onclick="resetStats()" class="font-label-caps text-[10px] text-on-surface-variant hover:text-on-surface uppercase underline transition-colors">Resetar Placar</button>
+              </div>
+
+              <!-- Saldo & Entrada Base -->
+              <div class="grid grid-cols-2 gap-space-xs">
+                <div class="bg-surface-container-lowest p-space-sm rounded-lg flex flex-col border border-surface-container-high/40">
+                  <span class="font-label-caps text-[10px] uppercase text-on-surface-variant">Banca na Corretora</span>
+                  <div class="flex items-center gap-1 mt-0.5">
+                    <span class="font-code-log text-[11px] text-on-surface-variant">R$</span>
+                    <input id="cfgCustomBalance" type="number" step="0.01" min="5" value="137.09" onchange="saveConfig()" class="w-full bg-transparent font-data-display text-[18px] text-on-surface font-bold focus:outline-none" />
+                  </div>
+                </div>
+                <div class="bg-surface-container-lowest p-space-sm rounded-lg flex flex-col border border-surface-container-high/40">
+                  <span id="lblEntryAmount" class="font-label-caps text-[10px] uppercase text-on-surface-variant">Entrada Mínima</span>
+                  <div class="flex items-center gap-1 mt-0.5">
+                    <span class="font-code-log text-[11px] text-secondary">R$</span>
+                    <input id="cfgEntryAmount" type="number" step="1" min="5" value="5" onchange="saveConfig()" class="w-full bg-transparent font-data-display text-[18px] text-secondary font-bold focus:outline-none" />
+                  </div>
+                </div>
+              </div>
+
+              <!-- Algoritmo de Gestão de Banca -->
+              <div class="flex flex-col gap-space-xs">
+                <label class="font-label-caps text-[11px] uppercase text-on-surface-variant">Algoritmo de Recuperação</label>
+                <div class="relative">
+                  <select id="cfgBankrollMode" onchange="saveConfig()" class="w-full bg-surface-container-lowest text-on-surface font-body-md text-body-md px-space-md py-space-sm rounded-lg appearance-none cursor-pointer focus:outline-none border border-surface-container-high/50">
+                    <option value="SMART_AI" selected>🧠 IA Dinâmica (Kelly + Escala 1x a 4x + Gale Inteligente)</option>
+                    <option value="SOROS">🚀 Soros Nível 1 (Reinveste Lucro)</option>
+                    <option value="PERCENT">📈 Juros Compostos (3% da Banca)</option>
+                    <option value="FIXED">🔒 Mão Fixa + Martingale Clássico</option>
+                  </select>
+                  <span class="material-symbols-outlined absolute right-2.5 top-2.5 text-on-surface-variant pointer-events-none text-[18px]">expand_more</span>
+                </div>
+              </div>
+
+              <!-- Stop Gain & Stop Loss -->
+              <div class="grid grid-cols-2 gap-space-xs">
+                <div class="flex flex-col gap-1">
+                  <span class="font-label-caps text-[10px] uppercase text-secondary">Stop Gain Diário</span>
+                  <div class="flex items-center bg-surface-container-lowest rounded-lg px-space-sm py-1.5 border border-surface-container-high/40">
+                    <span class="font-code-log text-[11px] text-on-surface-variant mr-1">R$</span>
+                    <input id="cfgStopGain" type="number" step="10" value="500" onchange="saveConfig()" class="w-full bg-transparent text-secondary font-code-log text-code-log font-bold focus:outline-none" />
+                  </div>
+                </div>
+                <div class="flex flex-col gap-1">
+                  <span class="font-label-caps text-[10px] uppercase text-tertiary">Stop Loss Diário</span>
+                  <div class="flex items-center bg-surface-container-lowest rounded-lg px-space-sm py-1.5 border border-surface-container-high/40">
+                    <span class="font-code-log text-[11px] text-on-surface-variant mr-1">R$</span>
+                    <input id="cfgStopLoss" type="number" step="10" value="250" onchange="saveConfig()" class="w-full bg-transparent text-tertiary font-code-log text-code-log font-bold focus:outline-none" />
+                  </div>
+                </div>
+              </div>
+
+              <!-- Martingale toggle -->
+              <div class="pt-2 border-t border-surface-container-high/30 flex items-center justify-between gap-2">
+                <label class="flex items-center gap-2 text-xs text-on-surface-variant cursor-pointer">
+                  <input id="cfgUseMartingale" type="checkbox" checked onchange="saveConfig()" class="rounded bg-surface-container-lowest border-surface-container-high text-primary focus:ring-0" />
+                  <span>Martingale Inteligente</span>
+                </label>
+                <div class="flex items-center gap-1.5">
+                  <span class="text-xs text-on-surface-variant">Fator:</span>
+                  <input id="cfgMartingaleFactor" type="number" step="0.1" value="2.0" onchange="saveConfig()" class="w-16 bg-surface-container-lowest border border-surface-container-high rounded px-2 py-1 text-xs text-on-surface text-center focus:outline-none" />
+                </div>
+              </div>
+
+              <!-- Próxima Ordem (Sizing) -->
+              <div class="bg-surface-container-lowest/90 border border-surface-container-high/40 rounded-lg p-2.5 text-[11px] flex items-center justify-between">
+                <span class="text-on-surface-variant">Próxima Entrada (Invest):</span>
+                <b id="kpiNextSizing" class="text-secondary font-code-log">R$ 5 (1x Base IA)</b>
+              </div>
+            </div>
+
+            <!-- Card 3: Boleta Manual Rápida (1-Click) -->
+            <div class="bg-surface-container rounded-xl p-space-md shadow-md border border-surface-container-high/40 flex flex-col gap-space-md">
+              <div class="flex items-center justify-between pb-space-xs border-b border-surface-container-high/30">
+                <div class="flex items-center gap-space-xs">
+                  <span class="w-5 h-5 rounded-full bg-tertiary-container/30 text-tertiary font-code-log text-[11px] flex items-center justify-center font-bold">3</span>
+                  <h2 class="font-headline-md text-body-lg text-on-surface font-bold">Boleta Manual Rápida</h2>
+                </div>
+                <span class="font-code-log text-[11px] text-secondary font-bold">1-Click</span>
+              </div>
+              <div class="grid grid-cols-2 gap-space-md">
+                <!-- CALL Button -->
+                <button onclick="sendManualOrder('BUY')" id="btn-call" class="relative group overflow-hidden flex flex-col items-center justify-center py-space-md px-space-xs rounded-xl bg-secondary-container hover:bg-secondary text-on-secondary transition-all shadow-[0_0_15px_rgba(78,222,163,0.25)] hover:shadow-[0_0_20px_rgba(78,222,163,0.4)] active:scale-95">
+                  <div class="flex items-center gap-1">
+                    <span class="font-headline-md text-headline-md font-bold tracking-wider">CALL</span>
+                    <span class="material-symbols-outlined text-[20px] font-bold">arrow_drop_up</span>
+                  </div>
+                  <span class="font-label-caps text-[10px] uppercase opacity-90 mt-0.5">Comprar / Acima</span>
+                </button>
+                <!-- PUT Button -->
+                <button onclick="sendManualOrder('SELL')" id="btn-put" class="relative group overflow-hidden flex flex-col items-center justify-center py-space-md px-space-xs rounded-xl bg-error-container hover:bg-error text-on-error transition-all shadow-[0_0_15px_rgba(244,63,94,0.25)] hover:shadow-[0_0_20px_rgba(244,63,94,0.4)] active:scale-95">
+                  <div class="flex items-center gap-1">
+                    <span class="font-headline-md text-headline-md font-bold tracking-wider">PUT</span>
+                    <span class="material-symbols-outlined text-[20px] font-bold">arrow_drop_down</span>
+                  </div>
+                  <span class="font-label-caps text-[10px] uppercase opacity-90 mt-0.5">Vender / Abaixo</span>
+                </button>
+              </div>
+              <div class="flex items-center justify-between text-on-surface-variant font-code-log text-[10px] px-1">
+                <span>Latência de disparo: &lt;15ms</span>
+                <span class="text-secondary font-semibold">Execução em 2º Plano</span>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- CENTER COLUMN: INTERACTIVE CHART & OSCILLATORS (6 cols) -->
+          <div class="lg:col-span-6 flex flex-col gap-space-md">
+            
+            <div class="bg-surface-container rounded-xl p-space-md shadow-md border border-surface-container-high/40 flex flex-col gap-space-sm">
+              <!-- Chart Header Toolbar -->
+              <div class="flex flex-wrap items-center justify-between gap-space-sm pb-space-xs border-b border-surface-container-high/40">
+                <div class="flex items-center gap-space-md">
+                  <div class="flex items-center gap-space-xs">
+                    <span id="chartTitle" class="font-headline-md text-headline-md text-on-surface font-bold">EURUSD</span>
+                    <span id="chartTimeframeBadge" class="px-space-xs py-0.5 rounded bg-surface-container-highest text-primary font-code-log text-[11px] font-bold">M1</span>
+                  </div>
+                  <div class="flex items-center gap-space-sm hidden sm:flex text-on-surface-variant font-code-log text-[11px]">
+                    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-primary"></span> EMA 9</span>
+                    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-blue-400"></span> EMA 21</span>
+                    <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-purple-400"></span> Bandas BB (20,2)</span>
+                  </div>
+                </div>
+
+                <div class="flex items-center gap-space-xs">
+                  <p id="signalReasonBox" class="text-xs text-primary hidden md:inline truncate max-w-xs">Analisando fluxo...</p>
+                  <button onclick="toggleChartFullscreen()" class="p-1.5 rounded-lg bg-surface-container-lowest text-on-surface-variant hover:text-on-surface transition-colors" title="Tela Cheia">
+                    <span class="material-symbols-outlined text-[18px]">fullscreen</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Lightweight Candlestick Chart Canvas -->
+              <div id="chartContainer" class="relative w-full h-[380px] bg-surface-container-lowest rounded-xl overflow-hidden border border-surface-container-high/40"></div>
+
+              <!-- Oscillator (RSI) & Sentiment Meter Bar -->
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-space-md pt-space-xs">
+                
+                <!-- RSI (14) Ribbon -->
+                <div class="bg-surface-container-lowest p-space-sm rounded-lg flex flex-col justify-between border border-surface-container-high/30">
+                  <div class="flex items-center justify-between font-code-log text-[11px] mb-1">
+                    <span class="text-on-surface-variant font-medium">RSI (14 Períodos): <span id="barRsiValue" class="text-secondary font-bold">42.1</span></span>
+                    <span id="barRsiZone" class="text-secondary font-semibold">Zona Neutra</span>
+                  </div>
+                  <div class="relative w-full h-2 bg-surface-container-highest rounded-full overflow-hidden">
+                    <div class="absolute left-[30%] right-[30%] top-0 bottom-0 bg-primary/20"></div>
+                    <div id="barRsiProgress" class="h-full bg-secondary rounded-full transition-all duration-300" style="width: 42.1%;"></div>
+                  </div>
+                  <div class="flex justify-between text-on-surface-variant font-code-log text-[9px] mt-1">
+                    <span>0 (Sobrevenda)</span>
+                    <span class="text-primary font-bold">30</span>
+                    <span class="text-primary font-bold">70</span>
+                    <span>100 (Sobrecompra)</span>
+                  </div>
+                </div>
+
+                <!-- IA Market Sentiment Bar -->
+                <div class="bg-surface-container-lowest p-space-sm rounded-lg flex flex-col justify-between border border-surface-container-high/30">
+                  <div class="flex items-center justify-between font-code-log text-[11px] mb-1">
+                    <span class="text-secondary font-bold flex items-center gap-1">
+                      <span class="material-symbols-outlined text-[14px]">arrow_upward</span> <span id="barSentBuyers">60%</span> Compradores
+                    </span>
+                    <span class="text-tertiary font-bold flex items-center gap-1">
+                      <span id="barSentSellers">40%</span> Vendedores <span class="material-symbols-outlined text-[14px]">arrow_downward</span>
+                    </span>
+                  </div>
+                  <div class="flex w-full h-2 rounded-full overflow-hidden bg-surface-container-highest">
+                    <div id="barSentimentBuy" class="h-full bg-secondary transition-all duration-300" style="width: 60%;"></div>
+                    <div id="barSentimentSell" class="h-full bg-tertiary-container transition-all duration-300" style="width: 40%;"></div>
+                  </div>
+                  <div class="flex justify-between text-on-surface-variant font-code-log text-[9px] mt-1">
+                    <span id="lblSentimentTrend">Pressão Bullish Confirmada</span>
+                    <span id="lblSentimentAiVote" class="text-secondary font-semibold">IA Voto: CALL</span>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+          </div>
+
+          <!-- RIGHT COLUMN: TRADE LOG & TELEMETRY TERMINAL (3 cols) -->
+          <div class="lg:col-span-3 flex flex-col gap-space-md">
+
+            <!-- Últimas Entradas Executadas -->
+            <div class="bg-surface-container rounded-xl p-space-md shadow-md border border-surface-container-high/40 flex flex-col gap-space-sm" id="sec-trades">
+              <div class="flex items-center justify-between pb-space-xs border-b border-surface-container-high/30">
+                <div class="flex items-center gap-space-xs">
+                  <span class="material-symbols-outlined text-primary text-[18px]">history_toggle_off</span>
+                  <h2 class="font-headline-md text-body-lg text-on-surface font-bold">Últimas Operações</h2>
+                </div>
+                <span class="font-code-log text-[11px] text-on-surface-variant">Hoje</span>
+              </div>
+              <div id="tradesContainer" class="flex flex-col gap-space-xs overflow-y-auto max-h-[300px] pr-1">
+                <div class="text-center py-8 text-on-surface-variant font-code-log text-xs">
+                  Nenhuma operação registrada ainda hoje.
+                </div>
+              </div>
+            </div>
+
+            <!-- Diário de Execução do Robô (Terminal Logs IA) -->
+            <div class="bg-surface-container rounded-xl p-space-md shadow-md border border-surface-container-high/40 flex flex-col gap-space-xs" id="sec-logs">
+              <div class="flex items-center justify-between pb-space-xs border-b border-surface-container-high/30">
+                <div class="flex items-center gap-space-xs">
+                  <span class="material-symbols-outlined text-secondary text-[18px]">terminal</span>
+                  <h2 class="font-headline-md text-body-lg text-on-surface font-bold">Diário de Execução</h2>
+                </div>
+                <button onclick="clearTerminalLogs()" class="p-1 rounded text-on-surface-variant hover:text-on-surface transition-colors" title="Limpar Diário">
+                  <span class="material-symbols-outlined text-[16px]">clear_all</span>
+                </button>
+              </div>
+
+              <!-- Terminal Output Window -->
+              <div id="logConsole" class="w-full h-56 bg-surface-container-lowest rounded-lg p-space-sm overflow-y-auto flex flex-col gap-1 font-code-log text-[11px] leading-relaxed border border-surface-container-high/40">
+                <div class="text-on-surface-variant flex gap-1">
+                  <span class="text-outline">[00:00:00]</span>
+                  <span class="text-primary font-bold">[AI-SYS]</span>
+                  <span class="text-on-surface">ProspeTraderBot Terminal inicializado.</span>
+                </div>
+              </div>
+
+              <div class="flex items-center justify-between text-on-surface-variant font-code-log text-[10px] pt-1">
+                <span class="flex items-center gap-1">
+                  <span class="w-1.5 h-1.5 rounded-full bg-secondary"></span> Telemetria WebSocket Ativa
+                </span>
+                <span id="telBufferStats">Buffer: 0/80</span>
+              </div>
+            </div>
+
+          </div>
+
         </div>
+
       </div>
+    </main>
+  </div>
 
-      <!-- Card 2: Gerenciamento de Risco e Banca -->
-      <div class="glass-card rounded-xl p-5">
-        <div class="flex items-center justify-between mb-4">
-          <h2 class="text-sm font-bold uppercase tracking-wider text-slate-400">2. Gestão de Risco & Banca</h2>
-          <button onclick="resetStats()" class="text-xs text-slate-400 hover:text-white underline">Zerar Placar</button>
+  <!-- FLOATING ACTION CONFIRMATION TOAST CONTAINER -->
+  <div id="toast-container" class="fixed bottom-6 right-6 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+  <!-- MODAL DE CONFIGURAÇÃO DE CONEXÕES (SAFIRION & METATRADER 5) -->
+  <div id="connectionsModal" class="fixed inset-0 bg-surface-container-lowest/80 backdrop-blur-md hidden items-center justify-center z-50 p-4">
+    <div class="bg-surface-container rounded-2xl max-w-2xl w-full p-6 border border-surface-container-high shadow-2xl">
+      <div class="flex items-center justify-between border-b border-surface-container-high pb-3 mb-5">
+        <div class="flex items-center gap-2">
+          <span class="material-symbols-outlined text-primary text-2xl">link</span>
+          <h2 class="text-base font-bold text-on-surface">Configurar Conexões: Safirion &amp; MetaTrader 5</h2>
         </div>
-
-        <div class="grid grid-cols-3 gap-3 mb-3">
-          <div>
-            <label id="lblEntryAmount" class="block text-xs text-slate-400 mb-1">Valor Entrada (R$)</label>
-            <input id="cfgEntryAmount" type="number" step="1" min="1" value="50" onchange="saveConfig()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
-          </div>
-          <div>
-            <label class="block text-xs text-emerald-400 mb-1">Stop Gain (R$)</label>
-            <input id="cfgStopGain" type="number" step="10" value="500" onchange="saveConfig()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
-          </div>
-          <div>
-            <label class="block text-xs text-rose-400 mb-1">Stop Loss (R$)</label>
-            <input id="cfgStopLoss" type="number" step="10" value="250" onchange="saveConfig()" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
-          </div>
-        </div>
-
-        <div class="pt-3 border-t border-slate-800 flex items-center justify-between gap-2">
-          <label class="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-            <input id="cfgUseMartingale" type="checkbox" onchange="saveConfig()" class="rounded bg-slate-800 border-slate-600 text-cyan-500" />
-            <span>Usar Proteção Martingale (1 Gale)</span>
-          </label>
-          <div class="flex items-center gap-1.5">
-            <span class="text-xs text-slate-400">Fator:</span>
-            <input id="cfgMartingaleFactor" type="number" step="0.1" value="2.0" onchange="saveConfig()" class="w-16 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white text-center" />
-          </div>
-        </div>
-      </div>
-
-      <!-- Card 3: Boleta de Execução Instantânea Manual / Teste -->
-      <div class="glass-card rounded-xl p-5">
-        <h2 class="text-sm font-bold uppercase tracking-wider text-slate-400 mb-3">3. Boleta Manual / Disparo Rápido</h2>
-        <p class="text-xs text-slate-400 mb-3">
-          Envie uma ordem imediata na corretora selecionada para testar a velocidade de execução ou operar manualmente junto com o robô:
-        </p>
-        <div class="grid grid-cols-2 gap-3">
-          <button onclick="sendManualOrder('BUY')" class="py-3 rounded-xl font-bold text-sm bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/20 transition flex flex-col items-center">
-            <span>COMPRAR / CALL ▲</span>
-            <span class="text-[11px] font-normal opacity-80">Acima / Tendência Alta</span>
-          </button>
-          <button onclick="sendManualOrder('SELL')" class="py-3 rounded-xl font-bold text-sm bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-600/20 transition flex flex-col items-center">
-            <span>VENDER / PUT ▼</span>
-            <span class="text-[11px] font-normal opacity-80">Abaixo / Tendência Baixa</span>
-          </button>
-        </div>
-      </div>
-
-    </section>
-
-    <!-- COLUNA DIREITA: KPIs, Gráfico em Tempo Real, Termômetro de Sinal e Histórico (8 cols) -->
-    <section class="lg:col-span-8 flex flex-col gap-5">
-
-      <!-- KPIs Superiores -->
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <div class="glass-card rounded-xl p-4">
-          <span class="text-xs text-slate-400">Resultado do Dia (PnL)</span>
-          <div id="kpiPnl" class="text-2xl font-extrabold mt-1 text-white">R$ 0,00</div>
-          <span id="kpiGale" class="text-[11px] text-slate-500">Gale Atual: 0</span>
-        </div>
-        <div class="glass-card rounded-xl p-4">
-          <span class="text-xs text-slate-400">Taxa de Acerto (Win Rate)</span>
-          <div id="kpiWinRate" class="text-2xl font-extrabold mt-1 text-cyan-400">0.0%</div>
-          <span id="kpiTradesCount" class="text-[11px] text-slate-400">0 Wins / 0 Losses</span>
-        </div>
-        <div class="glass-card rounded-xl p-4">
-          <span class="text-xs text-slate-400">Sinal da Estratégia Atual</span>
-          <div id="kpiSignalAction" class="text-2xl font-extrabold mt-1 text-slate-300">NEUTRO</div>
-          <span id="kpiConfidence" class="text-[11px] text-slate-400">Confiança: 0%</span>
-        </div>
-        <div class="glass-card rounded-xl p-4">
-          <span class="text-xs text-slate-400">Cotação Atual & RSI</span>
-          <div id="kpiPrice" class="text-2xl font-extrabold mt-1 text-white">--</div>
-          <span id="kpiIndicators" class="text-[11px] text-slate-400">RSI(14): -- | ATR: --</span>
-        </div>
-      </div>
-
-      <!-- Gráfico de Candles em Tempo Real + Diagnóstico do Sinal -->
-      <div class="glass-card rounded-xl p-5 flex flex-col gap-3">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 id="chartTitle" class="text-sm font-bold text-white">Gráfico em Tempo Real — EURUSD (M1)</h2>
-            <p id="signalReasonBox" class="text-xs text-cyan-400 mt-0.5">Analisando candles...</p>
-          </div>
-          <div class="flex items-center gap-4 text-xs text-slate-400 flex-wrap">
-            <span class="flex items-center gap-1.5"><span class="w-3 h-0.5 bg-cyan-400 inline-block"></span> EMA Rápida (9)</span>
-            <span class="flex items-center gap-1.5"><span class="w-3 h-0.5 bg-amber-400 inline-block"></span> EMA Lenta (21)</span>
-            <span class="flex items-center gap-1.5"><span class="w-3 h-0.5 bg-purple-400 inline-block"></span> Bandas de Bollinger (20, 2.0)</span>
-          </div>
-        </div>
-
-        <!-- Barra de Telemetria ao Vivo dos Indicadores + IA Machine Learning -->
-        <div class="grid grid-cols-2 sm:grid-cols-6 gap-2 bg-slate-950/80 border border-slate-800 rounded-lg p-2.5 text-[11px]">
-          <div><span class="text-slate-500">Fonte de Dados:</span> <b id="telSource" class="text-emerald-400 block">Sincronizando...</b></div>
-          <div><span class="text-slate-500">EMA 9 / EMA 21:</span> <b id="telEmas" class="text-cyan-300 block">-- / --</b></div>
-          <div><span class="text-slate-500">Bollinger Sup / Inf:</span> <b id="telBb" class="text-purple-300 block">-- / --</b></div>
-          <div><span class="text-slate-500">RSI (14):</span> <b id="telRsi" class="text-white block">--</b></div>
-          <div><span class="text-slate-500">🧠 IA (Alta / Queda):</span> <b id="telMacd" class="text-emerald-300 block">--% / --%</b></div>
-          <div><span class="text-slate-500">Ticks Safirion:</span> <b id="telTicks" class="text-amber-300 block">0</b></div>
-        </div>
-
-        <div id="chartContainer" class="w-full h-[340px] rounded-lg overflow-hidden border border-slate-800/80"></div>
-      </div>
-
-      <!-- Histórico de Operações e Logs do Sistema -->
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
-        <!-- Tabela de Operações -->
-        <div class="glass-card rounded-xl p-5 flex flex-col">
-          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Últimas Entradas Executadas</h3>
-          <div class="overflow-y-auto max-h-56 pr-1">
-            <table class="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr class="border-b border-slate-800 text-slate-400">
-                  <th class="pb-2">Hora</th>
-                  <th class="pb-2">Ativo</th>
-                  <th class="pb-2">Tipo</th>
-                  <th class="pb-2">Valor</th>
-                  <th class="pb-2 text-right">Resultado</th>
-                </tr>
-              </thead>
-              <tbody id="tradesTableBody" class="divide-y divide-slate-800/60">
-                <tr><td colspan="5" class="py-6 text-center text-slate-500">Nenhuma operação realizada ainda.</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- Console de Logs em Tempo Real -->
-        <div class="glass-card rounded-xl p-5 flex flex-col">
-          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Diário de Execução (Logs)</h3>
-          <div id="logsContainer" class="overflow-y-auto max-h-56 space-y-1.5 font-mono text-[11px] bg-slate-950/70 p-3 rounded-lg border border-slate-800">
-          </div>
-        </div>
-      </div>
-
-    </section>
-  </main>
-
-  <!-- MODAL DE CONEXÃO COM SAFIRION E METATRADER 5 -->
-  <div id="connectionsModal" class="fixed inset-0 bg-black/75 hidden items-center justify-center z-50 p-4">
-    <div class="glass-card rounded-2xl max-w-2xl w-full p-6 border border-slate-700 shadow-2xl">
-      <div class="flex items-center justify-between border-b border-slate-800 pb-3 mb-5">
-        <h2 class="text-base font-bold text-white">Configurar Conexões: Safirion & MetaTrader 5</h2>
-        <button onclick="closeConnectionsModal()" class="text-slate-400 hover:text-white text-sm font-bold">✕</button>
+        <button onclick="closeConnectionsModal()" class="text-on-surface-variant hover:text-on-surface text-lg font-bold p-1">✕</button>
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <!-- Safirion Config — Ponte em 2º Plano (Abordagem 2: Funciona Minimizado!) -->
-        <div class="bg-slate-900/90 p-4 rounded-xl border border-slate-800 space-y-3">
-          <h3 class="text-sm font-bold text-cyan-400">1. Safirion — Ponte em 2º Plano (Funciona Minimizado!)</h3>
-          <p class="text-xs text-slate-300 leading-relaxed">
-            Conecta direto por dentro da sua guia aberta em <code>trade.safirion.com/traderoom</code>, lendo os preços de <b>Binárias, Digital ou Blitz</b> e enviando cliques via DOM (você pode minimizar a janela!).
+        <!-- Safirion Bridge (Abordagem 2º Plano) -->
+        <div class="bg-surface-container-lowest p-4 rounded-xl border border-surface-container-high/50 space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-bold text-primary">1. Safirion — Ponte 2º Plano</h3>
+            <span class="px-2 py-0.5 rounded bg-secondary/15 text-secondary font-label-caps text-[9px] font-bold">Minimizável</span>
+          </div>
+          <p class="text-xs text-on-surface-variant leading-relaxed">
+            Conecta diretamente por dentro da sua guia aberta em <code>trade.safirion.com/traderoom</code>, permitindo operar mesmo com a janela do navegador minimizada.
           </p>
 
-          <div class="bg-slate-950 border border-cyan-500/30 rounded-lg p-3 space-y-2">
-            <div class="text-xs font-bold text-cyan-300">Opção Rápida (10 segundos — Sem instalar nada):</div>
-            <ol class="text-[11px] text-slate-300 list-decimal list-inside space-y-1">
-              <li>Clique no botão abaixo para <b>Copiar o Script da Ponte</b>.</li>
-              <li>Vá na sua guia aberta da <b>Safirion</b>, aperte <b>F12</b> (ou <code>Ctrl+Shift+I</code>), clique na aba <b>Console</b>, cole (<code>Ctrl+V</code>) e dê <b>Enter</b>!</li>
-              <li>Uma barra azul (<b>🤖 RoboTrader Bridge</b>) vai aparecer no topo da Safirion para você vincular o botão CALL e PUT com 1 clique!</li>
+          <div class="bg-surface-container-low border border-primary/30 rounded-lg p-3 space-y-2">
+            <div class="text-xs font-bold text-primary">Conexão Rápida (10 segundos):</div>
+            <ol class="text-[11px] text-on-surface-variant list-decimal list-inside space-y-1">
+              <li>Clique no botão abaixo para copiar o script da ponte.</li>
+              <li>Na guia da Safirion, aperte <b>F12</b> (ou <code>Ctrl+Shift+I</code>), abra a aba <b>Console</b>, cole (<code>Ctrl+V</code>) e dê <b>Enter</b>!</li>
+              <li>A barra <b>🤖 ProspeTraderBot Bridge</b> conectará instantaneamente!</li>
             </ol>
-            <button onclick="copyBridgeScript()" class="w-full py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs transition">
-              📋 Copiar Script de Conexão Direta (Colar no F12 da Safirion)
+            <button onclick="copyBridgeScript()" class="w-full py-2.5 rounded-lg bg-primary hover:bg-primary-container text-on-primary font-bold text-xs transition-all shadow-md">
+              📋 Copiar Script de Conexão Direta (F12 Safirion)
             </button>
           </div>
 
-          <div class="text-[11px] text-slate-400 bg-slate-950/60 border border-slate-800 rounded-lg p-2.5">
-            <b>Ou instale como Extensão Fixa do Chrome:</b> Abra <code>chrome://extensions</code>, ative o <i>Modo do desenvolvedor</i>, clique em <i>Carregar sem compactação</i> e selecione a pasta:<br/>
-            <code class="text-emerald-400 select-all">C:\Users\bruno\.gemini\antigravity\scratch\robo-trader-pro\safirion-extension</code>
+          <div class="text-[11px] text-on-surface-variant/80 bg-surface-container-low/50 border border-surface-container-high/30 rounded-lg p-2.5">
+            <b>Ou use como Extensão do Chrome:</b> Abra <code>chrome://extensions</code>, ative o Modo do desenvolvedor, e carregue a pasta <code>safirion-extension</code>.
           </div>
         </div>
 
-        <!-- MetaTrader 5 Config -->
-        <div class="bg-slate-900/90 p-4 rounded-xl border border-slate-800 space-y-3">
-          <h3 class="text-sm font-bold text-emerald-400">2. MetaTrader 5 (Forex & B3 WIN/WDO)</h3>
-          <p class="text-xs text-slate-400">
-            Se o MT5 estiver aberto no seu Windows, deixe os campos em branco para conectar direto ao terminal logado.
-          </p>
+        <!-- MetaTrader 5 Sync -->
+        <div class="bg-surface-container-lowest p-4 rounded-xl border border-surface-container-high/50 space-y-3 flex flex-col justify-between">
           <div>
-            <label class="block text-xs text-slate-400 mb-1">Login MT5 (Opcional se já aberto)</label>
-            <input id="mt5Login" type="number" placeholder="Ex: 10293847" class="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-xs text-white" />
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-bold text-secondary">2. MetaTrader 5 (B3 &amp; Forex)</h3>
+              <span class="px-2 py-0.5 rounded bg-primary/15 text-primary font-label-caps text-[9px] font-bold">MT5 Windows</span>
+            </div>
+            <p class="text-xs text-on-surface-variant mt-2">
+              Se o seu MT5 já estiver aberto no Windows, deixe os campos em branco para sincronizar direto com a conta ativa.
+            </p>
+            <div class="space-y-3 mt-3">
+              <div>
+                <label class="block text-[11px] text-on-surface-variant mb-1 uppercase font-semibold">Login MT5 (Opcional)</label>
+                <input id="mt5Login" type="number" placeholder="Ex: 10293847" class="w-full bg-surface-container-low border border-surface-container-high rounded-lg px-3 py-1.5 text-xs text-on-surface focus:outline-none focus:border-secondary" />
+              </div>
+              <div>
+                <label class="block text-[11px] text-on-surface-variant mb-1 uppercase font-semibold">Servidor da Corretora (Opcional)</label>
+                <input id="mt5Server" type="text" placeholder="Ex: XPInvestimentos-PRD ou Exness-MT5" class="w-full bg-surface-container-low border border-surface-container-high rounded-lg px-3 py-1.5 text-xs text-on-surface focus:outline-none focus:border-secondary" />
+              </div>
+            </div>
           </div>
-          <div>
-            <label class="block text-xs text-slate-400 mb-1">Servidor da Corretora (Opcional)</label>
-            <input id="mt5Server" type="text" placeholder="Ex: XPInvestimentos-PRD ou Exness-MT5Real" class="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-xs text-white" />
-          </div>
-          <button onclick="connectMt5()" class="w-full py-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs transition mt-4">
+          
+          <button onclick="connectMt5()" class="w-full py-2.5 rounded-lg bg-secondary-container hover:bg-secondary text-on-secondary font-bold text-xs transition-all mt-4 shadow-md">
             Sincronizar Terminal MT5
           </button>
         </div>
       </div>
 
-      <div id="modalFeedback" class="mt-4 text-xs text-center text-amber-300 font-semibold"></div>
+      <div id="modalFeedback" class="mt-4 text-xs text-center text-primary font-semibold min-h-[20px]"></div>
     </div>
   </div>
 
+  <!-- CLIENT-SIDE APPLICATION JAVASCRIPT LOGIC -->
   <script>
     let chart, candleSeries, emaFastSeries, emaSlowSeries, bbUpperSeries, bbLowerSeries;
     let isInitialized = false;
+    let accountMode = 'REAL';
 
+    // Inicializa o gráfico Lightweight Charts com o tema Obsidian
     function initChart() {
       const container = document.getElementById('chartContainer');
       chart = LightweightCharts.createChart(container, {
         layout: {
-          background: { type: 'solid', color: '#090d16' },
-          textColor: '#94a3b8',
+          background: { type: 'solid', color: '#000f21' },
+          textColor: '#bcc9cd',
+          fontFamily: 'JetBrains Mono',
         },
         grid: {
-          vertLines: { color: '#1e293b' },
-          horzLines: { color: '#1e293b' },
+          vertLines: { color: '#102034' },
+          horzLines: { color: '#102034' },
         },
         crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-        rightPriceScale: { borderColor: '#1e293b' },
-        timeScale: { borderColor: '#1e293b', timeVisible: true, secondsVisible: false },
+        rightPriceScale: { borderColor: '#1b2b3f' },
+        timeScale: { borderColor: '#1b2b3f', timeVisible: true, secondsVisible: false },
       });
 
       candleSeries = chart.addCandlestickSeries({
-        upColor: '#10b981',
-        downColor: '#f43f5e',
+        upColor: '#4edea3',
+        downColor: '#ff7f8b',
         borderVisible: false,
-        wickUpColor: '#10b981',
-        wickDownColor: '#f43f5e',
+        wickUpColor: '#4edea3',
+        wickDownColor: '#ff7f8b',
       });
 
-      emaFastSeries = chart.addLineSeries({ color: '#22d3ee', lineWidth: 2 });
-      emaSlowSeries = chart.addLineSeries({ color: '#f59e0b', lineWidth: 2 });
-      bbUpperSeries = chart.addLineSeries({ color: 'rgba(192, 132, 252, 0.65)', lineWidth: 1, lineStyle: 2 });
-      bbLowerSeries = chart.addLineSeries({ color: 'rgba(192, 132, 252, 0.65)', lineWidth: 1, lineStyle: 2 });
+      emaFastSeries = chart.addLineSeries({ color: '#4cd7f6', lineWidth: 2, title: 'EMA 9' });
+      emaSlowSeries = chart.addLineSeries({ color: '#3b82f6', lineWidth: 2, title: 'EMA 21' });
+      bbUpperSeries = chart.addLineSeries({ color: 'rgba(129, 140, 248, 0.65)', lineWidth: 1, lineStyle: 2, title: 'BB Sup' });
+      bbLowerSeries = chart.addLineSeries({ color: 'rgba(129, 140, 248, 0.65)', lineWidth: 1, lineStyle: 2, title: 'BB Inf' });
 
       window.addEventListener('resize', () => {
-        chart.applyOptions({ width: container.clientWidth, height: 340 });
+        chart.applyOptions({ width: container.clientWidth, height: container.clientHeight || 380 });
       });
+    }
+
+    function toggleChartFullscreen() {
+      const container = document.getElementById('chartContainer');
+      if (!document.fullscreenElement) {
+        container.requestFullscreen().catch(err => console.error(err));
+      } else {
+        document.exitFullscreen();
+      }
+    }
+
+    function setAccountMode(mode) {
+      accountMode = mode;
+      const btnReal = document.getElementById('btnRealAccount');
+      const btnDemo = document.getElementById('btnDemoAccount');
+      if (mode === 'REAL') {
+        btnReal.className = 'px-space-md py-space-xs rounded-lg font-label-caps text-label-caps font-bold transition-all bg-primary-container text-on-primary-container shadow-sm';
+        btnDemo.className = 'px-space-md py-space-xs rounded-lg font-label-caps text-label-caps font-bold transition-all text-on-surface-variant hover:text-on-surface';
+        showToast('Modo Conta Real ativado', 'success');
+      } else {
+        btnDemo.className = 'px-space-md py-space-xs rounded-lg font-label-caps text-label-caps font-bold transition-all bg-primary-container text-on-primary-container shadow-sm';
+        btnReal.className = 'px-space-md py-space-xs rounded-lg font-label-caps text-label-caps font-bold transition-all text-on-surface-variant hover:text-on-surface';
+        showToast('Modo Demonstração (DEMO) ativado', 'info');
+      }
+    }
+
+    function showToast(message, type = 'success') {
+      const toastContainer = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      const isSuccess = type === 'success';
+      const isError = type === 'error';
+      
+      let borderBg = 'bg-surface-container-high text-secondary border-secondary/30';
+      let icon = 'check_circle';
+      if (isError) {
+        borderBg = 'bg-surface-container-high text-tertiary border-tertiary/30';
+        icon = 'error';
+      } else if (type === 'info') {
+        borderBg = 'bg-surface-container-high text-primary border-primary/30';
+        icon = 'info';
+      }
+
+      toast.className = `px-4 py-2.5 rounded-lg font-code-log text-xs font-semibold flex items-center gap-2 shadow-xl border pointer-events-auto transition-all duration-300 transform translate-y-2 opacity-0 ${borderBg}`;
+      toast.innerHTML = `<span class="material-symbols-outlined text-[16px]">${icon}</span> <span>${message}</span>`;
+      toastContainer.appendChild(toast);
+
+      requestAnimationFrame(() => {
+        toast.classList.remove('translate-y-2', 'opacity-0');
+      });
+
+      setTimeout(() => {
+        toast.classList.add('opacity-0', 'translate-y-2');
+        setTimeout(() => toast.remove(), 300);
+      }, 3500);
     }
 
     function onMarketTypeChange() {
@@ -404,8 +991,8 @@
       } else {
         boxSafSub.classList.remove('hidden');
         symbolSelect.value = 'EURUSD';
-        lblEntry.textContent = 'Valor Entrada (R$)';
-        document.getElementById('cfgEntryAmount').value = 50;
+        lblEntry.textContent = 'Entrada Mínima Base (R$)';
+        document.getElementById('cfgEntryAmount').value = 5;
       }
       saveConfig();
     }
@@ -419,37 +1006,63 @@
         strategy_id: document.getElementById('cfgStrategy').value,
         min_confidence: parseFloat(document.getElementById('cfgMinConfidence').value || 75),
         expiration_minutes: parseInt(document.getElementById('cfgExpiration').value || 1),
-        entry_amount: parseFloat(document.getElementById('cfgEntryAmount').value || 50),
+        custom_balance: parseFloat(document.getElementById('cfgCustomBalance').value || 137.09),
+        entry_amount: parseFloat(document.getElementById('cfgEntryAmount').value || 5),
+        bankroll_mode: document.getElementById('cfgBankrollMode').value,
         stop_gain: parseFloat(document.getElementById('cfgStopGain').value || 500),
         stop_loss: parseFloat(document.getElementById('cfgStopLoss').value || 250),
         use_martingale: document.getElementById('cfgUseMartingale').checked,
         martingale_factor: parseFloat(document.getElementById('cfgMartingaleFactor').value || 2.0),
       };
-      await fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      await fetchState();
+      try {
+        await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        await fetchState();
+      } catch (err) {
+        console.error('Erro ao salvar configuração:', err);
+      }
     }
 
     async function toggleBot() {
-      await fetch('/api/bot/toggle', { method: 'POST' });
-      await fetchState();
+      try {
+        const res = await fetch('/api/bot/toggle', { method: 'POST' });
+        const data = await res.json();
+        showToast(data.is_running ? 'Robô ProspeTraderBot ATIVADO!' : 'Robô PAUSADO com sucesso.', data.is_running ? 'success' : 'info');
+        await fetchState();
+      } catch (err) {
+        showToast('Erro ao alternar robô', 'error');
+      }
     }
 
     async function sendManualOrder(action) {
-      await fetch('/api/order/manual', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action }),
-      });
-      await fetchState();
+      try {
+        showToast(`Disparando ordem ${action}...`, 'info');
+        const res = await fetch('/api/order/manual', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action }),
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          showToast(`Ordem ${action} executada com sucesso!`, 'success');
+        } else {
+          showToast(`Aviso na ordem: ${data.reason || 'executada'}`, 'info');
+        }
+        await fetchState();
+      } catch (err) {
+        showToast('Erro ao enviar ordem manual', 'error');
+      }
     }
 
     async function resetStats() {
-      await fetch('/api/stats/reset', { method: 'POST' });
-      await fetchState();
+      if (confirm('Deseja realmente zerar o placar e histórico de hoje?')) {
+        await fetch('/api/stats/reset', { method: 'POST' });
+        showToast('Placar diário zerado com sucesso!', 'info');
+        await fetchState();
+      }
     }
 
     function openConnectionsModal() {
@@ -468,37 +1081,51 @@
         const res = await fetch('/api/safirion/bridge.js');
         const code = await res.text();
         await navigator.clipboard.writeText(code);
-        feedback.textContent = '✅ Script copiado! Agora vá na guia da Safirion, aperte F12 -> aba Console, cole (Ctrl+V) e aperte Enter!';
+        feedback.textContent = '✅ Script copiado! Agora vá na guia aberta da Safirion, aperte F12 -> Console, cole e aperte Enter!';
+        showToast('Script da Ponte Safirion copiado!', 'success');
       } catch (e) {
         feedback.textContent = 'Erro ao copiar script: ' + e;
+        showToast('Erro ao copiar script', 'error');
       }
     }
 
     async function connectMt5() {
       const feedback = document.getElementById('modalFeedback');
-      feedback.textContent = 'Buscando terminal MetaTrader 5 no Windows...';
+      feedback.textContent = 'Buscando terminal MetaTrader 5 ativo no Windows...';
       const loginVal = document.getElementById('mt5Login').value;
       const serverVal = document.getElementById('mt5Server').value;
-      const res = await fetch('/api/connect/mt5', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          login: loginVal ? parseInt(loginVal) : null,
-          server: serverVal || null,
-          use_simulation_if_unavailable: true,
-        }),
-      });
-      const data = await res.json();
-      feedback.textContent = data.message;
-      await fetchState();
+      try {
+        const res = await fetch('/api/connect/mt5', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            login: loginVal ? parseInt(loginVal) : null,
+            server: serverVal || null,
+            use_simulation_if_unavailable: true,
+          }),
+        });
+        const data = await res.json();
+        feedback.textContent = data.message;
+        showToast(data.message, 'success');
+        await fetchState();
+      } catch (e) {
+        feedback.textContent = 'Erro ao conectar MT5: ' + e;
+      }
+    }
+
+    function clearTerminalLogs() {
+      document.getElementById('logConsole').innerHTML = '<div class="text-on-surface-variant text-center py-4 font-code-log text-[10px]">Diário reiniciado pelo operador.</div>';
+      showToast('Logs limpos localmente', 'info');
     }
 
     async function fetchState() {
       try {
         const res = await fetch('/api/state');
         const state = await res.json();
+        const safConn = state.connections.safirion;
+        const mt5Conn = state.connections.mt5;
 
-        // Sincroniza inputs na primeira carga
+        // 1. Inicializa inputs uma única vez
         if (!isInitialized) {
           document.getElementById('cfgMarketType').value = state.config.market_type;
           if (state.config.safirion_sub_type) {
@@ -507,91 +1134,205 @@
           document.getElementById('cfgSymbol').value = state.config.symbol;
           document.getElementById('cfgTimeframe').value = state.config.timeframe;
           document.getElementById('cfgStrategy').value = state.config.strategy_id;
+          document.getElementById('cfgEntryAmount').value = state.config.entry_amount ?? 5;
+          if (state.config.bankroll_mode) {
+            document.getElementById('cfgBankrollMode').value = state.config.bankroll_mode;
+          }
+          document.getElementById('cfgUseMartingale').checked = Boolean(state.config.use_martingale);
+          document.getElementById('cfgMartingaleFactor').value = state.config.martingale_factor ?? 2.0;
+          document.getElementById('cfgStopGain').value = state.config.stop_gain ?? 500;
+          document.getElementById('cfgStopLoss').value = state.config.stop_loss ?? 250;
+
+          if (safConn && safConn.balance) {
+            document.getElementById('cfgCustomBalance').value = safConn.balance.toFixed(2);
+          }
           isInitialized = true;
+        } else if (document.activeElement !== document.getElementById('cfgCustomBalance') && safConn && safConn.balance) {
+          document.getElementById('cfgCustomBalance').value = safConn.balance.toFixed(2);
         }
 
-        // Status do Robô
+        // 2. Status do Robô e Botão Master
         const btnToggle = document.getElementById('btnToggleBot');
         const btnText = document.getElementById('btnToggleText');
-        const botDot = document.getElementById('botDot');
         document.getElementById('statusReasonBanner').textContent = state.stats.status_reason;
 
         if (state.is_running) {
-          btnToggle.className = 'px-5 py-2 rounded-lg text-sm font-bold bg-rose-500 hover:bg-rose-400 text-white shadow-lg shadow-rose-500/25 transition flex items-center gap-2';
+          btnToggle.className = 'flex items-center gap-space-xs px-space-lg py-space-sm rounded-lg bg-error-container hover:bg-error text-on-error transition-all shadow-[0_0_15px_rgba(244,63,94,0.35)]';
           btnText.textContent = 'PAUSAR ROBÔ AUTOMÁTICO';
-          botDot.className = 'w-2.5 h-2.5 rounded-full bg-white pulse-dot';
         } else {
-          btnToggle.className = 'px-5 py-2 rounded-lg text-sm font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-lg shadow-emerald-500/25 transition flex items-center gap-2';
+          btnToggle.className = 'flex items-center gap-space-xs px-space-lg py-space-sm rounded-lg bg-secondary-container hover:bg-secondary text-on-secondary transition-all shadow-[0_0_15px_rgba(78,222,163,0.3)]';
           btnText.textContent = 'LIGAR ROBÔ AUTOMÁTICO';
-          botDot.className = 'w-2.5 h-2.5 rounded-full bg-slate-950';
         }
 
-        // Tag de mercado ativo
+        // 3. Header Bankroll & PnL
+        const currentBalance = (safConn && safConn.balance) ? safConn.balance : (state.config.custom_balance || 1250);
+        document.getElementById('topBalance').textContent = `R$ ${currentBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        
+        const pnl = state.stats.daily_pnl || 0.0;
+        const pnlPercent = currentBalance > 0 ? ((pnl / currentBalance) * 100).toFixed(1) : '0.0';
+        const isPositivePnl = pnl >= 0;
+        const pnlFormatted = `${isPositivePnl ? '+R$ ' : '-R$ '}${Math.abs(pnl).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+        const topPnlEl = document.getElementById('topPnl');
+        const topPnlPctEl = document.getElementById('topPnlPercent');
+        topPnlEl.textContent = pnlFormatted;
+        topPnlPctEl.textContent = `(${isPositivePnl ? '+' : ''}${pnlPercent}%)`;
+        topPnlEl.className = `font-data-display text-data-display ${isPositivePnl ? 'text-secondary' : 'text-tertiary'}`;
+        topPnlPctEl.className = `font-data-metric text-data-metric font-bold ${isPositivePnl ? 'text-secondary' : 'text-tertiary'}`;
+
+        // 4. Broker Badge & Status de Conexão
+        const isSafLive = (state.config.market_type === 'SAFIRION_OB' && safConn.ws_messages_received > 0);
         const subName = state.config.safirion_sub_type || 'BINARY';
+        const connText = document.getElementById('connStatusText');
+        const badgeBrokerTag = document.getElementById('badgeBrokerTag');
+
+        if (state.config.market_type === 'SAFIRION_OB') {
+          connText.textContent = isSafLive ? `Safirion (${subName}) Ao Vivo` : 'Safirion (Simulador)';
+          connText.className = isSafLive ? 'text-secondary font-bold' : 'text-primary font-bold';
+          badgeBrokerTag.textContent = `Safirion ${subName}`;
+        } else {
+          connText.textContent = mt5Conn.simulation_mode ? 'MT5 (Simulador)' : 'MT5 Conectado';
+          connText.className = mt5Conn.simulation_mode ? 'text-primary font-bold' : 'text-secondary font-bold';
+          badgeBrokerTag.textContent = state.config.market_type === 'MT5_B3' ? 'MT5 B3' : 'MT5 Forex';
+        }
+
         const marketLabels = {
           'SAFIRION_OB': `Safirion (${subName})`,
           'MT5_B3': 'MT5 B3 (WIN/WDO)',
           'MT5_FOREX': 'MT5 Forex'
         };
-        document.getElementById('activeMarketTag').textContent = marketLabels[state.config.market_type] || state.config.market_type;
+        document.getElementById('activeMarketTag').textContent = `${marketLabels[state.config.market_type]} • ${state.config.symbol}`;
 
-        // Badges de conexão
-        const mt5Conn = state.connections.mt5;
-        document.getElementById('badgeMt5').innerHTML = mt5Conn.simulation_mode
-          ? '<span class="w-2 h-2 rounded-full bg-amber-400"></span><span>MT5: Simulador Ativo</span>'
-          : '<span class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></span><span>MT5: Conectado Ao Vivo</span>';
-
-        const safConn = state.connections.safirion;
-        document.getElementById('badgeSafirion').innerHTML = safConn.simulation_mode
-          ? `<span class="w-2 h-2 rounded-full bg-amber-400"></span><span>Safirion: Ponte Desconectada (Simulador)</span>`
-          : `<span class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></span><span>Safirion: PONTE 2º PLANO ATIVA (${safConn.sub_type})</span>`;
-
-        // KPIs
-        const pnl = state.stats.daily_pnl;
+        // 5. KPI 1: PnL Card
         const kpiPnl = document.getElementById('kpiPnl');
-        kpiPnl.textContent = `${pnl >= 0 ? '+ ' : '- '}R$ ${Math.abs(pnl).toFixed(2)}`;
-        kpiPnl.className = `text-2xl font-extrabold mt-1 ${pnl > 0 ? 'text-emerald-400' : pnl < 0 ? 'text-rose-400' : 'text-white'}`;
-        document.getElementById('kpiGale').textContent = `Gale Atual: ${state.stats.current_gale_step}`;
+        kpiPnl.textContent = pnlFormatted;
+        kpiPnl.className = `font-data-display text-data-display font-bold ${isPositivePnl ? 'text-secondary' : 'text-tertiary'}`;
+        document.getElementById('kpiPnlBadge').textContent = `${isPositivePnl ? '+' : ''}${pnlPercent}% Hoje`;
+        document.getElementById('kpiPnlBadge').className = `inline-flex items-center px-space-xs py-0.5 rounded-full font-label-caps text-label-caps font-bold ${isPositivePnl ? 'bg-secondary/15 text-secondary' : 'bg-error-container/40 text-tertiary'}`;
+        document.getElementById('kpiGale').textContent = `Gale: ${state.stats.current_gale_step}`;
 
-        document.getElementById('kpiWinRate').textContent = `${state.stats.win_rate.toFixed(1)}%`;
-        document.getElementById('kpiTradesCount').textContent = `${state.stats.wins} Wins / ${state.stats.losses} Losses (${state.stats.total_trades} total)`;
+        const stopGain = state.config.stop_gain || 500;
+        const stopLoss = state.config.stop_loss || 250;
+        document.getElementById('lblMetaGain').textContent = `Meta Gain: R$ ${stopGain.toFixed(2)}`;
+        document.getElementById('lblStopLoss').textContent = `Stop Loss: R$ ${stopLoss.toFixed(2)}`;
+        const metaProgress = Math.min(100, Math.max(0, (pnl / stopGain) * 100));
+        document.getElementById('lblMetaPercent').textContent = `${metaProgress.toFixed(1)}%`;
+        document.getElementById('barMetaGain').style.width = `${metaProgress}%`;
 
+        // 6. KPI 2: Win Rate & Assertividade
+        const winRate = state.stats.win_rate || 0.0;
+        document.getElementById('kpiWinRate').textContent = `${winRate.toFixed(1)}%`;
+        document.getElementById('kpiTotalTradesCount').textContent = `${state.stats.total_trades} Execuções`;
+        document.getElementById('kpiWinsBadge').textContent = `${state.stats.wins} WINS`;
+        document.getElementById('kpiLossesBadge').textContent = `${state.stats.losses} LOSSES`;
+        document.getElementById('svgGaugeCircle').setAttribute('stroke-dasharray', `${winRate.toFixed(0)}, 100`);
+        document.getElementById('svgGaugeText').textContent = `${state.stats.wins}:${state.stats.losses}`;
+
+        // Renderiza bolinhas de sequência de trades recentes
+        if (state.trades && state.trades.length > 0) {
+          const streakBox = document.getElementById('streakContainer');
+          const recent = state.trades.slice(0, 6);
+          let streakHtml = recent.map(t => {
+            const isWin = t.status === 'WIN';
+            const color = isWin ? 'bg-secondary' : (t.status === 'LOSS' ? 'bg-tertiary-container' : 'bg-primary');
+            return `<div class="flex-1 h-1.5 rounded-full ${color}" title="${t.symbol} ${t.action} - ${t.status || 'Em andamento'}"></div>`;
+          }).join('');
+          streakBox.innerHTML = `${streakHtml}<span class="font-label-caps text-[9px] text-on-surface-variant uppercase ml-1">Recentes</span>`;
+        }
+
+        // 7. KPI 3: Juiz IA & Sinal
         if (state.signal) {
           const act = state.signal.action;
           const kpiSig = document.getElementById('kpiSignalAction');
+          const kpiArrow = document.getElementById('kpiSignalArrow');
+          const sigBadge = document.getElementById('sigTriggerBadge');
+
           if (act === 'BUY') {
-            kpiSig.textContent = state.config.market_type === 'SAFIRION_OB' ? 'COMPRA (CALL ▲)' : 'COMPRA (BUY ▲)';
-            kpiSig.className = 'text-xl font-extrabold mt-1 text-emerald-400';
+            kpiSig.textContent = 'COMPRA CONFIRMADA';
+            kpiSig.className = 'font-headline-md text-headline-md text-secondary font-bold tracking-tight';
+            kpiArrow.textContent = 'arrow_upward';
+            kpiArrow.className = 'material-symbols-outlined text-secondary text-[20px]';
+            sigBadge.textContent = 'Gatilho Ativo';
+            sigBadge.className = 'font-label-caps text-[10px] uppercase text-secondary font-bold';
           } else if (act === 'SELL') {
-            kpiSig.textContent = state.config.market_type === 'SAFIRION_OB' ? 'VENDA (PUT ▼)' : 'VENDA (SELL ▼)';
-            kpiSig.className = 'text-xl font-extrabold mt-1 text-rose-400';
+            kpiSig.textContent = 'VENDA CONFIRMADA';
+            kpiSig.className = 'font-headline-md text-headline-md text-tertiary font-bold tracking-tight';
+            kpiArrow.textContent = 'arrow_downward';
+            kpiArrow.className = 'material-symbols-outlined text-tertiary text-[20px]';
+            sigBadge.textContent = 'Gatilho Ativo';
+            sigBadge.className = 'font-label-caps text-[10px] uppercase text-tertiary font-bold';
           } else {
             kpiSig.textContent = 'AGUARDANDO GATILHO';
-            kpiSig.className = 'text-lg font-bold mt-1 text-slate-400';
+            kpiSig.className = 'font-headline-md text-headline-md text-on-surface-variant font-bold tracking-tight';
+            kpiArrow.textContent = 'sync';
+            kpiArrow.className = 'material-symbols-outlined text-on-surface-variant text-[20px]';
+            sigBadge.textContent = 'Monitorando';
+            sigBadge.className = 'font-label-caps text-[10px] uppercase text-primary font-bold';
           }
-          document.getElementById('kpiConfidence').textContent = `Confiança do Sinal: ${state.signal.confidence}%`;
-          document.getElementById('kpiPrice').textContent = state.signal.price;
-          const ind = state.signal.indicators || {};
-          document.getElementById('kpiIndicators').textContent = `RSI(14): ${ind.rsi ?? '--'} | ATR: ${ind.atr ?? '--'}`;
-          document.getElementById('signalReasonBox').textContent = state.signal.reason;
 
-          // Atualiza Barra de Telemetria ao Vivo dos Indicadores
-          const isSafLive = (state.config.market_type === 'SAFIRION_OB' && safConn.ws_messages_received > 0);
-          document.getElementById('telSource').textContent = isSafLive
-            ? `Safirion Ao Vivo (${safConn.sub_type})`
-            : (state.config.market_type === 'SAFIRION_OB' ? 'Base Ancorada / Simulador' : 'MetaTrader 5');
-          document.getElementById('telEmas').textContent = `${ind.ema_fast ?? '--'} / ${ind.ema_slow ?? '--'}`;
-          document.getElementById('telBb').textContent = `${ind.bb_upper ?? '--'} / ${ind.bb_lower ?? '--'}`;
-          document.getElementById('telRsi').textContent = `${ind.rsi ?? '--'}`;
-          document.getElementById('telMacd').textContent = (ind.ml_prob_up !== undefined)
-            ? `▲ ${ind.ml_prob_up}% | ▼ ${ind.ml_prob_down}%`
-            : `${ind.macd_hist ?? '--'}`;
-          document.getElementById('telTicks').textContent = `${safConn.ws_messages_received || 0} recebidos`;
+          document.getElementById('kpiSignalAsset').textContent = `${state.config.symbol} ${state.config.timeframe}`;
+          document.getElementById('kpiConfidence').textContent = `${state.signal.confidence}%`;
+          document.getElementById('signalReasonBox').textContent = state.signal.reason || 'Analisando velas...';
+
+          const ind = state.signal.indicators || {};
+          document.getElementById('subIndRsi').textContent = ind.rsi !== undefined ? `${ind.rsi}` : '--';
+          document.getElementById('subIndBb').textContent = (ind.bb_upper && ind.bb_lower) ? 'Válido' : '--';
+          document.getElementById('subIndEma').textContent = (ind.ml_prob_up !== undefined) ? `▲ ${ind.ml_prob_up}%` : (ind.ema_fast ? 'Sinc' : '--');
+
+          // Atualiza fita do RSI (14)
+          if (ind.rsi !== undefined) {
+            document.getElementById('barRsiValue').textContent = ind.rsi;
+            document.getElementById('barRsiProgress').style.width = `${Math.min(100, Math.max(0, ind.rsi))}%`;
+            if (ind.rsi <= 30) {
+              document.getElementById('barRsiZone').textContent = 'Sobrevenda (Call)';
+              document.getElementById('barRsiZone').className = 'text-secondary font-bold';
+            } else if (ind.rsi >= 70) {
+              document.getElementById('barRsiZone').textContent = 'Sobrecompra (Put)';
+              document.getElementById('barRsiZone').className = 'text-tertiary font-bold';
+            } else {
+              document.getElementById('barRsiZone').textContent = 'Zona Neutra';
+              document.getElementById('barRsiZone').className = 'text-on-surface-variant font-semibold';
+            }
+          }
+
+          // Atualiza Termômetro de Sentimento IA
+          let buyPct = 50;
+          let sellPct = 50;
+          if (ind.ml_prob_up !== undefined && ind.ml_prob_down !== undefined) {
+            buyPct = Math.round(ind.ml_prob_up);
+            sellPct = Math.round(ind.ml_prob_down);
+          } else if (ind.rsi !== undefined) {
+            buyPct = Math.round(ind.rsi);
+            sellPct = 100 - buyPct;
+          }
+          document.getElementById('barSentBuyers').textContent = `${buyPct}%`;
+          document.getElementById('barSentSellers').textContent = `${sellPct}%`;
+          document.getElementById('barSentimentBuy').style.width = `${buyPct}%`;
+          document.getElementById('barSentimentSell').style.width = `${sellPct}%`;
+          document.getElementById('lblSentimentTrend').textContent = buyPct > 55 ? 'Pressão Bullish Confirmada' : (buyPct < 45 ? 'Pressão Bearish Confirmada' : 'Fluxo Equilibrado');
+          document.getElementById('lblSentimentAiVote').textContent = `IA Voto: ${act === 'BUY' ? 'CALL' : (act === 'SELL' ? 'PUT' : 'NEUTRO')}`;
         }
 
-        document.getElementById('chartTitle').textContent = `Gráfico em Tempo Real — ${state.config.symbol} (${state.config.timeframe})`;
+        // 8. KPI 4: Cotação Ao Vivo
+        document.getElementById('lblLiveQuotePair').textContent = `${state.config.symbol} Cotação Ao Vivo`;
+        if (state.signal && state.signal.price) {
+          document.getElementById('kpiPrice').textContent = state.signal.price;
+        }
+        if (state.signal && state.signal.indicators && state.signal.indicators.atr) {
+          document.getElementById('lblQuoteAtr').textContent = state.signal.indicators.atr;
+        }
 
-        // Atualiza Candles e Indicadores no Gráfico
+        // 9. Próxima Entrada (Sizing IA)
+        const nextSizingEl = document.getElementById('kpiNextSizing');
+        if (nextSizingEl && state.stats.sizing_reason) {
+          nextSizingEl.textContent = state.stats.sizing_reason;
+        }
+
+        // 10. Toolbar do Gráfico
+        document.getElementById('chartTitle').textContent = state.config.symbol;
+        document.getElementById('chartTimeframeBadge').textContent = state.config.timeframe;
+
+        // Atualiza Velas e Indicadores no Lightweight Charts
         if (state.candles && state.candles.length > 0) {
           candleSeries.setData(state.candles.map(c => ({
             time: c.time,
@@ -606,50 +1347,72 @@
           bbLowerSeries.setData(state.candles.map(c => ({ time: c.time, value: c.bb_lower })));
         }
 
-        // Atualiza Tabela de Operações
-        const tbody = document.getElementById('tradesTableBody');
+        // 11. Lista de Operações
+        const tradesBox = document.getElementById('tradesContainer');
         if (state.trades && state.trades.length > 0) {
-          tbody.innerHTML = state.trades.map(t => {
+          tradesBox.innerHTML = state.trades.map(t => {
             const isBuy = t.action === 'BUY' || t.action === 'CALL';
-            const badgeColor = isBuy ? 'text-emerald-400 bg-emerald-500/10' : 'text-rose-400 bg-rose-500/10';
-            const remTxt = t.remaining_sec ? ` (${t.remaining_sec}s)` : '';
-            const expClock = t.expiration_time ? ` às ${t.expiration_time}` : '';
-            let resHtml = `<span class="text-amber-400 font-semibold">⏳ Fecha${expClock}${remTxt}</span>`;
-            if (t.status === 'WIN') {
-              resHtml = `<span class="text-emerald-400 font-bold">+R$ ${t.pnl.toFixed(2)} (WIN)</span>`;
-            } else if (t.status === 'LOSS') {
-              resHtml = `<span class="text-rose-400 font-bold">-R$ ${Math.abs(t.pnl).toFixed(2)} (LOSS)</span>`;
+            const isWin = t.status === 'WIN';
+            const isLoss = t.status === 'LOSS';
+            const badgeType = isBuy ? 'bg-secondary-container/30 text-secondary' : 'bg-error-container/60 text-tertiary';
+            
+            let statusMarkup = '';
+            if (isWin) {
+              statusMarkup = `<div class="text-right"><span class="font-code-log text-[12px] text-secondary font-bold">+R$ ${(t.pnl || 0).toFixed(2)}</span><div class="font-label-caps text-[9px] text-secondary uppercase font-bold">WIN</div></div>`;
+            } else if (isLoss) {
+              statusMarkup = `<div class="text-right"><span class="font-code-log text-[12px] text-tertiary font-bold">-R$ ${Math.abs(t.pnl || 0).toFixed(2)}</span><div class="font-label-caps text-[9px] text-tertiary uppercase font-bold">LOSS</div></div>`;
+            } else {
+              const remTxt = t.remaining_sec ? `${t.remaining_sec}s` : 'Ativa';
+              statusMarkup = `<div class="text-right flex flex-col items-end"><span class="inline-flex items-center gap-1 font-code-log text-[11px] text-primary font-bold animate-pulse"><span class="material-symbols-outlined text-[13px]">timer</span> ${remTxt}</span><span class="font-code-log text-[9px] text-on-surface-variant">Em Andamento</span></div>`;
             }
+
             return `
-              <tr>
-                <td class="py-2 text-slate-400">${t.time}</td>
-                <td class="py-2 font-semibold text-white">${t.symbol} <span class="text-[10px] text-slate-500">@${t.entry_price}</span></td>
-                <td class="py-2"><span class="px-2 py-0.5 rounded font-bold ${badgeColor}">${t.action}</span></td>
-                <td class="py-2 text-slate-300">R$ ${t.amount}</td>
-                <td class="py-2 text-right">${resHtml}</td>
-              </tr>
+              <div class="p-space-xs rounded-lg bg-surface-container-lowest/90 border border-surface-container-high/40 flex items-center justify-between">
+                <div class="flex flex-col">
+                  <div class="flex items-center gap-1.5">
+                    <span class="font-code-log text-[11px] text-on-surface font-bold">${t.symbol}</span>
+                    <span class="px-1.5 py-0.2 rounded font-code-log text-[10px] font-bold ${badgeType}">${t.action}</span>
+                  </div>
+                  <span class="font-code-log text-[10px] text-on-surface-variant">${t.time} • R$ ${t.amount}</span>
+                </div>
+                ${statusMarkup}
+              </div>
             `;
           }).join('');
         } else {
-          tbody.innerHTML = '<tr><td colspan="5" class="py-6 text-center text-slate-500">Nenhuma operação realizada ainda.</td></tr>';
+          tradesBox.innerHTML = '<div class="text-center py-8 text-on-surface-variant font-code-log text-xs">Nenhuma operação realizada ainda hoje.</div>';
         }
 
-        // Atualiza Logs
-        const logsBox = document.getElementById('logsContainer');
-        if (state.logs) {
-          logsBox.innerHTML = state.logs.map(l => {
-            let color = 'text-slate-300';
-            if (l.level === 'WIN' || l.level === 'SUCCESS') color = 'text-emerald-400';
-            else if (l.level === 'LOSS' || l.level === 'ALERT' || l.level === 'ERROR') color = 'text-rose-400';
-            else if (l.level === 'TRADE' || l.level === 'START') color = 'text-cyan-400';
-            return `<div><span class="text-slate-500">[${l.time}]</span> <span class="font-bold ${color}">[${l.level}]</span> <span class="text-slate-200">${l.message}</span></div>`;
+        // 12. Diário de Execução (Logs)
+        const logConsole = document.getElementById('logConsole');
+        if (state.logs && state.logs.length > 0) {
+          logConsole.innerHTML = state.logs.map(l => {
+            let badgeClass = 'text-primary font-bold';
+            if (l.level === 'WIN' || l.level === 'SUCCESS') badgeClass = 'text-secondary font-bold';
+            else if (l.level === 'LOSS' || l.level === 'ALERT' || l.level === 'ERROR') badgeClass = 'text-tertiary font-bold';
+            else if (l.level === 'SAFIRION') badgeClass = 'text-secondary font-bold';
+            else if (l.level === 'TRADE' || l.level === 'START') badgeClass = 'text-primary font-bold';
+            
+            return `
+              <div class="text-on-surface-variant flex gap-1 items-start">
+                <span class="text-outline shrink-0">[${l.time}]</span>
+                <span class="${badgeClass} shrink-0">[${l.level}]</span>
+                <span class="text-on-surface break-words">${l.message}</span>
+              </div>
+            `;
           }).join('');
+          document.getElementById('telBufferStats').textContent = `Buffer: ${state.logs.length}/80`;
         }
+
+        // 13. Telemetria do Dock Esquerdo
+        document.getElementById('telSignalsProcessed').textContent = `${(safConn.ws_messages_received || 0) + (state.stats.total_trades || 0)}`;
+
       } catch (err) {
-        console.error('Erro ao buscar estado:', err);
+        console.error('Erro ao atualizar estado:', err);
       }
     }
 
+    // Inicialização da Página
     window.addEventListener('DOMContentLoaded', () => {
       initChart();
       fetchState();

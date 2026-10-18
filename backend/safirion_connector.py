@@ -35,6 +35,12 @@ class SafirionConnector:
         self.put_bound: bool = False
         self.last_live_price: Optional[float] = None
         self.ws_messages_received: int = 0
+        self.last_tick_timestamp: float = 0.0
+        self.last_heartbeat_timestamp: float = 0.0
+
+        # Detector de deriva/salto legítimo de preço (evita congelar se o ativo der um salto > 0.12%)
+        self._outlier_streak_count: int = 0
+        self._outlier_last_candidate: Optional[float] = None
 
         # Histórico de candles reais construídos a partir dos ticks limpos da Safirion
         self._live_candles: List[Dict[str, Any]] = []
@@ -46,29 +52,57 @@ class SafirionConnector:
         self.bridge_ws = ws
         self.connected = True
         self.simulation_mode = False
+        self.last_heartbeat_timestamp = datetime.now().timestamp()
 
-    def detach_bridge_websocket(self):
+    def detach_bridge_websocket(self, ws: Optional[WebSocket] = None):
+        # Só desconecta se o socket fechado for realmente o socket ativo atual (evita que reconexão zumbi derrube a nova!)
+        if ws is not None and self.bridge_ws is not None and self.bridge_ws is not ws:
+            return
         self.bridge_ws = None
         self.connected = False
         self.simulation_mode = True
-        self.call_bound = False
-        self.put_bound = False
 
     def reset_candles(self):
         self._live_candles.clear()
         self.last_live_price = None
+        self._outlier_streak_count = 0
+        self._outlier_last_candidate = None
 
     def _is_valid_tick_price(self, price: float) -> bool:
         if not math.isfinite(price) or price <= 0.0001 or price > 180000:
             return False
         if float(price).is_integer():
             return False
-        # Trava estrita de 0.12% por tick: bloqueia pacotes WebSocket de outros ativos em segundo plano
-        # (como o 1.12135 intruso quando o EUR/USD OTC estava em 1.11065!)
+        # Bloqueia constante estática conhecida de pacote de conversão de fundo da Safirion (1.12135)
+        if abs(price - 1.12135) < 1e-6:
+            return False
+
         if self.last_live_price is not None and self.last_live_price > 0:
             rel_diff = abs(price - self.last_live_price) / self.last_live_price
-            if rel_diff > 0.0012:
+            # Num mercado M1 real, cada tick oscila menos de 0.035% (~3.5 pips).
+            # Qualquer salto brusco isolado maior que 0.035% é bloqueado na hora para não deformar a vela!
+            if rel_diff > 0.00035:
+                # Só aceita reancorar se forem ticks reais se movendo (price != _outlier_last_candidate) na nova faixa
+                if (
+                    self._outlier_last_candidate is not None
+                    and abs(price - self._outlier_last_candidate) / max(price, 1e-6) < 0.00030
+                    and abs(price - self._outlier_last_candidate) > 1e-7
+                    and rel_diff < 0.020
+                ):
+                    self._outlier_streak_count += 1
+                else:
+                    self._outlier_streak_count = 1
+                self._outlier_last_candidate = price
+
+                if self._outlier_streak_count >= 3:
+                    # O mercado realmente mudou de patamar -> atualiza e limpa candles antigos distorcidos
+                    self._outlier_streak_count = 0
+                    self.last_live_price = price
+                    return True
                 return False
+
+        self._outlier_streak_count = 0
+        self._outlier_last_candidate = price
         return True
 
     def _record_live_tick(self, price: float, timeframe: str = "M1"):
@@ -79,10 +113,12 @@ class SafirionConnector:
             self._live_candles.clear()
             self._current_tf = timeframe
 
+        now = datetime.now()
         self.last_live_price = price
+        self.last_tick_timestamp = now.timestamp()
+        self.last_heartbeat_timestamp = now.timestamp()
         self.ws_messages_received += 1
 
-        now = datetime.now()
         tf_min = self.TIMEFRAME_MINUTES.get(timeframe, 1)
         bucket_minute = (now.minute // tf_min) * tf_min
         candle_time = now.replace(minute=bucket_minute, second=0, microsecond=0)
@@ -137,21 +173,56 @@ class SafirionConnector:
             self._record_live_tick(p, timeframe)
         if not self._live_candles:
             return None
+
+        # Mantém a vela do minuto atual sempre sincronizada com o relógio mesmo se o preço ficar estável por alguns segundos
+        if self.last_live_price is not None:
+            now = datetime.now()
+            tf_min = self.TIMEFRAME_MINUTES.get(timeframe, 1)
+            bucket_minute = (now.minute // tf_min) * tf_min
+            candle_time = now.replace(minute=bucket_minute, second=0, microsecond=0)
+            last_c = self._live_candles[-1]
+            if candle_time > last_c["time"]:
+                p = round(self.last_live_price, 5)
+                self._live_candles.append(
+                    {
+                        "time": candle_time,
+                        "open": round(last_c["close"], 5),
+                        "high": max(round(last_c["close"], 5), p),
+                        "low": min(round(last_c["close"], 5), p),
+                        "close": p,
+                        "volume": 1,
+                    }
+                )
+                if len(self._live_candles) > 120:
+                    self._live_candles = self._live_candles[-120:]
+
         return pd.DataFrame(self._live_candles)
 
     def handle_bridge_message(self, data: Dict[str, Any], current_timeframe: str = "M1") -> Optional[str]:
+        now_ts = datetime.now().timestamp()
+        self.last_heartbeat_timestamp = now_ts
+        self.connected = True
+        self.simulation_mode = False
+
         msg_type = data.get("type")
         if msg_type == "RESET_CANDLES":
             self.reset_candles()
             return "Escala do gráfico Safirion limpa e ressincronizada!"
 
-        if msg_type == "SAFIRION_BALANCE_UPDATE":
+        if msg_type in ("SAFIRION_BALANCE_UPDATE", "BRIDGE_HEARTBEAT"):
             bal = data.get("balance")
             if isinstance(bal, (int, float)) and bal >= 0:
                 self.balance = float(bal)
             res_pnl = data.get("last_result_pnl")
             if isinstance(res_pnl, (int, float)):
                 self.last_result_pnl = float(res_pnl)
+            if "call_bound" in data:
+                self.call_bound = bool(data.get("call_bound"))
+            if "put_bound" in data:
+                self.put_bound = bool(data.get("put_bound"))
+            price = float(data.get("price") or 0.0)
+            if price > 0:
+                self._record_live_tick(price, current_timeframe)
             return None
 
         if msg_type == "SAFIRION_TICK":
@@ -162,6 +233,10 @@ class SafirionConnector:
             res_pnl = data.get("last_result_pnl")
             if isinstance(res_pnl, (int, float)):
                 self.last_result_pnl = float(res_pnl)
+            if "call_bound" in data:
+                self.call_bound = bool(data.get("call_bound"))
+            if "put_bound" in data:
+                self.put_bound = bool(data.get("put_bound"))
             if price > 0:
                 self._record_live_tick(price, current_timeframe)
             return None
@@ -171,10 +246,11 @@ class SafirionConnector:
             bal = data.get("balance")
             if isinstance(bal, (int, float)) and bal >= 0:
                 self.balance = float(bal)
-            self.call_bound = bool(data.get("call_bound", False))
-            self.put_bound = bool(data.get("put_bound", False))
-            self.connected = True
-            self.simulation_mode = False
+            self.call_bound = bool(data.get("call_bound", self.call_bound))
+            self.put_bound = bool(data.get("put_bound", self.put_bound))
+            price = float(data.get("price") or 0.0)
+            if price > 0:
+                self._record_live_tick(price, current_timeframe)
             return (
                 f"Ponte Safirion Sincronizada ({self.sub_type}) | Saldo: R$ {self.balance:.2f} | "
                 f"CALL: {'OK' if self.call_bound else 'Auto'} | PUT: {'OK' if self.put_bound else 'Auto'}"
@@ -294,5 +370,24 @@ class SafirionConnector:
             except Exception:
                 pass
 
+    async def set_investment_amount(self, amount: float):
+        """Altera proativamente o valor no campo 'Invest (R$)' da Safirion em 2º plano."""
+        if self.bridge_ws is not None:
+            try:
+                await self.bridge_ws.send_json({"type": "SET_INVEST_AMOUNT", "amount": round(float(amount), 2)})
+            except Exception:
+                pass
+
+    async def request_auto_resync(self):
+        """Solicita que a extensão da Safirion faça auto-ressincronização de cotação, estado e botões."""
+        self._outlier_streak_count = 0
+        self._outlier_last_candidate = None
+        if self.bridge_ws is not None:
+            try:
+                await self.bridge_ws.send_json({"type": "AUTO_RESYNC"})
+            except Exception:
+                self.detach_bridge_websocket(self.bridge_ws)
+
     async def close(self):
         self.detach_bridge_websocket()
+

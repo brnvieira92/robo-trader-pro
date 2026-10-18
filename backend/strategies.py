@@ -187,98 +187,136 @@ class StrategyEngine:
                 reason = f"Aguardando cruzamento ou pullback EMA. RSI atual: {curr['rsi']:.1f}."
 
         # -------------------------------------------------------------------------
-        # ESTRATÉGIA 2: Bandas de Bollinger + RSI (Híbrida: Reversão por Rejeição + Fluxo de Tendência)
-        # Opera tanto Reversão (quando deixa pavio/rejeição na banda) quanto Fluxo (Walking the Bands
-        # quando rompe a banda com vela de força a favor das EMAs e MACD), gerando CALL e PUT equilibrados!
+        # ESTRATÉGIA 2: Bandas de Bollinger + RSI (Alta Precisão Analítica)
+        # Exige confirmação real de rejeição (pavio/exaustão) na Banda e bloqueia
+        # entradas contra rompimentos de força (evita tomar sequência de LOSS em tendências fortes).
+        # Também opera a favor da tendência somente quando EMAs, MACD, RSI e IA estão 100% alinhados.
         # -------------------------------------------------------------------------
         elif strategy_id == "bollinger_rsi_reversal":
-            rsi_oversold = float(params.get("rsi_oversold", 38))
-            rsi_overbought = float(params.get("rsi_overbought", 62))
+            rsi_oversold = float(params.get("rsi_oversold", 35))
+            rsi_overbought = float(params.get("rsi_overbought", 65))
 
-            touched_lower = curr["low"] <= curr["bb_lower"] or curr["close"] <= curr["bb_lower"]
-            touched_upper = curr["high"] >= curr["bb_upper"] or curr["close"] >= curr["bb_upper"]
+            touched_lower = curr["low"] <= curr["bb_lower"] or prev["low"] <= prev["bb_lower"]
+            touched_upper = curr["high"] >= curr["bb_upper"] or prev["high"] >= prev["bb_upper"]
 
             candle_range = max(float(curr["high"] - curr["low"]), 1e-7)
             body_size = abs(float(curr["close"] - curr["open"]))
             lower_wick = float(min(curr["open"], curr["close"]) - curr["low"])
             upper_wick = float(curr["high"] - max(curr["open"], curr["close"]))
+            atr_val = max(float(curr["atr"]), 1e-6)
+            three_bar_move = float(curr["close"] - df["close"].iloc[-4]) if len(df) >= 4 else 0.0
 
-            # Detecta se é uma vela de força (Marubozu/Fluxo) rompendo sem rejeição a favor da tendência
-            strong_bear_trend = (
-                curr["ema_fast"] < curr["ema_slow"]
-                and curr["macd_hist"] < 0
-                and curr["macd_hist"] <= prev["macd_hist"]
-                and curr["close"] < curr["open"]
-                and (body_size / candle_range) >= 0.65
-                and lower_wick <= (candle_range * 0.20)
+            # Detecta se o mercado está em rompimento explosivo (proíbe operar contra a força!)
+            violent_bull_breakout = (
+                (curr["close"] > curr["bb_upper"] and upper_wick < (candle_range * 0.22) and curr["close"] > curr["open"])
+                or (three_bar_move > (atr_val * 1.65) and curr["macd_hist"] > prev["macd_hist"] and curr["ema_fast"] > curr["ema_slow"])
             )
-            strong_bull_trend = (
+            violent_bear_breakout = (
+                (curr["close"] < curr["bb_lower"] and lower_wick < (candle_range * 0.22) and curr["close"] < curr["open"])
+                or (three_bar_move < -(atr_val * 1.65) and curr["macd_hist"] < prev["macd_hist"] and curr["ema_fast"] < curr["ema_slow"])
+            )
+
+            # Confirmação real de rejeição de fundo (pavio inferior visível ou virada compradora após toque na banda)
+            bull_rejection_confirmed = (
+                (lower_wick >= candle_range * 0.25)
+                or (prev["low"] <= prev["bb_lower"] and curr["close"] > curr["open"] and curr["close"] > prev["close"])
+            )
+            # Confirmação real de rejeição de topo (pavio superior visível ou virada vendedora após toque na banda)
+            bear_rejection_confirmed = (
+                (upper_wick >= candle_range * 0.25)
+                or (prev["high"] >= prev["bb_upper"] and curr["close"] < curr["open"] and curr["close"] < prev["close"])
+            )
+
+            # Confluência Analítica Estrita de Tendência (somente quando todos os indicadores + IA convergem)
+            confirmed_bull_trend = (
                 curr["ema_fast"] > curr["ema_slow"]
+                and prev["ema_fast"] > prev["ema_slow"]
                 and curr["macd_hist"] > 0
-                and curr["macd_hist"] >= prev["macd_hist"]
+                and curr["macd_hist"] > prev["macd_hist"]
+                and 53.0 <= curr["rsi"] <= 64.0
+                and prev["close"] > prev["open"]
                 and curr["close"] > curr["open"]
-                and (body_size / candle_range) >= 0.65
-                and upper_wick <= (candle_range * 0.20)
-            )
-
-            # Pullback dinâmico de tendência nas EMAs quando não está nos extremos das bandas
-            ema_pullback_sell = (
-                curr["ema_fast"] < curr["ema_slow"]
-                and curr["high"] >= curr["ema_fast"]
-                and curr["close"] < curr["ema_fast"]
-                and curr["close"] < curr["open"]
-                and 38 <= curr["rsi"] <= 54
-            )
-            ema_pullback_buy = (
-                curr["ema_fast"] > curr["ema_slow"]
-                and curr["low"] <= curr["ema_fast"]
                 and curr["close"] > curr["ema_fast"]
-                and curr["close"] > curr["open"]
-                and 46 <= curr["rsi"] <= 62
+                and curr["high"] < curr["bb_upper"]
+                and upper_wick <= (candle_range * 0.25)
+                and ml_pred["prob_up"] >= 56.0
+            )
+            confirmed_bear_trend = (
+                curr["ema_fast"] < curr["ema_slow"]
+                and prev["ema_fast"] < prev["ema_slow"]
+                and curr["macd_hist"] < 0
+                and curr["macd_hist"] < prev["macd_hist"]
+                and 36.0 <= curr["rsi"] <= 47.0
+                and prev["close"] < prev["open"]
+                and curr["close"] < curr["open"]
+                and curr["close"] < curr["ema_fast"]
+                and curr["low"] > curr["bb_lower"]
+                and lower_wick <= (candle_range * 0.25)
+                and ml_pred["prob_down"] >= 56.0
             )
 
             if touched_lower and curr["rsi"] <= rsi_oversold:
-                if strong_bear_trend and curr["rsi"] >= 25:
-                    # Walking the Bands de Baixa: Em vez de comprar contra o rompimento forte, entra PUT a favor do fluxo!
-                    action = "SELL"
-                    confidence = 84.0
+                if violent_bear_breakout:
+                    action = "NEUTRAL"
+                    confidence = 38.0
                     reason = (
-                        f"Fluxo de Queda (PUT ▼): Rompimento de força na Banda Inferior ({curr['bb_lower']:.5f}) "
-                        f"sem pavio + EMAs/MACD de baixa!"
+                        f"🛡️ [FILTRO ANALÍTICO] Toque na Banda Inferior ({curr['bb_lower']:.5f}), mas vela sem rejeição "
+                        f"em queda forte. Aguardando exaustão real para não entrar contra o rompimento."
+                    )
+                elif bull_rejection_confirmed:
+                    action = "BUY"
+                    confidence = min(94.0, 80.0 + (rsi_oversold - curr["rsi"]) * 0.9)
+                    reason = (
+                        f"Reversão de Fundo Confirmada (CALL ▲): Banda Inferior ({curr['bb_lower']:.5f}) "
+                        f"+ Rejeição de preço + RSI sobrevendido ({curr['rsi']:.1f})."
                     )
                 else:
-                    action = "BUY"
-                    confidence = min(96.0, 78.0 + (rsi_oversold - curr["rsi"]) * 1.1)
-                    reason = f"Reversão de Fundo (CALL ▲): Rejeição na Banda Inferior ({curr['bb_lower']:.5f}) + RSI em {curr['rsi']:.1f}."
+                    reason = (
+                        f"Preço na Banda Inferior ({curr['bb_lower']:.5f}) com RSI {curr['rsi']:.1f}, "
+                        f"aguardando pavio/rejeição compradora para confirmar CALL."
+                    )
 
             elif touched_upper and curr["rsi"] >= rsi_overbought:
-                if strong_bull_trend and curr["rsi"] <= 75:
-                    # Walking the Bands de Alta: Entra CALL a favor do fluxo de alta!
-                    action = "BUY"
-                    confidence = 84.0
+                if violent_bull_breakout:
+                    action = "NEUTRAL"
+                    confidence = 38.0
                     reason = (
-                        f"Fluxo de Alta (CALL ▲): Rompimento de força na Banda Superior ({curr['bb_upper']:.5f}) "
-                        f"sem pavio + EMAs/MACD de alta!"
+                        f"🛡️ [FILTRO ANALÍTICO] Toque na Banda Superior ({curr['bb_upper']:.5f}), mas vela de força compradora "
+                        f"sem pavio. Entrada PUT bloqueada para proteger contra rompimento de alta!"
+                    )
+                elif bear_rejection_confirmed:
+                    action = "SELL"
+                    confidence = min(94.0, 80.0 + (curr["rsi"] - rsi_overbought) * 0.9)
+                    reason = (
+                        f"Reversão de Topo Confirmada (PUT ▼): Banda Superior ({curr['bb_upper']:.5f}) "
+                        f"+ Rejeição de preço + RSI sobrecomprado ({curr['rsi']:.1f})."
                     )
                 else:
-                    action = "SELL"
-                    confidence = min(96.0, 78.0 + (curr["rsi"] - rsi_overbought) * 1.1)
-                    reason = f"Reversão de Topo (PUT ▼): Rejeição na Banda Superior ({curr['bb_upper']:.5f}) + RSI em {curr['rsi']:.1f}."
+                    reason = (
+                        f"Preço na Banda Superior ({curr['bb_upper']:.5f}) com RSI {curr['rsi']:.1f}, "
+                        f"aguardando pavio/rejeição vendedora para confirmar PUT."
+                    )
 
-            elif ema_pullback_sell:
-                action = "SELL"
-                confidence = 79.0
-                reason = f"Pullback de Baixa (PUT ▼): Toque e rejeição na EMA 9 ({curr['ema_fast']:.5f}) a favor da tendência de queda (RSI {curr['rsi']:.1f})."
-
-            elif ema_pullback_buy:
+            elif confirmed_bull_trend:
                 action = "BUY"
-                confidence = 79.0
-                reason = f"Pullback de Alta (CALL ▲): Toque e rejeição na EMA 9 ({curr['ema_fast']:.5f}) a favor da tendência de alta (RSI {curr['rsi']:.1f})."
+                confidence = 83.0
+                reason = (
+                    f"Confluência Analítica de Alta (CALL ▲): EMA 9 > EMA 21 + MACD crescente "
+                    f"+ RSI {curr['rsi']:.1f} + IA {ml_pred['prob_up']}%."
+                )
+
+            elif confirmed_bear_trend:
+                action = "SELL"
+                confidence = 83.0
+                reason = (
+                    f"Confluência Analítica de Baixa (PUT ▼): EMA 9 < EMA 21 + MACD decrescente "
+                    f"+ RSI {curr['rsi']:.1f} + IA {ml_pred['prob_down']}%."
+                )
 
             else:
                 reason = (
-                    f"Monitorando Bandas ({curr['bb_lower']:.5f} - {curr['bb_upper']:.5f}) "
-                    f"e Pullback EMA ({curr['ema_fast']:.5f}). RSI: {curr['rsi']:.1f}."
+                    f"Análise Rigorosa: Bandas ({curr['bb_lower']:.5f} - {curr['bb_upper']:.5f}) | "
+                    f"RSI: {curr['rsi']:.1f}. Aguardando setup confirmado de alta precisão."
                 )
 
         # -------------------------------------------------------------------------
@@ -363,29 +401,30 @@ class StrategyEngine:
                 )
 
         # -------------------------------------------------------------------------
-        # CAMADA JUIZ DE IA (Filtro de Machine Learning sobre as Estratégias 1 a 4)
+        # CAMADA JUIZ DE IA RIGOROSA (Filtro de Machine Learning sobre as Estratégias 1 a 4)
+        # Nunca permite operar contra a direção apontada pela IA Random Forest!
         # -------------------------------------------------------------------------
         use_ml_filter = bool(params.get("use_ml_filter", True))
         if strategy_id != "ml_random_forest" and use_ml_filter and ml_pred["enabled"]:
             p_up = ml_pred["prob_up"]
             p_down = ml_pred["prob_down"]
             if action == "BUY":
-                if p_down >= 66.0:
-                    # A IA detectou forte probabilidade de queda; veta a compra técnica arriscada!
+                if p_down >= 53.0:
+                    # A IA aponta vantagem para queda; veta a compra técnica para proteger a assertividade!
                     action = "NEUTRAL"
                     confidence = 40.0
-                    reason = f"🛡️ [VETADO PELA IA] Gatilho CALL bloqueado pois o Machine Learning aponta {p_down}% de chance de queda!"
+                    reason = f"🛡️ [VETADO PELA IA] Gatilho CALL cancelado pois o Machine Learning indica {p_down}% de probabilidade de queda!"
                 elif p_up >= 55.0:
-                    confidence = min(99.0, confidence + 7.0)
+                    confidence = min(98.0, confidence + 6.0)
                     reason += f" | 🧠 Confirmado pela IA ({p_up}% Alta)."
             elif action == "SELL":
-                if p_up >= 66.0:
-                    # A IA detectou forte probabilidade de alta; veta a venda técnica arriscada!
+                if p_up >= 53.0:
+                    # A IA aponta vantagem para alta; veta a venda técnica para proteger a assertividade!
                     action = "NEUTRAL"
                     confidence = 40.0
-                    reason = f"🛡️ [VETADO PELA IA] Gatilho PUT bloqueado pois o Machine Learning aponta {p_up}% de chance de alta!"
+                    reason = f"🛡️ [VETADO PELA IA] Gatilho PUT cancelado pois o Machine Learning indica {p_up}% de probabilidade de alta!"
                 elif p_down >= 55.0:
-                    confidence = min(99.0, confidence + 7.0)
+                    confidence = min(98.0, confidence + 6.0)
                     reason += f" | 🧠 Confirmado pela IA ({p_down}% Queda)."
 
         # Cálculo de Stop Loss, Take Profit (para MT5) ou Expiração (para Safirion OB)

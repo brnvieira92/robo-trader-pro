@@ -28,7 +28,7 @@ async def lifespan(app: FastAPI):
     await bot.safirion.close()
 
 
-app = FastAPI(title="RoboTrader Pro - MT5 & Safirion Bridge", lifespan=lifespan)
+app = FastAPI(title="ProspeTraderBot - MT5 & Safirion Unified WebApp", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -71,16 +71,22 @@ async def safirion_bridge_ws(websocket: WebSocket):
     try:
         while True:
             data = await websocket.receive_json()
+            msg_type = data.get("type")
             log_msg = bot.safirion.handle_bridge_message(
                 data, current_timeframe=bot.config.get("timeframe", "M1")
             )
+            if msg_type in ("BRIDGE_HEARTBEAT", "BRIDGE_STATUS"):
+                try:
+                    await websocket.send_json({"type": "SERVER_PONG", "ts": int(asyncio.get_event_loop().time())})
+                except Exception:
+                    pass
             if log_msg:
                 bot.add_log("SAFIRION", log_msg)
     except WebSocketDisconnect:
-        bot.safirion.detach_bridge_websocket()
-        bot.add_log("ALERT", "Guia da Safirion foi fechada ou desconectada da Ponte.")
+        bot.safirion.detach_bridge_websocket(websocket)
+        bot.add_log("ALERT", "Guia da Safirion foi fechada ou reconectando na Ponte...")
     except Exception as exc:
-        bot.safirion.detach_bridge_websocket()
+        bot.safirion.detach_bridge_websocket(websocket)
         bot.add_log("ERROR", f"Erro na Ponte Safirion: {str(exc)}")
 
 

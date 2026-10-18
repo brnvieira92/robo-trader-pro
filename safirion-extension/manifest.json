@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "RoboTrader Pro — Safirion Bridge v2.5 (Velas Reais + Cliques 2º Plano)",
-  "version": "2.5.0",
+  "name": "ProspeTraderBot — Safirion Bridge v5.2 (Double-Click + Direct React Typing)",
+  "version": "5.2.0",
   "description": "Captura os pacotes WebSocket e cotações em tempo real da Safirion desde o carregamento da página e executa ordens em 2º plano.",
   "permissions": ["activeTab", "scripting"],
   "host_permissions": [
@@ -31,6 +31,7 @@
       ],
       "js": ["content_bridge.js"],
       "run_at": "document_idle",
+      "world": "MAIN",
       "all_frames": false
     }
   ]

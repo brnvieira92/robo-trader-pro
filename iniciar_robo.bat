@@ -1,7 +1,7 @@
 @echo off
-title RoboTrader Pro - MT5 & Safirion
+title ProspeTraderBot - MT5 & Safirion Unified
 echo ========================================================
-echo   Iniciando RoboTrader Pro (Safirion OB + MetaTrader 5)
+echo   Iniciando ProspeTraderBot (Safirion OB + MetaTrader 5)
 echo ========================================================
 cd /d "%~dp0"
 if not exist ".venv" (
