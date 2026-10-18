@@ -22,13 +22,14 @@ class SafirionConnector:
     }
 
     def __init__(self):
+        self.symbol = None
         self.connected = False
         self.simulation_mode = True
         self.broker_url = "https://trade.safirion.com/traderoom"
         self.account_type: str = "REAL"
         self.sub_type: str = "BINARY"  # "BINARY", "DIGITAL", "BLITZ"
-        self.balance: float = 137.09
-        self.payout_pct: float = 89.0  # Atualizado para 89% conforme tela real da Safirion
+        self.balance: float = 0.0
+        self.payout_pct: float = 0.0  # Unknown until a broker protocol supplies a verified payout.
 
         self.bridge_ws: Optional[WebSocket] = None
         self.call_bound: bool = False
@@ -65,18 +66,13 @@ class SafirionConnector:
     def reset_candles(self):
         self._live_candles.clear()
         self.last_live_price = None
+        self.last_tick_timestamp = 0.0
         self._outlier_streak_count = 0
         self._outlier_last_candidate = None
 
     def _is_valid_tick_price(self, price: float) -> bool:
         if not math.isfinite(price) or price <= 0.0001 or price > 180000:
             return False
-        if float(price).is_integer():
-            return False
-        # Bloqueia constante estática conhecida de pacote de conversão de fundo da Safirion (1.12135)
-        if abs(price - 1.12135) < 1e-6:
-            return False
-
         if self.last_live_price is not None and self.last_live_price > 0:
             rel_diff = abs(price - self.last_live_price) / self.last_live_price
             # Num mercado M1 real, cada tick oscila menos de 0.035% (~3.5 pips).
@@ -123,28 +119,9 @@ class SafirionConnector:
         bucket_minute = (now.minute // tf_min) * tf_min
         candle_time = now.replace(minute=bucket_minute, second=0, microsecond=0)
 
-        # Cria histórico inicial na mesma escala exata do preço da Safirion (oscilação realista de 0.00012 por vela)
+        # Never manufacture historical prices from the first observed tick.
         if not self._live_candles:
-            step_vol = price * 0.00012
-            curr_p = price
-            seed_candles = []
-            for i in range(65, 0, -1):
-                t = candle_time - timedelta(minutes=tf_min * i)
-                wave = math.sin(i / 3.5) * step_vol * 0.8
-                delta = wave + random.gauss(0, step_vol * 0.5)
-                o = curr_p
-                c = round(max(price * 0.8, o + delta), 5)
-                h = round(max(o, c) + abs(random.gauss(0, step_vol * 0.35)), 5)
-                l = round(min(o, c) - abs(random.gauss(0, step_vol * 0.35)), 5)
-                seed_candles.append(
-                    {"time": t, "open": o, "high": h, "low": l, "close": c, "volume": random.randint(40, 160)}
-                )
-                curr_p = c
-
-            seed_candles[-1]["close"] = round(price, 5)
-            seed_candles[-1]["high"] = round(max(seed_candles[-1]["open"], price), 5)
-            seed_candles[-1]["low"] = round(min(seed_candles[-1]["open"], price), 5)
-            self._live_candles = seed_candles
+            self._live_candles.append(dict(time=candle_time, open=price, high=price, low=price, close=price, volume=1))
             return
 
         last_c = self._live_candles[-1]
@@ -158,8 +135,8 @@ class SafirionConnector:
                 "volume": 1,
             }
             self._live_candles.append(new_c)
-            if len(self._live_candles) > 120:
-                self._live_candles = self._live_candles[-120:]
+            if len(self._live_candles) > 600:
+                self._live_candles = self._live_candles[-600:]
         else:
             last_c["close"] = round(price, 5)
             last_c["high"] = round(max(last_c["high"], price), 5)
@@ -167,34 +144,10 @@ class SafirionConnector:
             last_c["volume"] += 1
 
     def get_live_candles_df(self, timeframe: str = "M1") -> Optional[pd.DataFrame]:
-        if timeframe != self._current_tf and self.last_live_price is not None:
-            p = self.last_live_price
-            self._live_candles.clear()
-            self._record_live_tick(p, timeframe)
+        if timeframe != self._current_tf:
+            return None
         if not self._live_candles:
             return None
-
-        # Mantém a vela do minuto atual sempre sincronizada com o relógio mesmo se o preço ficar estável por alguns segundos
-        if self.last_live_price is not None:
-            now = datetime.now()
-            tf_min = self.TIMEFRAME_MINUTES.get(timeframe, 1)
-            bucket_minute = (now.minute // tf_min) * tf_min
-            candle_time = now.replace(minute=bucket_minute, second=0, microsecond=0)
-            last_c = self._live_candles[-1]
-            if candle_time > last_c["time"]:
-                p = round(self.last_live_price, 5)
-                self._live_candles.append(
-                    {
-                        "time": candle_time,
-                        "open": round(last_c["close"], 5),
-                        "high": max(round(last_c["close"], 5), p),
-                        "low": min(round(last_c["close"], 5), p),
-                        "close": p,
-                        "volume": 1,
-                    }
-                )
-                if len(self._live_candles) > 120:
-                    self._live_candles = self._live_candles[-120:]
 
         return pd.DataFrame(self._live_candles)
 
@@ -205,13 +158,23 @@ class SafirionConnector:
         self.simulation_mode = False
 
         msg_type = data.get("type")
+        data = dict(data)
+        observed_symbol = str(data.get('symbol') or '').upper().replace('/', '').replace(' ', '').replace('-', '')
+        if msg_type == 'SAFIRION_TICK' and observed_symbol:
+            if self.symbol and observed_symbol != self.symbol:
+                self.reset_candles()
+            self.symbol = observed_symbol
+        else:
+            # A status/heartbeat with a price but no asset identity is not a quote.
+            data['price'] = 0
+
         if msg_type == "RESET_CANDLES":
             self.reset_candles()
             return "Escala do gráfico Safirion limpa e ressincronizada!"
 
         if msg_type in ("SAFIRION_BALANCE_UPDATE", "BRIDGE_HEARTBEAT"):
             bal = data.get("balance")
-            if isinstance(bal, (int, float)) and bal >= 0:
+            if isinstance(bal, (int, float)) and math.isfinite(bal) and bal >= 0:
                 self.balance = float(bal)
             res_pnl = data.get("last_result_pnl")
             if isinstance(res_pnl, (int, float)):
@@ -228,7 +191,7 @@ class SafirionConnector:
         if msg_type == "SAFIRION_TICK":
             price = float(data.get("price", 0.0))
             bal = data.get("balance")
-            if isinstance(bal, (int, float)) and bal >= 0:
+            if isinstance(bal, (int, float)) and math.isfinite(bal) and bal >= 0:
                 self.balance = float(bal)
             res_pnl = data.get("last_result_pnl")
             if isinstance(res_pnl, (int, float)):
@@ -244,7 +207,7 @@ class SafirionConnector:
         elif msg_type == "BRIDGE_STATUS":
             self.sub_type = data.get("sub_type", self.sub_type)
             bal = data.get("balance")
-            if isinstance(bal, (int, float)) and bal >= 0:
+            if isinstance(bal, (int, float)) and math.isfinite(bal) and bal >= 0:
                 self.balance = float(bal)
             self.call_bound = bool(data.get("call_bound", self.call_bound))
             self.put_bound = bool(data.get("put_bound", self.put_bound))

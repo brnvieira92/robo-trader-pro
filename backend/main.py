@@ -5,34 +5,43 @@ com a guia aberta da Safirion (Binárias, Digital, Blitz e OTC), funcionando mes
 """
 
 import asyncio
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, ValidationError
+from typing import Literal
+from contextlib import suppress
 
 from backend.bot_manager import BotManager
+from backend.backtest import BacktestRequest, run_backtest
 
 bot = BotManager()
+research_lock = asyncio.Lock()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     loop_task = asyncio.create_task(bot.run_loop())
-    yield
-    loop_task.cancel()
-    await bot.safirion.close()
+    try:
+        yield
+    finally:
+        loop_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await loop_task
+        await bot.close()
 
 
 app = FastAPI(title="ProspeTraderBot - MT5 & Safirion Unified WebApp", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000", "https://trade.safirion.com"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -61,11 +70,16 @@ class SafirionConnectRequest(BaseModel):
 
 
 class ManualOrderRequest(BaseModel):
-    action: str  # "BUY" ou "SELL"
+    model_config = ConfigDict(extra='forbid')
+    action: Literal['BUY', 'SELL']
 
 
 @app.websocket("/ws/safirion-bridge")
 async def safirion_bridge_ws(websocket: WebSocket):
+    origin = websocket.headers.get('origin')
+    if origin and origin not in {'https://trade.safirion.com', 'http://localhost:8000', 'http://127.0.0.1:8000'} and not re.fullmatch(r'chrome-extension://[a-p]{32}', origin):
+        await websocket.close(code=1008)
+        return
     await bot.safirion.attach_bridge_websocket(websocket)
     bot.add_log("SAFIRION", "Guia da Safirion conectada em 2º plano via Ponte WebSocket!")
     try:
@@ -98,11 +112,20 @@ async def get_bridge_script():
 
 @app.get("/api/state")
 async def get_state():
-    return JSONResponse(bot.get_market_snapshot())
+    try:
+        return JSONResponse(bot.get_market_snapshot())
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(503, detail="Dados de mercado indisponíveis; nenhuma ordem enviada.") from exc
 
 
 @app.post("/api/bot/toggle")
 async def toggle_bot():
+    if research_lock.locked():
+        raise HTTPException(409, detail='Aguarde o laboratório encerrar antes de iniciar o robô.')
+    if not bot.is_running:
+        blocked = bot._risk_block(manual=True)
+        if blocked:
+            raise HTTPException(409, detail=blocked)
     bot.is_running = not bot.is_running
     if bot.is_running:
         bot.stats["status_reason"] = f"Robô ATIVO monitorando {bot.config['symbol']} ({bot.config['timeframe']})..."
@@ -115,7 +138,12 @@ async def toggle_bot():
 
 @app.post("/api/config")
 async def update_config(payload: Dict[str, Any]):
-    updated = bot.update_config(payload)
+    try:
+        updated = bot.update_config(payload)
+    except ValidationError as exc:
+        raise HTTPException(422, detail=exc.errors(include_context=False, include_input=False)) from exc
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(409, detail=str(exc)) from exc
     if "safirion_sub_type" in payload:
         bot.safirion.sub_type = payload["safirion_sub_type"]
     return {"status": "ok", "config": updated}
@@ -123,6 +151,8 @@ async def update_config(payload: Dict[str, Any]):
 
 @app.post("/api/connect/mt5")
 async def connect_mt5(req: MT5ConnectRequest):
+    if bot.is_running or bot._has_open_trade:
+        raise HTTPException(409, detail='Pause e encerre a operação antes de trocar a fonte de dados.')
     res = bot.mt5.connect(
         login=req.login,
         password=req.password,
@@ -136,6 +166,8 @@ async def connect_mt5(req: MT5ConnectRequest):
 
 @app.post("/api/connect/safirion")
 async def connect_safirion(req: SafirionConnectRequest):
+    if bot.is_running or bot._has_open_trade:
+        raise HTTPException(409, detail='Pause e encerre a operação antes de trocar a conexão.')
     res = await bot.safirion.connect(
         broker_url=req.broker_url,
         email=req.email,
@@ -151,29 +183,25 @@ async def connect_safirion(req: SafirionConnectRequest):
 @app.post("/api/order/manual")
 async def manual_order(req: ManualOrderRequest):
     snapshot = bot.get_market_snapshot()
-    signal = snapshot["signal"] or {
-        "symbol": bot.config["symbol"],
-        "price": snapshot["candles"][-1]["close"] if snapshot["candles"] else 0.0,
-        "confidence": 100.0,
-        "stop_loss": None,
-        "take_profit": None,
-    }
-    signal["action"] = req.action.upper()
+    signal = {**snapshot["signal"], "action": req.action}
     res = await bot.execute_trade_from_signal(signal, manual=True)
+    if not res['success']:
+        raise HTTPException(409, detail=res['message'])
     return res
 
 
 @app.post("/api/stats/reset")
 async def reset_stats():
-    bot.stats["daily_pnl"] = 0.0
-    bot.stats["wins"] = 0
-    bot.stats["losses"] = 0
-    bot.stats["total_trades"] = 0
-    bot.stats["win_rate"] = 0.0
-    bot.stats["current_gale_step"] = 0
-    bot.trade_history.clear()
-    bot.add_log("INFO", "Placar e histórico diário zerados pelo usuário.")
-    return {"status": "ok", "stats": bot.stats}
+    # Risk history is an audit trail, not an editable scoreboard.
+    raise HTTPException(409, detail="Histórico preservado para os limites de risco. A sessão usa o dia UTC; reiniciar não zera perdas.")
+
+
+@app.post('/api/research/backtest')
+async def research_backtest(payload: BacktestRequest):
+    if research_lock.locked() or bot.is_running or bot._has_open_trade:
+        raise HTTPException(409, detail='Pause a operação e aguarde o processamento atual antes de executar o laboratório.')
+    async with research_lock:
+        return await asyncio.to_thread(run_backtest, payload)
 
 
 @app.get("/")

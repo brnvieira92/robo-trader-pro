@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 import math
 import random
+import time
 import pandas as pd
 import numpy as np
 
@@ -49,6 +50,7 @@ class MT5Connector:
             "equity": 10000.00,
             "currency": "BRL",
         }
+        self._sim_update_times = {}
         self._sim_series_cache: Dict[str, pd.DataFrame] = {}
 
     def connect(
@@ -126,6 +128,8 @@ class MT5Connector:
                 df = df.rename(columns={"tick_volume": "volume"})
                 return df[["time", "open", "high", "low", "close", "volume"]]
 
+        if self.connected and not self.simulation_mode:
+            raise RuntimeError('MT5 não retornou dados reais; simulação automática de preços bloqueada.')
         return self._generate_simulated_candles(symbol, timeframe, count)
 
     def _generate_simulated_candles(self, symbol: str, timeframe: str, count: int) -> pd.DataFrame:
@@ -135,6 +139,10 @@ class MT5Connector:
         volatility = base_price * 0.0012
 
         now = datetime.now().replace(second=0, microsecond=0)
+        now = now.replace(minute=(now.minute // minutes) * minutes)
+        if cache_key in self._sim_series_cache and time.monotonic()-self._sim_update_times.get(cache_key, 0) < 1:
+            return self._sim_series_cache[cache_key].copy()
+        self._sim_update_times[cache_key] = time.monotonic()
         if cache_key not in self._sim_series_cache:
             times = [now - timedelta(minutes=minutes * i) for i in range(count)][::-1]
             prices = [base_price]
