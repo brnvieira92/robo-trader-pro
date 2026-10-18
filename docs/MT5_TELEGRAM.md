@@ -49,6 +49,19 @@ O assistente na nuvem não possui controle remoto do Windows ou privilégios adm
 
 Se o painel informar idade de tick negativa, confira **Configurações do Windows > Hora e idioma > Data e hora**, a hora automática e o fuso correto, e sincronize o relógio. Se o problema persistir com o relógio certo, confira a cotação/servidor do terminal. O robô recusa ticks significativamente no futuro, sem remover essa verificação para forçar ordens. Poucas velas disponíveis também impedem a validação de estratégia: carregue histórico no terminal para o símbolo/timeframe escolhido. Corrigir permissões não elimina esses filtros.
 
+## Conectado, mas sem dados reais de EURUSD / M5
+
+Login e autorização de negociação não garantem que o histórico de preços esteja disponível. Mantenha o robô pausado enquanto confere:
+
+1. No MT5 correto, abra **Exibir > Observação do Mercado** (`Ctrl+M`). Confira o nome exato do símbolo oferecido pela conta, incluindo eventuais sufixos; use esse mesmo nome no painel.
+2. Abra o gráfico desse símbolo, selecione **M5** e pressione **Home** algumas vezes para solicitar velas anteriores. Aguarde o carregamento e confira a conexão do terminal com o servidor. O robô solicita 240 velas; conseguir ler uma quantidade pequena ainda pode ser insuficiente para a estratégia.
+3. Em **Ferramentas > Opções > Gráficos**, confira se o máximo de barras no gráfico permite pelo menos 240 velas; pode usar 5.000 ou mais. Siga a solicitação do terminal caso seja preciso reabrir o gráfico ou reiniciar para aplicar a alteração.
+4. Reconecte no painel, mantendo a mesma conta e instalação, e confira uma mensagem com horário posterior à reconexão. Erros antigos permanecem no diário e não comprovam uma falha atual.
+
+A aplicação atual identifica falha de seleção de símbolo e, quando a leitura retorna vazia, mostra o símbolo, período, quantidade solicitada e `last_error()` do MT5. No modo LIVE_MT5 essa informação aparece também na origem dos dados e no motivo de espera. Não usa dados artificiais para contornar a indisponibilidade. A API pode levar algum tempo para sincronizar o histórico; mercado fechado ou cotação antiga também pode impedir novas entradas, mesmo quando há histórico.
+
+Se persistir, compartilhe a mensagem detalhada mais recente. Não é necessário reinstalar o pacote Python ou mudar novamente as permissões de AlgoTrading para investigar um erro de histórico.
+
 ## Dimensionamento e encerramento
 
 - No MT5, o campo de entrada representa **orçamento monetário de risco até o stop**, na moeda da conta, e não lotes. Com entrada 5 e conta em USD, o orçamento é de até 5 USD, também limitado pelo percentual de risco e pelo stop diário restante.

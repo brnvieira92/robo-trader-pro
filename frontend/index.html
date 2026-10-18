@@ -1394,7 +1394,7 @@
       const v = state.signal?.indicators?.ml_validation || {};
       document.getElementById('lastUpdated').textContent = 'Atualizado '+new Date().toLocaleTimeString('pt-BR',{timeZone:'America/Sao_Paulo'});
       document.getElementById('dataSource').textContent = q.synthetic ? 'SIMULADOR • preços artificiais' : q.source;
-      document.getElementById('dataDetail').textContent = `${q.closed_candles} velas fechadas • vela em formação excluída`+(q.tick_age_seconds != null ? ` • último tick há ${q.tick_age_seconds}s` : '');
+      document.getElementById('dataDetail').textContent = `${q.closed_candles} velas fechadas • vela em formação excluída${q.history_error ? ' • '+q.history_error : ''}`+(q.tick_age_seconds != null ? ` • último tick há ${q.tick_age_seconds}s` : '');
       document.getElementById('validationScore').textContent = v.enabled ? `${v.accuracy}% fora do treino` : 'Amostra insuficiente';
       document.getElementById('validationDetail').textContent = v.enabled ? `Referência ${v.baseline_accuracy}% • ${v.validation_samples} amostras • Brier ${v.brier_score}. ${v.validated ? 'Filtro temporal aprovado neste período.' : 'Sem vantagem demonstrada.'}` : (v.reason || 'Aguardando histórico real suficiente.');
       document.getElementById('riskBudget').textContent = `${state.risk.max_risk_pct}% por entrada`;

@@ -314,6 +314,7 @@ class BotManager:
         market_type = self.config["market_type"]
         strategy_id = self.config["strategy_id"]
 
+        history_error = None
         saf_live_df = (
             self.safirion.get_live_candles_df(timeframe)
             if market_type == "SAFIRION_OB"
@@ -331,7 +332,8 @@ class BotManager:
                 try:
                     df = self.mt5.get_candles(symbol, timeframe, count=240)
                     source = 'SIMULATED' if self.mt5.simulation_mode else 'MT5_LIVE'
-                except RuntimeError:
+                except RuntimeError as exc:
+                    history_error = str(exc)
                     if self.config['execution_mode']!='LIVE_MT5':
                         raise
                     df=pd.DataFrame(columns=['time','open','high','low','close','volume'])
@@ -365,6 +367,8 @@ class BotManager:
             },
         )
         self.last_signal = signal.to_dict()
+        if history_error:
+            self.last_signal.update(action='NEUTRAL',confidence=0,reason=history_error)
         self.last_signal['bar_time'] = str(closed.iloc[-1]['time']) if len(closed) else None
         self.last_signal['price'] = float(df.iloc[-1]['close']) if len(df) else 0.0
         tick_age = max(0, datetime.now().timestamp()-self.safirion.last_tick_timestamp) if live_safirion else None
@@ -374,7 +378,8 @@ class BotManager:
                             forming_candle_excluded=True, dropped_gap_candles=dropped_gap_candles, synthetic=source == 'SIMULATED')
 
 
-        data_quality['history_fresh']=True
+        data_quality['history_error']=history_error
+        data_quality['history_fresh']=source!='MT5_UNAVAILABLE'
         if source=='MT5_LIVE':
             latest=df.iloc[-1]['time'] if len(df) else None
             latest_epoch=(latest.tz_localize('UTC').timestamp() if latest.tzinfo is None else latest.timestamp()) if latest is not None else 0

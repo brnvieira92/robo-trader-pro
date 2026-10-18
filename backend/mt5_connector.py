@@ -120,13 +120,17 @@ class MT5Connector:
                 "H1": mt5.TIMEFRAME_H1,
             }
             mt5_tf = tf_map.get(timeframe, mt5.TIMEFRAME_M1)
-            mt5.symbol_select(symbol, True)
+            if not mt5.symbol_select(symbol, True):
+                error = mt5.last_error()
+                raise RuntimeError(f'MT5 não conseguiu selecionar {symbol}: {error}. Confira o nome exato na Observação do Mercado, incluindo sufixos.')
             rates = mt5.copy_rates_from_pos(symbol, mt5_tf, 0, count)
             if rates is not None and len(rates) > 0:
                 df = pd.DataFrame(rates)
                 df["time"] = pd.to_datetime(df["time"], unit="s")
                 df = df.rename(columns={"tick_volume": "volume"})
                 return df[["time", "open", "high", "low", "close", "volume"]]
+            error = mt5.last_error()
+            raise RuntimeError(f'MT5 sem histórico para {symbol} / {timeframe} (solicitadas {count} velas): {error}. Abra esse gráfico no terminal e carregue o histórico com Home; confira conexão e símbolo. Nenhum preço simulado será usado.')
 
         if self.connected and not self.simulation_mode:
             raise RuntimeError('MT5 não retornou dados reais; simulação automática de preços bloqueada.')
