@@ -1,75 +1,75 @@
-# 🤖 ProspeTraderBot — Plataforma Unificada de Trading Automatizado (Safirion + MetaTrader 5 + IA)
+# ProspeTraderBot — pesquisa e simulação de estratégias
 
-O **ProspeTraderBot** é um sistema completo de análise técnica quantitativa e **Machine Learning (`RandomForestClassifier`)** em tempo real, com execução automática e manual para:
+Dashboard FastAPI para estudar sinais de EMA/RSI, Bollinger, rompimentos, confluência e Random Forest. O modo de execução desta revisão é **PAPER**: nenhuma ordem do painel é enviada à corretora, mesmo com uma ponte Safirion ou terminal MT5 conectado. Dados reais e dados artificiais são identificados separadamente.
 
-1. **Opções Binárias, Digital, Blitz e OTC** na corretora **Safirion** (`https://trade.safirion.com/traderoom`), operando 100% em segundo plano (mesmo com a janela do navegador minimizada) via Ponte WebSocket + Extensão Chrome Manifest V3.
-2. **B3 (Mini Índice `WIN$N` e Mini Dólar `WDO$N`)** e **Forex (`EURUSD`, `GBPUSD`, `USDJPY`, `XAUUSD`)** via integração direta com o terminal **MetaTrader 5 (MT5)**.
+Score técnico mede confluência de regras; não é probabilidade de acerto. As estimativas da IA não são calibradas para lucro. Não há promessa de retorno ou acerto em todas as entradas.
 
----
+## Executar
 
-## 🚀 Principais Recursos
+Python 3.10+ (validado com 3.12) e, para recompilar o painel, Node.js/npm.
 
-- **Painel Web Local em Tempo Real (`FastAPI` + `TradingView Lightweight Charts`)**:
-  - Gráfico de velas (Candlesticks) sincronizado com os preços reais da corretora.
-  - Plotagem ao vivo de **EMA 9**, **EMA 21**, **Bandas de Bollinger (20, 2.0)**, **RSI (14)**, **ATR (14)**, **MACD** e **Probabilidades da IA (`▲ % | ▼ %`)**.
-- **Ponte Safirion em 2º Plano (`safirion-extension/`)**:
-  - Interceptação nativa de WebSockets (`page_ws_hook.js`) com filtro rigoroso anti-ruído (`<= 0.12%` por tick) para impedir contaminação de outros ativos.
-  - Leitura automática do Saldo Real (`R$`) e auditoria real de `WIN` / `LOSS` sincronizada com a virada exata do relógio (`:00`).
-  - **Auto-Destravamento do botão `+ NOVA OPÇÃO`**: clica automaticamente nas propriedades internas do React (`__reactProps` / `__reactFiber`) assim que a operação encerra, reabilitando os botões `CALL` e `PUT` mesmo com o navegador minimizado.
-- **Motor Híbrido de Estratégias + Inteligência Artificial (`scikit-learn`)**:
-  1. **Bandas de Bollinger + RSI Híbrido**: Opera Reversão com Pavio de Rejeição nos extremos, Fluxo de Tendência (*Walking the Bands*) em rompimentos fortes e Pullback Dinâmico na EMA 9 (equilibrando entradas `CALL` e `PUT`).
-  2. **Cruzamento de Médias (EMA 9/21) + Filtro RSI**: Seguimento de tendência.
-  3. **Rompimento de Price Action (Donchian Breakout) + ATR**: Explosão de volatilidade.
-  4. **Multi-Confluência Pro**: Combinação ponderada de EMA + RSI + Bollinger + MACD.
-  5. **Machine Learning (`RandomForestClassifier` - IA)**: Modelo com 45 árvores de decisão treinado em tempo real a cada vela sobre 10 variáveis de microestrutura, com **Aprendizado por Reforço** nos resultados reais (`WIN`/`LOSS`).
-
----
-
-## 📂 Estrutura do Projeto
-
-```text
-robo-trader-pro/
-├── backend/
-│   ├── main.py                 # Servidor FastAPI, rotas REST e WebSocket (/ws/safirion-bridge)
-│   ├── bot_manager.py          # Orquestrador central, relógio de expiração real e gestão de risco
-│   ├── strategies.py           # 5 motores de estratégia + Juiz de IA em segundo plano
-│   ├── ml_engine.py            # Motor de Machine Learning (RandomForestClassifier + memória de reforço)
-│   ├── safirion_connector.py   # Conector WebSocket/DOM para Safirion (Binárias, Digital, Blitz, OTC)
-│   └── mt5_connector.py        # Conector nativo MetaTrader 5 (B3 e Forex) com fallback simulado
-├── frontend/
-│   └── index.html              # Dashboard Web Dark Mode (TailwindCSS + Lightweight Charts)
-├── safirion-extension/
-│   ├── manifest.json           # Extensão Chrome Manifest V3
-│   ├── page_ws_hook.js         # Hook de WebSocket e executor React Fiber no mundo MAIN
-│   └── content_bridge.js       # Ponte DOM/WebSocket e HUD flutuante na Safirion
-├── iniciar_robo.bat            # Inicializador rápido para Windows
-└── requirements.txt            # Dependências Python
-```
-
----
-
-## 🛠️ Como Instalar e Executar
-
-### 1. Pré-requisitos
-- **Python 3.10+** instalado no Windows.
-- **Google Chrome** (para operar na Safirion) e/ou **MetaTrader 5** (para operar B3/Forex).
-
-### 2. Instalação Rápida
-Basta dar dois cliques em **`iniciar_robo.bat`** ou executar no terminal:
-
-```powershell
+```bash
 python -m venv .venv
-.\.venv\Scripts\activate
-pip install -r requirements.txt
-python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+.venv/bin/python -m pip install -r requirements-dev.txt
+npm ci --prefix frontend
+npm run build --prefix frontend
+.venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 ```
 
-Depois, abra o painel no navegador em:
-👉 **`http://localhost:8000`**
+No Windows, use `.venv\Scripts\python` nos comandos Python; o inicializador `iniciar_robo.bat` também inicia o servidor. A dependência nativa MetaTrader5 é instalada apenas no Windows. A ausência desse pacote no Linux é suportada pelo simulador. Os recursos compilados do painel estão em `frontend/vendor`, portanto o painel não exige CDNs nem Node em tempo de execução. Licenças dos recursos distribuídos acompanham esses arquivos. Lightweight Charts: [TradingView](https://www.tradingview.com/).
 
-### 3. Configurando a Extensão da Safirion no Chrome
-1. No Chrome, acesse `chrome://extensions/`.
-2. Ative a chave **"Modo do desenvolvedor"** (canto superior direito).
-3. Clique em **"Carregar sem compactação"** e selecione a pasta `safirion-extension` deste projeto.
-4. Abra `https://trade.safirion.com/traderoom`, clique em **`1. Vincular CALL ▲`** e depois no botão Verde da corretora; clique em **`2. Vincular PUT ▼`** e depois no botão Vermelho da corretora.
-5. No painel `http://localhost:8000`, clique em **"LIGAR ROBÔ AUTOMÁTICO"**.
+Use um único processo Uvicorn. A aplicação é local, sem autenticação multiusuário; não exponha sua porta diretamente à Internet. Uma instância equivale a uma sessão de pesquisa, não a um serviço de execução financeira de produção.
+
+## O que foi revisado
+
+- Indicadores causais, sem preenchimento de valores usando o futuro; RSI de uma sequência de alta não vira artificialmente neutro.
+- Sinais e modelos usam apenas velas fechadas. O gráfico mantém a vela em formação para visualização.
+- RF avaliado na porção final de uma janela cronológica, com separação de uma amostra na fronteira. A tela informa acurácia fora do treino, referência majoritária, acurácia balanceada, Brier e tamanho da validação. A IA precisa superar a referência e os critérios mínimos para liberar o filtro; isso ainda é evidência exploratória.
+- Estimativas não são multiplicadas para parecer mais confiantes. Resultados de trades com outra expiração não viram rótulos artificiais de uma vela. Cache separado por mercado, ativo, timeframe e fonte.
+- Nenhum histórico aleatório é criado ao conectar a Safirion. O sistema espera velas observadas, verifica o ativo, rejeita dados inválidos e não troca uma fonte real interrompida por um simulador silenciosamente. Depois de uma lacuna, usa somente o trecho contínuo mais recente.
+- Todos os modos de dimensionamento respeitam o orçamento de risco. Martingale e aumento por sequência de vitórias estão desativados; os nomes legados SMART_AI/SOROS, aceitos pela API para compatibilidade, usam valor fixo limitado.
+- Ordens manuais e automáticas compartilham limites de perda, saldo, intervalo e operação simultânea. A automação também bloqueia reutilização do mesmo candle e exige o score configurado. Ordem manual é uma escolha discricionária e não depende do filtro da IA.
+- API valida parâmetros antes de alterar estado. Os controles são bloqueados enquanto há operação em curso; erros não são apresentados como sucesso.
+- Interface responsiva, diagnóstico de dados/IA/risco, estado offline, navegação por teclado, modal com Escape e foco contido, redução de animações e tratamento seguro de texto de logs.
+
+## Diário PAPER e limites
+
+Padrões: banca virtual de R$ 1.000, entrada de R$ 5, risco máximo de 1% por entrada, três perdas consecutivas, vinte entradas por sessão e intervalo de sessenta segundos. São parâmetros de pesquisa, não uma recomendação de investimento. Configuração, operações e resultados são gravados em `data/paper.sqlite3`, ignorado pelo Git. Para testes isolados, defina `TRADER_JOURNAL_PATH` apontando a outro arquivo.
+
+O dia da sessão é UTC. O histórico de dias anteriores permanece no diário. Reiniciar o processo não apaga perdas nem operações do dia. Ao reiniciar com uma operação PAPER aberta, ela é marcada `INTERRUPTED` e sua reserva integral é debitada como hipótese conservadora; **isso não é uma perda confirmada de mercado**. Não há botão para apagar o histórico e contornar limites. Faça backup do SQLite com o servidor parado.
+
+No PAPER binário, o payout é um parâmetro hipotético, sem alegação de valor real da Safirion; empate devolve a entrada. Em dados de MT5, o PAPER calcula retorno não alavancado sobre o valor nominal até o encerramento, **não lotes, contratos ou execução de stops**. Custos e slippage não entram no painel PAPER; podem ser modelados como custo fixo no laboratório binário. Não confunda esses resultados com saldo ou extrato de corretora.
+
+## Laboratório CSV
+
+Abra “Laboratório de estratégia”, selecione um CSV e avalie a estratégia salva. Exemplo de formato, com todas as velas fechadas:
+
+```csv
+time,open,high,low,close,volume
+2026-01-01T00:00:00Z,1.1000,1.1004,1.0998,1.1002,100
+2026-01-01T00:01:00Z,1.1002,1.1005,1.1000,1.1001,90
+```
+
+São necessárias 150 a 2.000 linhas, ordenadas, sem duplicatas nem lacunas no timeframe escolhido. `time` aceita segundos Unix na API; a interface também converte ISO. `volume` é opcional no CSV, com padrão zero; estratégias de volume não terão confirmação útil sem esse dado. Use ponto decimal. Arquivos com vírgula ou ponto e vírgula como delimitador são aceitos, sem campos CSV entre aspas.
+
+O laboratório é **binário e de uma vela**, independentemente da plataforma de dados escolhida. Ele entra na abertura seguinte e avalia o fechamento dessa vela, usando somente o passado para cada sinal. Avalia até os últimos duzentos resultados possíveis. Apresenta PnL líquido, expectativa, drawdown, fator de lucro, ponto de equilíbrio e intervalo de Wilson de 95% do acerto entre resultados não empatados. Nenhuma entrada é um resultado válido quando não há critérios suficientes; zero operações não valida a estratégia.
+
+A análise usa payout e custo fixos; não modela latência, gaps de execução ou a expiração real da corretora. O sistema não consegue verificar se o CSV fornecido contém dados reais. Repetir a seleção de parâmetros no mesmo período cria viés: confirme em outro período e em PAPER com dados reais. Não foi fornecido histórico de mercado para demonstrar precisão ou rentabilidade nesta revisão.
+
+## Fontes reais e execução
+
+A extensão `safirion-extension` pode fornecer ticks da aba autenticada. Escolha o mesmo ativo no painel e na corretora. O backend aguarda histórico observado suficiente e interrompe a análise se a cotação ficar velha. Heartbeats sem identidade de ativo não são preços. A extensão permanece uma integração experimental por DOM/WebSocket.
+
+A execução real pelo painel está bloqueada porque o fluxo anterior tratava envio de comando como preenchimento e estimava resultados financeiros sem confirmação. Para reativá-la é necessário implementar e testar confirmação de preenchimentos, identificadores de conta/ativo/ordem, resultados correlacionados por ordem, reconciliação após falhas, custos, limites específicos do instrumento e persistência de ordens pendentes. Não basta trocar um rótulo de conta na interface.
+
+Também não há calendário econômico integrado nem validação de múltiplos usuários. O filtro de notícias que existia apenas visualmente foi removido.
+
+## Validar
+
+```bash
+.venv/bin/python -m pytest -q
+.venv/bin/python -m pip check
+npm run build --prefix frontend
+```
+
+Os testes cobrem separação temporal, ausência de dados futuros, RSI, estimativas da IA, validação OHLCV, cálculo de custos no backtest, limites de risco, concorrência, ausência de envio real, empate, fonte desatualizada, reinício, persistência e rotas HTTP/WebSocket. Um teste de navegador reproduzível está em `tests/browser_smoke.py`.

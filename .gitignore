@@ -24,3 +24,10 @@ dist/
 .DS_Store
 Thumbs.db
 *.log
+
+# Local paper trading journal
+data/
+
+# Frontend build dependencies
+node_modules/
+.pytest_cache/

@@ -1,46 +1,32 @@
-"""
-Motor de Machine Learning em Tempo Real (MLEngine) usando scikit-learn.
-Utiliza um Ensemble de RandomForestClassifier + GradientBoostingClassifier que:
-1. Extrai 10 features (variáveis preditivas) de cada vela:
-   - RSI normalizado, Posição relativa nas Bandas de Bollinger (%B),
-   - Distância percentual entre EMA rápida e EMA lenta,
-   - Aceleração do Histograma MACD,
-   - Tamanho do corpo da vela vs ATR,
-   - Força de rejeição do pavio superior e do pavio inferior,
-   - Retorno dos últimos 1, 2 e 3 períodos (momentum de curto prazo).
-2. Treina dinamicamente nas velas recentes do ativo aberto (Online Rolling Training)
-   para prever a probabilidade exata da PRÓXIMA vela fechar de ALTA (CALL/BUY) ou BAIXA (PUT/SELL).
-3. Aprende também com o histórico de WIN e LOSS reais executados pelo robô (Feedback Loop).
-"""
+"""Directional research model with chronological validation, never training accuracy.
 
-from typing import Dict, Any, List, Optional, Tuple
+Scores are model estimates, not calibrated probabilities of broker profit. Each
+instrument/timeframe/source has an isolated bounded cache. Only closed candles
+may be supplied by callers. Trade outcomes are not interchangeable with one-bar
+labels and are deliberately excluded from training.
+"""
+from typing import Any, Dict, List, Tuple
+from collections import OrderedDict
+import hashlib
+import logging
+import threading
 import numpy as np
 import pandas as pd
-
 try:
-    from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.metrics import balanced_accuracy_score, brier_score_loss
     SKLEARN_AVAILABLE = True
 except ImportError:
     SKLEARN_AVAILABLE = False
 
+logger = logging.getLogger(__name__)
 
 class MLEngine:
     def __init__(self):
-        self.rf_model = (
-            RandomForestClassifier(
-                n_estimators=45,
-                max_depth=5,
-                min_samples_leaf=2,
-                random_state=42,
-            )
-            if SKLEARN_AVAILABLE
-            else None
-        )
-        # Memória de experiências reais do robô (reforço supervisionado por WIN/LOSS)
-        self.experience_X: List[List[float]] = []
-        self.experience_y: List[int] = []  # 1 = SUBIU (CALL WIN / PUT LOSS), 0 = CAIU (PUT WIN / CALL LOSS)
-        self.last_accuracy: float = 0.0
-        self.samples_trained: int = 0
+        self.samples_trained = 0
+        self.last_accuracy = 0.0
+        self._cache = OrderedDict()
+        self._cache_lock = threading.RLock()
 
     @staticmethod
     def extract_features_matrix(df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, List[float]]:
@@ -109,7 +95,7 @@ class MLEngine:
         for idx in range(len(features) - 1):
             candle_idx = idx + 3
             next_close = c[candle_idx + 1]
-            curr_close = c[candle_idx]
+            curr_close = o[candle_idx + 1]
             if next_close == curr_close:
                 continue
             target = 1 if next_close > curr_close else 0
@@ -119,125 +105,71 @@ class MLEngine:
         return np.array(X_train, dtype=float), np.array(y_train, dtype=int), current_feat
 
     def record_trade_feedback(self, features: List[float], action: str, won: bool):
-        """
-        Alimenta a memória de reforço do Machine Learning com o resultado real da operação na corretora!
-        Se o robô entrou CALL (BUY) e ganhou (won=True), o mercado realmente subiu (label=1).
-        Se entrou CALL e perdeu (won=False), o mercado caiu (label=0).
-        """
-        if not features or len(features) != 10:
-            return
-        if action in ("BUY", "CALL"):
-            true_label = 1 if won else 0
-        else:
-            true_label = 0 if won else 1
+        # Broker expiry, fees and fills have a different target from next-bar direction.
+        # Do not contaminate one-bar training labels with trade PnL.
+        return
 
-        # Adiciona com peso duplo (duas amostras) para que o modelo priorize os padrões de Win/Loss reais
-        self.experience_X.append(features)
-        self.experience_y.append(true_label)
-        self.experience_X.append(features)
-        self.experience_y.append(true_label)
-
-        if len(self.experience_X) > 120:
-            self.experience_X = self.experience_X[-120:]
-            self.experience_y = self.experience_y[-120:]
-
-    def predict_next_candle(self, df: pd.DataFrame) -> Dict[str, Any]:
-        """
-        Treina o Random Forest nas velas mais recentes + memória de trades reais e retorna:
-        - prob_up (0 a 100%): probabilidade de alta na próxima vela (CALL / BUY)
-        - prob_down (0 a 100%): probabilidade de baixa na próxima vela (PUT / SELL)
-        - ml_action: "BUY", "SELL" ou "NEUTRAL"
-        - accuracy: taxa de acerto estimada do modelo nos dados atuais
-        """
-        if not SKLEARN_AVAILABLE or len(df) < 35:
-            return {
-                "enabled": False,
-                "prob_up": 50.0,
-                "prob_down": 50.0,
-                "ml_action": "NEUTRAL",
-                "ml_confidence": 50.0,
-                "accuracy": 0.0,
-                "samples": 0,
-                "current_features": [],
-            }
-
+    def predict_next_candle(self, df: pd.DataFrame, context: str = "default") -> Dict[str, Any]:
+        result = dict(enabled=False, validated=False, prob_up=50.0, prob_down=50.0,
+                      ml_action="NEUTRAL", ml_confidence=50.0, accuracy=0.0,
+                      samples=0, validation_samples=0, baseline_accuracy=0.0,
+                      balanced_accuracy=0.0, brier_score=None, current_features=[],
+                      experience_count=0, reason="Histórico insuficiente: mínimo 100 velas fechadas.",
+                      probability_kind="uncalibrated_model_estimate")
+        if not SKLEARN_AVAILABLE:
+            result["reason"] = "scikit-learn indisponível."
+            return result
+        if len(df) < 100:
+            return result
+        signature = hashlib.sha256(pd.util.hash_pandas_object(df, index=True).values.tobytes()).hexdigest()
+        key = (context, signature)
+        with self._cache_lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+                return dict(self._cache[key])
         try:
-            X_hist, y_hist, curr_feat = self.extract_features_matrix(df)
-            if len(X_hist) < 15:
-                return {
-                    "enabled": True,
-                    "prob_up": 50.0,
-                    "prob_down": 50.0,
-                    "ml_action": "NEUTRAL",
-                    "ml_confidence": 50.0,
-                    "accuracy": 0.0,
-                    "samples": len(X_hist),
-                    "current_features": curr_feat,
-                }
+            # Indicators need warm-up; drop the early rows after enrichment.
+            X, y, features = self.extract_features_matrix(df.iloc[25:])
+            split = int(len(X) * .70)
+            # Purge the boundary label: its next close must not enter validation.
+            X_train, y_train = X[:split-1], y[:split-1]
+            X_test, y_test = X[split:], y[split:]
+            result.update(samples=len(X), validation_samples=len(X_test), current_features=features)
+            if len(X_train) < 40 or len(X_test) < 20 or len(np.unique(y_train)) < 2 or len(np.unique(y_test)) < 2:
+                result["reason"] = "Amostra temporal insuficiente ou sem as duas direções."
+                return result
+            def model():
+                return RandomForestClassifier(n_estimators=80, max_depth=4,
+                                              min_samples_leaf=6, random_state=42, n_jobs=1)
+            validation_model = model().fit(X_train, y_train)
+            predictions = validation_model.predict(X_test)
+            probabilities = validation_model.predict_proba(X_test)[:, list(validation_model.classes_).index(1)]
+            accuracy = float(np.mean(predictions == y_test))
+            baseline = float(np.mean(y_test == int(np.mean(y_train) >= .5)))
+            balanced = float(balanced_accuracy_score(y_test, predictions))
+            brier = float(brier_score_loss(y_test, probabilities))
+            validated = accuracy > baseline and balanced >= .55 and brier < .25
+            fitted = model().fit(X, y)
+            probs = fitted.predict_proba([features])[0]
+            up = float(probs[list(fitted.classes_).index(1)]) * 100
+            down = 100-up
+            confidence = max(up, down)
+            action = ("BUY" if up > down else "SELL") if validated and confidence >= 60 else "NEUTRAL"
+            self.samples_trained = len(X)
+            self.last_accuracy = round(accuracy * 100, 1)
+            result.update(enabled=True, validated=validated, prob_up=round(up, 1), prob_down=round(down, 1),
+                          ml_action=action, ml_confidence=round(confidence, 1), accuracy=self.last_accuracy,
+                          baseline_accuracy=round(baseline*100, 1), balanced_accuracy=round(balanced*100, 1),
+                          brier_score=round(brier, 4),
+                          reason="Validação temporal favorável; estimativas não calibradas." if validated else
+                          "Sem vantagem demonstrada sobre a referência no período de validação.")
+            with self._cache_lock:
+                self._cache[key] = dict(result)
+                while len(self._cache) > 16:
+                    self._cache.popitem(last=False)
+        except (ValueError, IndexError, TypeError) as exc:
+            logger.exception("Falha no modelo direcional")
+            result["reason"] = "Modelo indisponível: dados inconsistentes."
+        return result
 
-            if self.experience_X:
-                X_full = np.vstack([X_hist, np.array(self.experience_X, dtype=float)])
-                y_full = np.concatenate([y_hist, np.array(self.experience_y, dtype=int)])
-            else:
-                X_full = X_hist
-                y_full = y_hist
-
-            # Garante que há exemplos das duas classes (0 e 1) antes do fit
-            unique_classes = np.unique(y_full)
-            if len(unique_classes) < 2:
-                return {
-                    "enabled": True,
-                    "prob_up": 50.0,
-                    "prob_down": 50.0,
-                    "ml_action": "NEUTRAL",
-                    "ml_confidence": 50.0,
-                    "accuracy": 50.0,
-                    "samples": len(X_full),
-                    "current_features": curr_feat,
-                }
-
-            self.rf_model.fit(X_full, y_full)
-            self.samples_trained = len(X_full)
-            self.last_accuracy = round(float(self.rf_model.score(X_full, y_full)) * 100.0, 1)
-
-            probs = self.rf_model.predict_proba(np.array([curr_feat], dtype=float))[0]
-            # probs[0] = classe 0 (queda/PUT), probs[1] = classe 1 (alta/CALL)
-            prob_down = round(float(probs[0]) * 100.0, 1)
-            prob_up = round(float(probs[1]) * 100.0, 1)
-
-            if prob_up >= 58.0:
-                ml_action = "BUY"
-                ml_conf = min(98.0, round(prob_up * 1.15, 1))
-            elif prob_down >= 58.0:
-                ml_action = "SELL"
-                ml_conf = min(98.0, round(prob_down * 1.15, 1))
-            else:
-                ml_action = "NEUTRAL"
-                ml_conf = max(prob_up, prob_down)
-
-            return {
-                "enabled": True,
-                "prob_up": prob_up,
-                "prob_down": prob_down,
-                "ml_action": ml_action,
-                "ml_confidence": ml_conf,
-                "accuracy": self.last_accuracy,
-                "samples": self.samples_trained,
-                "current_features": curr_feat,
-                "experience_count": len(self.experience_y) // 2,
-            }
-        except Exception:
-            return {
-                "enabled": False,
-                "prob_up": 50.0,
-                "prob_down": 50.0,
-                "ml_action": "NEUTRAL",
-                "ml_confidence": 50.0,
-                "accuracy": 0.0,
-                "samples": 0,
-                "current_features": [],
-            }
-
-
-# Instância global compartilhada pelo StrategyEngine e BotManager
 ml_engine = MLEngine()

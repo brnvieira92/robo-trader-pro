@@ -12,6 +12,7 @@ from typing import Dict, Any, Optional
 import numpy as np
 import pandas as pd
 from backend.ml_engine import ml_engine
+from backend.market_data import validate_candles
 
 
 @dataclass
@@ -26,7 +27,7 @@ class SignalResult:
     stop_loss: Optional[float]
     take_profit: Optional[float]
     expiration_minutes: Optional[int]
-    indicators: Dict[str, float]
+    indicators: Dict[str, Any]
     reason: str
 
     def to_dict(self) -> Dict[str, Any]:
@@ -53,7 +54,7 @@ class StrategyEngine:
         avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
         rs = avg_gain / avg_loss.replace(0, np.nan)
         rsi = 100 - (100 / (1 + rs))
-        return rsi.fillna(50.0)
+        return rsi.mask((avg_loss == 0) & (avg_gain > 0), 100.0).fillna(50.0)
 
     @staticmethod
     def calculate_bollinger_bands(series: pd.Series, period: int = 20, std_dev: float = 2.0):
@@ -78,7 +79,7 @@ class StrategyEngine:
         high_close = (df["high"] - df["close"].shift()).abs()
         low_close = (df["low"] - df["close"].shift()).abs()
         tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-        return tr.rolling(window=period, min_periods=1).mean().bfill().fillna(0.0)
+        return tr.rolling(window=period, min_periods=1).mean().fillna(0.0)
 
     @classmethod
     def enrich_dataframe(cls, df: pd.DataFrame, params: Dict[str, Any]) -> pd.DataFrame:
@@ -97,8 +98,8 @@ class StrategyEngine:
         )
         df["macd"], df["macd_signal"], df["macd_hist"] = cls.calculate_macd(df["close"])
         df["atr"] = cls.calculate_atr(df, 14)
-        df["vol_sma"] = df["volume"].rolling(window=20, min_periods=1).mean().bfill().fillna(1.0)
-        df = df.replace([np.inf, -np.inf], np.nan).bfill().ffill().fillna(0.0)
+        df["vol_sma"] = df["volume"].rolling(window=20, min_periods=1).mean().fillna(1.0)
+        df = df.replace([np.inf, -np.inf], np.nan).ffill().fillna(0.0)
         return df
 
     @classmethod
@@ -112,7 +113,8 @@ class StrategyEngine:
         params: Optional[Dict[str, Any]] = None,
     ) -> SignalResult:
         params = params or {}
-        if len(df) < 35:
+        validate_candles(df)
+        if len(df) < 50:
             return SignalResult(
                 symbol=symbol,
                 market_type=market_type,
@@ -125,7 +127,7 @@ class StrategyEngine:
                 take_profit=None,
                 expiration_minutes=None,
                 indicators={},
-                reason="Aguardando histórico suficiente de candles (mínimo 35).",
+                reason="Aguardando histórico suficiente de candles (mínimo 50 velas fechadas).",
             )
 
         df = cls.enrich_dataframe(df, params)
@@ -135,7 +137,7 @@ class StrategyEngine:
         atr = float(curr["atr"]) if float(curr["atr"]) > 0 else price * 0.0015
 
         # Executa o motor de Machine Learning (Random Forest scikit-learn) nas velas enriquecidas
-        ml_pred = ml_engine.predict_next_candle(df)
+        ml_pred = ml_engine.predict_next_candle(df, context=f"{market_type}:{symbol}:{timeframe}:{params.get('data_source', 'unknown')}")
 
         indicators_snapshot = {
             "price": round(price, 5),
@@ -152,6 +154,7 @@ class StrategyEngine:
             "ml_accuracy": ml_pred["accuracy"],
             "ml_samples": ml_pred["samples"],
             "ml_features": ml_pred["current_features"],
+            "ml_validation": {k: v for k, v in ml_pred.items() if k != "current_features"},
         }
 
         action = "NEUTRAL"
@@ -316,7 +319,7 @@ class StrategyEngine:
             else:
                 reason = (
                     f"Análise Rigorosa: Bandas ({curr['bb_lower']:.5f} - {curr['bb_upper']:.5f}) | "
-                    f"RSI: {curr['rsi']:.1f}. Aguardando setup confirmado de alta precisão."
+                    f"RSI: {curr['rsi']:.1f}. Aguardando critérios técnicos completos."
                 )
 
         # -------------------------------------------------------------------------
@@ -385,14 +388,14 @@ class StrategyEngine:
                 confidence = ml_pred["ml_confidence"]
                 reason = (
                     f"🧠 IA Machine Learning prevê ALTA (CALL ▲) com {p_up}% de probabilidade "
-                    f"(Modelo Random Forest: {ml_pred['samples']} amostras, Acurácia {ml_pred['accuracy']}%)."
+                    f"(Modelo Random Forest: {ml_pred['samples']} amostras, Acurácia temporal {ml_pred['accuracy']}%)."
                 )
             elif ml_pred["ml_action"] == "SELL":
                 action = "SELL"
                 confidence = ml_pred["ml_confidence"]
                 reason = (
                     f"🧠 IA Machine Learning prevê QUEDA (PUT ▼) com {p_down}% de probabilidade "
-                    f"(Modelo Random Forest: {ml_pred['samples']} amostras, Acurácia {ml_pred['accuracy']}%)."
+                    f"(Modelo Random Forest: {ml_pred['samples']} amostras, Acurácia temporal {ml_pred['accuracy']}%)."
                 )
             else:
                 reason = (
@@ -400,32 +403,19 @@ class StrategyEngine:
                     f"(Aguardando vantagem estatística >= 58%)."
                 )
 
-        # -------------------------------------------------------------------------
-        # CAMADA JUIZ DE IA RIGOROSA (Filtro de Machine Learning sobre as Estratégias 1 a 4)
-        # Nunca permite operar contra a direção apontada pela IA Random Forest!
-        # -------------------------------------------------------------------------
-        use_ml_filter = bool(params.get("use_ml_filter", True))
-        if strategy_id != "ml_random_forest" and use_ml_filter and ml_pred["enabled"]:
-            p_up = ml_pred["prob_up"]
-            p_down = ml_pred["prob_down"]
-            if action == "BUY":
-                if p_down >= 53.0:
-                    # A IA aponta vantagem para queda; veta a compra técnica para proteger a assertividade!
-                    action = "NEUTRAL"
-                    confidence = 40.0
-                    reason = f"🛡️ [VETADO PELA IA] Gatilho CALL cancelado pois o Machine Learning indica {p_down}% de probabilidade de queda!"
-                elif p_up >= 55.0:
-                    confidence = min(98.0, confidence + 6.0)
-                    reason += f" | 🧠 Confirmado pela IA ({p_up}% Alta)."
-            elif action == "SELL":
-                if p_up >= 53.0:
-                    # A IA aponta vantagem para alta; veta a venda técnica para proteger a assertividade!
-                    action = "NEUTRAL"
-                    confidence = 40.0
-                    reason = f"🛡️ [VETADO PELA IA] Gatilho PUT cancelado pois o Machine Learning indica {p_up}% de probabilidade de alta!"
-                elif p_down >= 55.0:
-                    confidence = min(98.0, confidence + 6.0)
-                    reason += f" | 🧠 Confirmado pela IA ({p_down}% Queda)."
+        # Model estimates never inflate a heuristic technical score.
+        # Refuse automated signals without independent chronological evidence.
+        if action in ("BUY", "SELL") and bool(params.get("use_ml_filter", True)):
+            directional = ml_pred["prob_up"] if action == "BUY" else ml_pred["prob_down"]
+            if not ml_pred.get("validated") or directional < 60.0:
+                action, confidence = "NEUTRAL", 0.0
+                reason = "Filtro temporal: " + ml_pred["reason"]
+
+        indicators_snapshot["score_kind"] = "technical_confluence_not_win_probability"
+        indicators_snapshot["regime"] = ("TENDÊNCIA" if abs(float(curr["ema_fast"])-float(curr["ema_slow"])) / atr > .7 else "LATERAL")
+        indicators_snapshot["atr_pct"] = round(atr / max(price, 1e-9) * 100, 4)
+        if float(curr["high"])-float(curr["low"]) > atr * 3:
+            action, confidence, reason = "NEUTRAL", 0.0, "Volatilidade extrema: candle acima de 3 ATR."
 
         # Cálculo de Stop Loss, Take Profit (para MT5) ou Expiração (para Safirion OB)
         stop_loss = None

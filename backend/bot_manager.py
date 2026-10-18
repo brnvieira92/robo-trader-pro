@@ -1,23 +1,20 @@
-"""
-Orquestrador Central (BotManager) e Motor Inteligente de Gestão de Banca & Martingale IA (v4.5).
-Destaques:
-1. Gestão Inteligente de Banca (Smart AI Bankroll):
-   - Piso mínimo obrigatório de R$ 5,00 na Safirion.
-   - Escalonamento dinâmico (1x, 2x, 3x, 4x) baseado em Critério de Kelly Fracionado + Soros + Confluência da IA (RandomForest).
-   - Martingale Seletivo IA: calcula a recuperação exata da perda no campo "Invest (R$)" da Safirion somente quando o sinal tem alta probabilidade e respeita a trava de segurança da banca.
-2. Aciona automaticamente o clique em "+ NOVA OPÇÃO" e reseta o campo "Invest (R$)" para o valor base assim que um ciclo de Gale é vencido.
+"""Paper research orchestration, risk gates and auditable virtual settlements.
+Live market feeds may inform research; this manager never sends broker orders.
 """
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 import math
-import random
+import uuid
+import pandas as pd
+from backend.config import TradingConfig
+from backend.journal import PaperJournal
+from backend.market_data import validate_candles
 
 from backend.strategies import StrategyEngine, SignalResult
 from backend.mt5_connector import MT5Connector
 from backend.safirion_connector import SafirionConnector
-from backend.ml_engine import ml_engine
 
 
 class BotManager:
@@ -28,35 +25,12 @@ class BotManager:
         self.mt5.connect(use_simulation_if_unavailable=True)
 
         self.is_running = False
-        self.config: Dict[str, Any] = {
-            "market_type": "SAFIRION_OB",  # "SAFIRION_OB", "MT5_B3", "MT5_FOREX"
-            "safirion_sub_type": "BINARY",  # "BINARY", "DIGITAL", "BLITZ"
-            "symbol": "EURUSD",
-            "timeframe": "M1",
-            "strategy_id": "bollinger_rsi_reversal",
-            "min_confidence": 78.0,
-            "entry_amount": 5.0,  # Mínimo R$ 5,00 na Safirion
-            "bankroll_mode": "SMART_AI",  # "SMART_AI", "SOROS", "PERCENT", "FIXED"
-            "expiration_minutes": 1,
-            "stop_gain": 500.0,
-            "stop_loss": 250.0,
-            "use_martingale": True,
-            "martingale_factor": 2.0,
-            "max_martingale_steps": 2,
-            "cooldown_seconds": 15,
-            "strategy_params": {
-                "ema_fast": 9,
-                "ema_slow": 21,
-                "rsi_period": 14,
-                "rsi_oversold": 35,
-                "rsi_overbought": 65,
-                "bb_period": 20,
-                "bb_std": 2.0,
-                "lookback_candles": 10,
-                "sl_atr_mult": 1.5,
-                "tp_atr_mult": 2.5,
-            },
-        }
+        self.journal = PaperJournal()
+        self.config = TradingConfig.model_validate(self.journal.load_config() or {}).model_dump()
+        self._session_day = datetime.now(timezone.utc).date().isoformat()
+        self._order_lock = asyncio.Lock()
+        self._last_signal_bar = None
+        self._settlement_tasks = set()
 
         self.stats: Dict[str, Any] = {
             "daily_pnl": 0.0,
@@ -83,10 +57,31 @@ class BotManager:
         self._last_loss_action: Optional[str] = None
         self._has_open_trade: bool = False
 
-        self.add_log(
-            "INFO",
-            "ProspeTraderBot v4.7 inicializado (Modo Analítico Rigoroso + Gestão Conservadora IA + Auto Nova Opção).",
-        )
+        # Restarts retain session risk and never turn pending paper trades into wins.
+        self.trade_history = self.journal.today()
+        for trade in self.trade_history:
+            if trade['status'] == 'OPEN':
+                trade.update(status='INTERRUPTED', pnl=-float(trade['amount']), remaining_sec=0,
+                             settlement_note='Simulação interrompida: reserva de risco integral debitada; não é resultado de mercado.')
+                self.journal.save(trade)
+        self._refresh_stats()
+        self._last_signal_bar = self.trade_history[0].get('bar_time') if self.trade_history else None
+        self._last_trade_timestamp = max((t.get('settled_at', t.get('created_at', 0)) for t in self.trade_history), default=0)
+        self.add_log("INFO", "Modo PAPER: ordens virtuais, sem envio à corretora. Resultados não comprovam rentabilidade real.")
+
+    def _refresh_stats(self):
+        settled = [t for t in self.trade_history if t['status'] != 'OPEN']
+        self.stats['daily_pnl'] = round(sum(t['pnl'] for t in settled), 2)
+        self.stats['wins'] = sum(t['status'] == 'WIN' for t in settled)
+        self.stats['losses'] = sum(t['status'] in ('LOSS', 'INTERRUPTED') for t in settled)
+        self.stats['total_trades'] = len(settled)
+        self.stats['win_rate'] = round(100 * self.stats['wins'] / len(settled), 1) if settled else 0
+        streak = 0
+        for t in settled:
+            if t['status'] not in ('LOSS', 'INTERRUPTED'):
+                break
+            streak += 1
+        self.stats['loss_streak'] = streak
 
     def add_log(self, level: str, message: str):
         entry = {
@@ -98,148 +93,72 @@ class BotManager:
         self.logs = self.logs[:80]
 
     def update_config(self, new_cfg: Dict[str, Any]) -> Dict[str, Any]:
-        old_tf = self.config.get("timeframe")
-        if "custom_balance" in new_cfg:
-            try:
-                cb = float(new_cfg["custom_balance"])
-                if cb >= 5.0:
-                    self.safirion.balance = round(cb, 2)
-            except Exception:
-                pass
-
-        for k, v in new_cfg.items():
-            if k == "strategy_params" and isinstance(v, dict):
-                self.config["strategy_params"].update(v)
-            elif k in self.config:
-                self.config[k] = v
-
-        # Garante piso mínimo de R$ 5,00 na Safirion
-        if self.config["market_type"] == "SAFIRION_OB":
-            self.config["entry_amount"] = max(5.0, float(self.config.get("entry_amount", 5.0)))
-
-        if self.config.get("timeframe") != old_tf:
+        if self.is_running or self._has_open_trade:
+            raise ValueError("Pause o robô e aguarde a operação encerrar antes de alterar parâmetros.")
+        payload = dict(new_cfg)
+        # Legacy dashboard balance is virtual only, never a broker balance override.
+        if 'custom_balance' in payload:
+            payload['paper_balance'] = payload.pop('custom_balance')
+        merged = {**self.config, **payload}
+        if 'strategy_params' in payload:
+            merged['strategy_params'] = {**self.config['strategy_params'], **payload['strategy_params']}
+        validated = TradingConfig.model_validate(merged).model_dump()
+        if self.trade_history and validated['paper_balance'] != self.config['paper_balance']:
+            raise ValueError("Banca inicial não pode mudar após a primeira operação da sessão.")
+        changed_stream = any(validated[k] != self.config[k] for k in ('symbol', 'timeframe', 'market_type'))
+        self.journal.save_config(validated)
+        self.config = validated
+        if changed_stream:
             self.safirion.reset_candles()
-
-        self.add_log(
-            "CONFIG",
-            f"Config: {self.config['market_type']} | {self.config['symbol']} ({self.config['timeframe']}) | Gestão: {self.config['bankroll_mode']} | Base: R$ {self.config['entry_amount']:.2f}",
-        )
+            self._last_signal_bar = None
+        self.add_log("CONFIG", f"Parâmetros validados: {self.config['symbol']} / {self.config['timeframe']} / PAPER")
         return self.config
 
-    def _calculate_smart_entry_amount(self, signal: Optional[Dict[str, Any]]) -> tuple[float, str]:
-        """
-        Motor Analítico e Conservador de Gestão de Banca:
-        - Valor base padrão na Safirion: R$ 5,00 (ou o valor definido em entry_amount).
-        - Quando em recuperação (Martingale): calcula a recuperação exata da perda do ciclo no campo "Invest",
-          respeitando a trava máxima de proteção de banca.
-        - Quando sem perdas pendentes (Gale 0): mantém a mão base segura de R$ 5,00 por padrão e só dobra/triplica/quadruplica
-          quando a sessão está positiva (lucro acumulado > 0), com sequência real de vitórias (Win Streak >= 2) e alta confirmação da IA.
-        """
-        market_type = self.config["market_type"]
-        base_amount = max(5.0, float(self.config.get("entry_amount", 5.0))) if market_type == "SAFIRION_OB" else float(self.config.get("entry_amount", 1.0))
-        if market_type != "SAFIRION_OB":
-            return base_amount, f"Lote MT5 ({base_amount})"
+    def _calculate_smart_entry_amount(self, signal=None):
+        balance = max(0.0, self.config['paper_balance'] + self.stats['daily_pnl'])
+        cap = min(balance * self.config['risk_per_trade_pct'] / 100,
+                  max(0.0, self.config['stop_loss'] + self.stats['daily_pnl']))
+        amount = balance * self.config['risk_per_trade_pct'] / 100 if self.config['bankroll_mode'] == 'PERCENT' else self.config['entry_amount']
+        amount = math.floor(min(amount, cap) * 100) / 100
+        minimum = 5 if self.config['market_type'] == 'SAFIRION_OB' else 1
+        if amount < minimum:
+            return 0.0, "Bloqueado: mínimo excede o orçamento de risco."
+        return amount, f"PAPER R$ {amount:.2f} • limite {self.config['risk_per_trade_pct']}% da banca • sem progressão"
 
-        banca = max(5.0, float(self.safirion.balance))
-        mode = self.config.get("bankroll_mode", "SMART_AI")
-        gale_step = int(self.stats.get("current_gale_step", 0))
-        use_gale = bool(self.config.get("use_martingale", True))
-        gale_factor = max(1.2, float(self.config.get("martingale_factor", 2.0)))
-        payout_ratio = max(0.70, float(self.safirion.payout_pct) / 100.0)  # 0.89
-
-        conf = float((signal or {}).get("confidence", 78.0))
-        ind = (signal or {}).get("indicators") or {}
-        action = (signal or {}).get("action", "HOLD")
-        ml_prob = float(ind.get("ml_prob_up", 50.0) if action == "BUY" else ind.get("ml_prob_down", 50.0))
-
-        # Limite máximo seguro por operação (não ultrapassa Stop Loss restante nem 25% da banca)
-        remaining_sl = max(5.0, float(self.config.get("stop_loss", 250.0)) + float(self.stats.get("daily_pnl", 0.0)))
-        max_safe_stake = max(5.0, min(banca * 0.25, remaining_sl))
-
-        # 1. MODO RECUPERAÇÃO (MARTINGALE INTELIGENTE)
-        if use_gale and gale_step > 0:
-            loss_accum = float(self.stats.get("cycle_loss_accumulated", base_amount))
-            by_factor = round(base_amount * (gale_factor ** gale_step))
-            by_exact_recovery = math.ceil((loss_accum * 1.12) / payout_ratio)
-            raw_gale_amount = float(max(by_factor, by_exact_recovery))
-
-            # Se o Gale estourar a proteção de banca, aborta o Gale para proteger a conta!
-            if raw_gale_amount > max_safe_stake or raw_gale_amount > banca:
-                self.stats["current_gale_step"] = 0
-                self.stats["cycle_loss_accumulated"] = 0.0
-                return base_amount, f"Proteção de Banca (Gale abortado p/ preservar R$ {banca:.2f})"
-
-            final_gale = max(5.0, float(round(raw_gale_amount)))
-            return final_gale, f"Recuperação Gale {gale_step} (R$ {final_gale:.0f} p/ recuperar R$ {loss_accum:.0f})"
-
-        # 2. MODO MÃO FIXA
-        if mode == "FIXED":
-            return base_amount, f"Mão Fixa (R$ {base_amount:.0f})"
-
-        # 3. MODO SOROS NÍVEL 1 (Reinveste o lucro da vitória anterior)
-        if mode == "SOROS":
-            win_streak = int(self.stats.get("win_streak", 0))
-            last_profit = float(self.stats.get("last_win_profit", 0.0))
-            if win_streak == 1 and last_profit > 0:
-                soros_amt = max(5.0, float(round(base_amount + last_profit)))
-                if soros_amt <= max_safe_stake:
-                    return soros_amt, f"Soros Nível 1 (Base R$ {base_amount:.0f} + Lucro R$ {last_profit:.0f} = R$ {soros_amt:.0f})"
-            return base_amount, f"Mão Base Soros (R$ {base_amount:.0f})"
-
-        # 4. MODO % DA BANCA (Juros Compostos)
-        if mode == "PERCENT":
-            pct_amt = max(5.0, float(round(banca * 0.025)))
-            pct_amt = min(pct_amt, max_safe_stake)
-            return pct_amt, f"2.5% da Banca (R$ {pct_amt:.0f} sobre R$ {banca:.2f})"
-
-        # 5. MODO SMART_AI CONSERVADOR (Só aumenta a mão com lucro acumulado + sequência de vitórias + IA forte)
-        win_streak = int(self.stats.get("win_streak", 0))
-        daily_pnl = float(self.stats.get("daily_pnl", 0.0))
-
-        smart_unit = base_amount
-        mult = 1
-        reason_label = f"1x Base Segura IA (R$ {smart_unit:.0f})"
-
-        # Quadruplicar (4x): exige sessão no lucro, 4+ vitórias seguidas, Confiança >= 92% e IA >= 66%
-        if (
-            daily_pnl >= 15.0
-            and win_streak >= 4
-            and conf >= 92.0
-            and ml_prob >= 66.0
-            and (smart_unit * 4) <= banca * 0.12
-            and (smart_unit * 4) <= max_safe_stake
-        ):
-            mult = 4
-            reason_label = f"4x Quadruplicado IA (Streak {win_streak} + Confluência {conf:.0f}%)"
-
-        # Triplicar (3x): exige sessão no lucro, 3+ vitórias seguidas, Confiança >= 89% e IA >= 63%
-        elif (
-            daily_pnl >= 10.0
-            and win_streak >= 3
-            and conf >= 89.0
-            and ml_prob >= 63.0
-            and (smart_unit * 3) <= banca * 0.10
-            and (smart_unit * 3) <= max_safe_stake
-        ):
-            mult = 3
-            reason_label = f"3x Triplicado IA (Streak {win_streak} + Confluência {conf:.0f}%)"
-
-        # Dobrar (2x): exige sessão no lucro, 2+ vitórias seguidas, Confiança >= 86% e IA >= 60%
-        elif (
-            daily_pnl >= 4.0
-            and win_streak >= 2
-            and conf >= 86.0
-            and ml_prob >= 60.0
-            and (smart_unit * 2) <= banca * 0.08
-            and (smart_unit * 2) <= max_safe_stake
-        ):
-            mult = 2
-            reason_label = f"2x Dobrado IA (Streak {win_streak} + Confluência {conf:.0f}%)"
-
-        final_amount = max(5.0, float(round(smart_unit * mult)))
-        return final_amount, reason_label
+    def _risk_block(self, signal=None, manual=False):
+        if self._has_open_trade:
+            return "Já existe uma operação em andamento."
+        if self.stats['daily_pnl'] <= -self.config['stop_loss']:
+            return "Stop loss da sessão atingido."
+        if self.stats['daily_pnl'] >= self.config['stop_gain']:
+            return "Stop gain da sessão atingido."
+        if self.stats['loss_streak'] >= self.config['max_consecutive_losses']:
+            return "Limite de perdas consecutivas atingido."
+        if len(self.trade_history) >= self.config['max_daily_trades']:
+            return "Limite de operações da sessão atingido."
+        if datetime.now().timestamp()-self._last_trade_timestamp < self.config['cooldown_seconds']:
+            return "Intervalo mínimo entre operações ainda não cumprido."
+        amount, reason = self._calculate_smart_entry_amount(signal)
+        if amount <= 0:
+            return reason
+        if not manual and signal:
+            if signal['action'] not in ('BUY', 'SELL') or signal['confidence'] < self.config['min_confidence']:
+                return "Sem confluência técnica suficiente."
+            if signal.get('bar_time') == self._last_signal_bar:
+                return "Este candle já originou uma operação."
+            validation = signal.get('indicators', {}).get('ml_validation', {})
+            if self.config['strategy_params']['use_ml_filter'] and not validation.get('validated'):
+                return "IA sem vantagem demonstrada na validação temporal."
+        return None
 
     def get_market_snapshot(self) -> Dict[str, Any]:
+        day = datetime.now(timezone.utc).date().isoformat()
+        if day != self._session_day and not self._has_open_trade:
+            self._session_day = day
+            self.trade_history = self.journal.today()
+            self._refresh_stats()
+            self._last_signal_bar = None
+            self.add_log('INFO', 'Nova sessão PAPER (dia UTC); diário anterior preservado no SQLite.')
         symbol = self.config["symbol"]
         timeframe = self.config["timeframe"]
         market_type = self.config["market_type"]
@@ -250,14 +169,31 @@ class BotManager:
             if market_type == "SAFIRION_OB"
             else None
         )
-        if saf_live_df is not None and len(saf_live_df) >= 35:
-            df = saf_live_df
+        live_safirion = market_type == 'SAFIRION_OB' and (self.safirion.bridge_ws is not None or bool(self.safirion._live_candles))
+        if live_safirion:
+            df = saf_live_df if saf_live_df is not None else pd.DataFrame(columns=['time','open','high','low','close','volume'])
+            source = 'SAFIRION_LIVE'
         else:
-            df = self.mt5.get_candles(symbol, timeframe, count=90)
+            df = self.mt5.get_candles(symbol, timeframe, count=240)
+            source = 'SIMULATED' if self.mt5.simulation_mode else 'MT5_LIVE'
+        validate_candles(df)
+        # The last candle is forming, so neither its signal nor label is usable.
+        closed = df.iloc[:-1].copy()
+        if df.empty:
+            df = pd.DataFrame(columns=['time','open','high','low','close','volume'])
+            closed = df.copy()
 
+        # A market gap invalidates the old prefix, not every future candle.
+        dropped_gap_candles = 0
+        if len(closed) > 1:
+            expected = self.mt5.TIMEFRAME_MAP.get(timeframe, 1)*60
+            gaps = closed['time'].diff().dt.total_seconds().iloc[1:] != expected
+            if gaps.any():
+                dropped_gap_candles = int(gaps.to_numpy().nonzero()[0][-1]) + 1
+                closed = closed.iloc[dropped_gap_candles:].copy()
         enriched = StrategyEngine.enrich_dataframe(df, self.config["strategy_params"])
         signal: SignalResult = StrategyEngine.analyze(
-            df=df,
+            df=closed,
             symbol=symbol,
             market_type=market_type,
             timeframe=timeframe,
@@ -265,10 +201,21 @@ class BotManager:
             params={
                 **self.config["strategy_params"],
                 "expiration_minutes": self.config["expiration_minutes"],
+                "data_source": source,
             },
         )
         self.last_signal = signal.to_dict()
+        self.last_signal['bar_time'] = str(closed.iloc[-1]['time']) if len(closed) else None
+        self.last_signal['price'] = float(df.iloc[-1]['close']) if len(df) else 0.0
+        tick_age = max(0, datetime.now().timestamp()-self.safirion.last_tick_timestamp) if live_safirion else None
+        if live_safirion and (tick_age is None or tick_age > self.config['max_tick_age_seconds']):
+            self.last_signal.update(action='NEUTRAL', confidence=0, reason='Dados Safirion desatualizados: aguardando cotação válida.')
+        data_quality = dict(source=source, closed_candles=len(closed), tick_age_seconds=round(tick_age, 1) if tick_age is not None else None, symbol_verified=(not live_safirion or self.safirion.symbol == symbol.upper().replace('/', '').replace('-', '')),
+                            forming_candle_excluded=True, dropped_gap_candles=dropped_gap_candles, synthetic=source == 'SIMULATED')
 
+
+        if not data_quality['symbol_verified']:
+            self.last_signal.update(action='NEUTRAL', confidence=0, reason='Ativo da ponte não corresponde ao ativo selecionado.')
         # Atualiza sugestão de lote em tempo real pela Gestão de Banca IA
         suggested_amt, sizing_reason = self._calculate_smart_entry_amount(self.last_signal)
         self.stats["next_suggested_amount"] = suggested_amt
@@ -293,6 +240,12 @@ class BotManager:
             )
 
         return {
+            "execution_mode": "PAPER",
+            "paper_balance": round(self.config['paper_balance'] + self.stats['daily_pnl'], 2),
+            "data_quality": data_quality,
+            "risk": {"blocked_reason": self._risk_block(self.last_signal), "max_risk_pct": self.config['risk_per_trade_pct'],
+                     "remaining_loss_budget": max(0, self.config['stop_loss']+self.stats['daily_pnl']),
+                     "next_amount": suggested_amt},
             "is_running": self.is_running,
             "config": self.config,
             "stats": self.stats,
@@ -348,296 +301,112 @@ class BotManager:
         return target_dt, remaining_sec
 
     async def execute_trade_from_signal(self, signal: Dict[str, Any], manual: bool = False) -> Dict[str, Any]:
-        action = signal["action"]
-        if action not in ("BUY", "SELL"):
-            return {"success": False, "message": "Sinal neutro, nenhuma ordem enviada."}
-
-        if self._has_open_trade and not manual:
-            return {"success": False, "message": "Já existe uma operação em andamento. Aguardando fechamento."}
-
-        symbol = self.config["symbol"]
-        market_type = self.config["market_type"]
-
-        # Calcula o valor inteligente da entrada (1x a 4x ou Recuperação de Martingale)
-        trade_amount, sizing_reason = self._calculate_smart_entry_amount(signal)
-        gale_step = int(self.stats.get("current_gale_step", 0))
-
-        real_entry_price = (
-            float(self.safirion.last_live_price)
-            if (market_type == "SAFIRION_OB" and self.safirion.last_live_price is not None)
-            else float(signal["price"])
-        )
-
-        if market_type == "SAFIRION_OB":
-            res = await self.safirion.execute_binary_order(
-                symbol=symbol,
-                direction=action,
-                amount=trade_amount,
-                expiration_minutes=int(self.config["expiration_minutes"]),
-                entry_price=real_entry_price,
-                sub_type=self.config.get("safirion_sub_type", "BINARY"),
-            )
-        else:
-            res = self.mt5.execute_order(
-                symbol=symbol,
-                action=action,
-                volume=trade_amount,
-                stop_loss=signal.get("stop_loss"),
-                take_profit=signal.get("take_profit"),
-            )
-
-        if res.get("success"):
-            target_dt, duration_sec = self._calculate_target_expiration_time()
-            target_time_str = target_dt.strftime("%H:%M:%S")
+        async with self._order_lock:
+            if signal.get('action') not in ('BUY', 'SELL'):
+                return {"success": False, "message": "Direção inválida ou neutra."}
+            blocked = self._risk_block(signal, manual)
+            if blocked:
+                return {"success": False, "message": blocked}
+            snapshot = self.get_market_snapshot()
+            quality = snapshot['data_quality']
+            if quality['source'] == 'SAFIRION_LIVE':
+                if not quality['symbol_verified'] or quality['closed_candles'] < 50 or quality['tick_age_seconds'] > self.config['max_tick_age_seconds']:
+                    return {"success": False, "message": "Histórico real insuficiente ou cotação desatualizada."}
+            price = snapshot['signal']['price']
+            if not math.isfinite(price) or price <= 0:
+                return {"success": False, "message": "Preço inválido."}
+            amount, sizing = self._calculate_smart_entry_amount(signal)
+            target_dt, duration = self._calculate_target_expiration_time()
+            trade = dict(id='PAPER-'+uuid.uuid4().hex, day=datetime.now(timezone.utc).date().isoformat(),
+                         time=datetime.now().strftime('%H:%M:%S'), created_at=datetime.now().timestamp(), expiration_time=target_dt.strftime('%H:%M:%S'),
+                         symbol=self.config['symbol'], market=self.config['market_type'], action=signal['action'],
+                         amount=amount, sizing_reason=sizing, entry_price=price, confidence=signal['confidence'],
+                         strategy=self.config['strategy_id'], status='OPEN', remaining_sec=duration, pnl=0.0,
+                         mode='PAPER', source=quality['source'], timeframe=self.config['timeframe'],
+                         payout_pct=self.config['payout_pct'], stop_loss=signal.get('stop_loss'),
+                         take_profit=signal.get('take_profit'), bar_time=signal.get('bar_time'),
+                         validation=signal.get('indicators', {}).get('ml_validation', {}))
+            self.journal.save(trade)
             self._has_open_trade = True
             self._last_trade_timestamp = datetime.now().timestamp()
-            balance_before = float(self.safirion.balance)
+            self._last_signal_bar = signal.get('bar_time')
+            self.trade_history.insert(0, trade)
+            task = asyncio.create_task(self._settle_trade_after_real_expiration(trade, target_dt))
+            self._settlement_tasks.add(task)
+            task.add_done_callback(self._settlement_tasks.discard)
+            self.add_log('TRADE', f"PAPER {trade['action']} {trade['symbol']} • R$ {amount:.2f} • {quality['source']}")
+            return dict(success=True, ticket=trade['id'], mode='PAPER', message='Ordem virtual registrada; nenhum envio à corretora.')
 
-            trade_record = {
-                "id": res.get("ticket", f"TRD-{random.randint(1000,9999)}"),
-                "time": datetime.now().strftime("%H:%M:%S"),
-                "expiration_time": target_time_str,
-                "symbol": symbol,
-                "market": market_type,
-                "action": "CALL" if (market_type == "SAFIRION_OB" and action == "BUY") else (
-                    "PUT" if (market_type == "SAFIRION_OB" and action == "SELL") else action
-                ),
-                "amount": trade_amount,
-                "sizing_reason": sizing_reason,
-                "entry_price": round(real_entry_price, 5),
-                "confidence": signal["confidence"],
-                "strategy": self.config["strategy_id"],
-                "status": "OPEN",
-                "remaining_sec": duration_sec,
-                "pnl": 0.0,
-                "gale_step": gale_step,
-                "balance_before": balance_before,
-                "ml_features": (signal.get("indicators") or {}).get("ml_features", []),
-            }
-            self.trade_history.insert(0, trade_record)
-            origin_tag = "MANUAL" if manual else "AUTO"
-            self.add_log(
-                "TRADE",
-                f"[{origin_tag}] {res.get('message')} | Gestão: {sizing_reason} -> Expira às {target_time_str}",
-            )
-
-            asyncio.create_task(self._settle_trade_after_real_expiration(trade_record, target_dt))
-
-        return res
-
-    async def _settle_trade_after_real_expiration(self, trade_record: Dict[str, Any], target_dt: datetime):
+    async def _settle_trade_after_real_expiration(self, trade, target_dt):
         try:
-            while True:
-                now = datetime.now()
-                rem = int(round((target_dt - now).total_seconds()))
-                if rem <= 0:
-                    break
-                trade_record["remaining_sec"] = rem
-                self.stats["open_trade_remaining_sec"] = rem
-                if self.is_running:
-                    self.stats["status_reason"] = (
-                        f"Operação {trade_record['action']} de R$ {trade_record['amount']:.0f} (@ {trade_record['entry_price']:.5f}) "
-                        f"— Fecha às {trade_record['expiration_time']} (faltam {rem}s)..."
-                    )
-                await asyncio.sleep(0.5)
-
-            # Aguarda 1.2s após bater :00 para apurar o fechamento exato e acionar "+ NOVA OPÇÃO"
-            await asyncio.sleep(1.2)
-
-            if trade_record["market"] == "SAFIRION_OB":
-                await self.safirion.unlock_new_option()
-
-            trade_record["remaining_sec"] = 0
-            self.stats["open_trade_remaining_sec"] = 0
+            while datetime.now() < target_dt:
+                trade['remaining_sec'] = max(0, int((target_dt-datetime.now()).total_seconds()))
+                self.stats['open_trade_remaining_sec'] = trade['remaining_sec']
+                await asyncio.sleep(.5)
+            if trade['source'] == 'SAFIRION_LIVE':
+                if self.safirion.symbol != trade['symbol'].upper().replace('/', '').replace('-', ''):
+                    raise ValueError('Ativo da ponte mudou durante a operação.')
+                age = datetime.now().timestamp()-self.safirion.last_tick_timestamp
+                if self.safirion.bridge_ws is None or age > self.config['max_tick_age_seconds']:
+                    raise ValueError('Cotação real indisponível ao encerrar a simulação.')
+                close_price = self.safirion.last_live_price
+            else:
+                if ('SIMULATED' if self.mt5.simulation_mode else 'MT5_LIVE') != trade['source']:
+                    raise ValueError('Fonte de dados mudou durante a operação.')
+                close_price = float(self.mt5.get_candles(trade['symbol'], trade['timeframe'], count=240)['close'].iloc[-1])
+            change = close_price-trade['entry_price']
+            direction = 1 if trade['action'] == 'BUY' else -1
+            if trade['market'] == 'SAFIRION_OB':
+                pnl = 0 if change == 0 else (trade['amount']*trade['payout_pct']/100 if change*direction>0 else -trade['amount'])
+                note = 'PAPER: payout configurado, empate devolve a entrada; sem confirmação da corretora.'
+            else:
+                # Virtual unlevered notional, not MT5 lots or a made-up fixed win.
+                pnl = trade['amount'] * change / trade['entry_price'] * direction
+                note = 'PAPER: retorno sobre valor nominal, sem alavancagem, custos ou execução de stops; não representa lotes MT5.'
+            trade.update(status='WIN' if pnl>0 else ('LOSS' if pnl<0 else 'DRAW'),
+                         exit_price=close_price, pnl=round(pnl, 6), settlement_note=note)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            trade.update(status='INTERRUPTED', pnl=-trade['amount'],
+                         settlement_note=f'Sem resultado verificável: reserva de risco debitada na simulação. {exc}')
+            self.is_running = False
+            self.add_log('ERROR', trade['settlement_note'])
+        finally:
+            # Cancellation leaves OPEN persisted for conservative recovery on restart.
+            if trade['status'] != 'OPEN':
+                trade['settled_at'] = datetime.now().timestamp()
+            trade['remaining_sec'] = 0
+            self.journal.save(trade)
+            self._refresh_stats()
+            self.stats['open_trade_remaining_sec'] = 0
             self._has_open_trade = False
             self._last_trade_timestamp = datetime.now().timestamp()
+            self.add_log('INFO', f"PAPER {trade['id'][:14]}: {trade['status']} • R$ {trade['pnl']:.2f}")
 
-            if trade_record["status"] != "OPEN":
-                return
-
-            if trade_record["market"] == "SAFIRION_OB" and self.safirion.last_live_price is not None:
-                close_price = float(self.safirion.last_live_price)
-            else:
-                df = self.mt5.get_candles(trade_record["symbol"], self.config["timeframe"], count=5)
-                close_price = float(df["close"].iloc[-1])
-
-            entry_price = float(trade_record["entry_price"])
-            is_buy = trade_record["action"] in ("BUY", "CALL")
-
-            bal_before = float(trade_record.get("balance_before", 0.0))
-            bal_now = float(self.safirion.balance)
-            if trade_record["market"] == "SAFIRION_OB" and bal_before > 0 and abs(bal_now - bal_before) >= 0.50:
-                win = bal_now > bal_before
-            else:
-                win = (close_price > entry_price) if is_buy else (close_price < entry_price)
-
-            ml_engine.record_trade_feedback(
-                features=trade_record.get("ml_features", []),
-                action=trade_record["action"],
-                won=win,
-            )
-
-            if trade_record["market"] == "SAFIRION_OB":
-                payout = self.safirion.payout_pct / 100.0  # 89%
-                pnl = round(trade_record["amount"] * payout, 2) if win else -round(trade_record["amount"], 2)
-                if abs(bal_now - bal_before) < 0.50:
-                    self.safirion.balance = round(max(0.0, self.safirion.balance + pnl), 2)
-            else:
-                base_val = max(25.0, trade_record["amount"] * 40.0)
-                pnl = round(base_val * 1.4, 2) if win else -round(base_val, 2)
-
-            trade_record["status"] = "WIN" if win else "LOSS"
-            trade_record["exit_price"] = round(close_price, 5)
-            trade_record["pnl"] = pnl
-
-            self.stats["total_trades"] += 1
-            self.stats["daily_pnl"] = round(self.stats["daily_pnl"] + pnl, 2)
-
-            if win:
-                self.stats["wins"] += 1
-                self.stats["win_streak"] = int(self.stats.get("win_streak", 0)) + 1
-                self.stats["loss_streak"] = 0
-                self.stats["current_gale_step"] = 0
-                self.stats["cycle_loss_accumulated"] = 0.0
-                self.stats["last_win_profit"] = pnl
-                self._last_loss_action = None
-                self._last_loss_timestamp = 0.0
-
-                self.add_log(
-                    "WIN",
-                    f"GAIN REAL em {trade_record['symbol']} ({trade_record['action']})! R$ {trade_record['amount']:.0f} -> +R$ {pnl:.2f} | Banca: R$ {self.safirion.balance:.2f}",
-                )
-            else:
-                self.stats["losses"] += 1
-                self.stats["loss_streak"] = int(self.stats.get("loss_streak", 0)) + 1
-                self.stats["win_streak"] = 0
-                self.stats["last_win_profit"] = 0.0
-                self._last_loss_action = "BUY" if trade_record["action"] in ("BUY", "CALL") else "SELL"
-                self._last_loss_timestamp = datetime.now().timestamp()
-                self.stats["cycle_loss_accumulated"] = round(
-                    float(self.stats.get("cycle_loss_accumulated", 0.0)) + float(trade_record["amount"]), 2
-                )
-
-                if (
-                    self.config["use_martingale"]
-                    and self.stats["current_gale_step"] < int(self.config["max_martingale_steps"])
-                ):
-                    self.stats["current_gale_step"] += 1
-                else:
-                    self.stats["current_gale_step"] = 0
-                    self.stats["cycle_loss_accumulated"] = 0.0
-
-                self.add_log(
-                    "LOSS",
-                    f"LOSS REAL em {trade_record['symbol']} ({trade_record['action']})! -R$ {abs(pnl):.2f} | Banca: R$ {self.safirion.balance:.2f} (Próx Gale: {self.stats['current_gale_step']})",
-                )
-
-            # Pré-ajusta o campo "Invest (R$)" da Safirion imediatamente após abrir a Nova Opção,
-            # para que no próximo sinal o clique em CALL/PUT seja instantâneo (0ms de atraso)!
-            if trade_record["market"] == "SAFIRION_OB":
-                next_amt, _ = self._calculate_smart_entry_amount(self.last_signal)
-                await asyncio.sleep(0.55)
-                await self.safirion.set_investment_amount(next_amt)
-
-            total = self.stats["total_trades"]
-            self.stats["win_rate"] = round((self.stats["wins"] / total) * 100.0, 1) if total > 0 else 0.0
-
-            if self.stats["daily_pnl"] >= float(self.config["stop_gain"]):
-                self.is_running = False
-                self.stats["status_reason"] = f"META BATIDA! Stop Gain atingido (+R$ {self.stats['daily_pnl']:.2f}). Robô pausado."
-                self.add_log("SUCCESS", self.stats["status_reason"])
-            elif self.stats["daily_pnl"] <= -abs(float(self.config["stop_loss"])):
-                self.is_running = False
-                self.stats["status_reason"] = f"STOP LOSS ATINGIDO (R$ {self.stats['daily_pnl']:.2f}). Proteção de banca acionada."
-                self.add_log("ALERT", self.stats["status_reason"])
-        except Exception as exc:
-            self.add_log("ERROR", f"Erro na liquidação da operação (destravando automático): {str(exc)}")
-        finally:
-            trade_record["remaining_sec"] = 0
-            self.stats["open_trade_remaining_sec"] = 0
-            self._has_open_trade = False
+    async def close(self):
+        for task in tuple(self._settlement_tasks):
+            task.cancel()
+        await asyncio.gather(*self._settlement_tasks, return_exceptions=True)
+        await self.safirion.close()
 
     async def run_loop(self):
-        last_resync_attempt_ts = 0.0
         while True:
             try:
-                now_dt = datetime.now()
-                now_ts = now_dt.timestamp()
-
-                # 1. WATCHDOG ANTI-TRAVAMENTO DE OPERAÇÃO:
-                if self._has_open_trade:
-                    max_open_sec = max(1, int(self.config.get("expiration_minutes", 1))) * 60 + 25
-                    if (now_ts - self._last_trade_timestamp) > max_open_sec:
-                        self._has_open_trade = False
-                        self.stats["open_trade_remaining_sec"] = 0
-                        self.add_log("INFO", "🔄 Watchdog destravou operação expirada automaticamente.")
-                        if self.config["market_type"] == "SAFIRION_OB":
-                            await self.safirion.unlock_new_option()
-
-                # 2. ROTINA DE AUTO-SINCRONIZAÇÃO COM A SAFIRION:
-                if (
-                    self.config["market_type"] == "SAFIRION_OB"
-                    and self.safirion.bridge_ws is not None
-                    and self.safirion.last_tick_timestamp > 0
-                    and (now_ts - self.safirion.last_tick_timestamp) >= 14.0
-                    and (now_ts - last_resync_attempt_ts) >= 10.0
-                ):
-                    last_resync_attempt_ts = now_ts
-                    await self.safirion.request_auto_resync()
-                    self.add_log("SAFIRION", "🔄 Auto-Sync acionado para manter sincronia contínua com a Safirion.")
-
                 snapshot = self.get_market_snapshot()
-                signal = snapshot["signal"]
-
-                if self.is_running and signal:
-                    if self._has_open_trade:
-                        await asyncio.sleep(0.6)
-                        continue
-
-                    # Cooldown enxuto (5s) para não atrasar a entrada na vela atual nem perder a janela de :30s!
-                    effective_cooldown = 5.0
-                    in_cooldown = (now_ts - self._last_trade_timestamp) < effective_cooldown
-
-                    # Evita apenas os 4 segundos exatos da virada do relógio de compra da Safirion (:28s a :31s)
-                    sub_type = self.config.get("safirion_sub_type", "BINARY")
-                    in_rollover_boundary = (
-                        self.config["market_type"] == "SAFIRION_OB"
-                        and sub_type != "BLITZ"
-                        and (28 <= now_dt.second <= 31)
-                    )
-
-                    if in_cooldown:
-                        rem = max(1, int(effective_cooldown - (now_ts - self._last_trade_timestamp)))
-                        self.stats["status_reason"] = f"Preparando próxima entrada ({rem}s)..."
-                    elif in_rollover_boundary:
-                        self.stats["status_reason"] = (
-                            f"Sincronizando virada do relógio de expiração ({now_dt.second}s)..."
-                        )
-                    elif (
-                        signal["action"] in ("BUY", "SELL")
-                        and float(signal["confidence"]) >= float(self.config["min_confidence"])
-                    ):
-                        # Bloqueio Anti-Teimosia: se acabou de tomar LOSS na mesma direção há menos de 45s, exige confirmação >= 84%
-                        same_dir_after_loss = (
-                            self._last_loss_action == signal["action"]
-                            and (now_ts - self._last_loss_timestamp) < 45.0
-                        )
-                        if same_dir_after_loss and float(signal["confidence"]) < 84.0:
-                            self.stats["status_reason"] = (
-                                f"🛡️ [PROTEÇÃO ANTI-SEQ] Evitando repetir {signal['action']} após LOSS sem confirmação forte (atual: {signal['confidence']}%)..."
-                            )
-                        elif self.stats["current_gale_step"] > 0 and float(signal["confidence"]) < max(79.0, float(self.config["min_confidence"])):
-                            self.stats["status_reason"] = (
-                                f"Gale {self.stats['current_gale_step']} aguardando gatilho analítico >= 79% (atual: {signal['confidence']}%)..."
-                            )
-                        else:
-                            self.stats["status_reason"] = (
-                                f"⚡ Entrada Imediata ({signal['action']} - {signal['confidence']}%) | {self.stats['sizing_reason']}!"
-                            )
-                            await self.execute_trade_from_signal(signal, manual=False)
+                if self.is_running:
+                    signal = snapshot['signal']
+                    blocked = self._risk_block(signal)
+                    if blocked:
+                        self.stats['status_reason'] = blocked + ' ' + signal['reason']
                     else:
-                        self.stats["status_reason"] = f"Monitorando {self.config['symbol']} ({self.config['timeframe']}): {signal['reason']}"
+                        result = await self.execute_trade_from_signal(signal)
+                        self.stats['status_reason'] = result['message']
+                    if self.stats['daily_pnl'] <= -self.config['stop_loss'] or self.stats['daily_pnl'] >= self.config['stop_gain'] or self.stats['loss_streak'] >= self.config['max_consecutive_losses'] or len(self.trade_history) >= self.config['max_daily_trades']:
+                        self.is_running = False
+                        self.add_log('ALERT', 'Limite de risco da sessão: robô pausado.')
             except Exception as exc:
-                self.add_log("ERROR", f"Erro no ciclo de análise: {str(exc)}")
-
-            await asyncio.sleep(0.6)
+                self.is_running = False
+                self.stats['status_reason'] = 'Análise indisponível: execução pausada.'
+                self.add_log('ERROR', f'Falha de análise: {exc}')
+            await asyncio.sleep(1)

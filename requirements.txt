@@ -2,7 +2,7 @@ fastapi>=0.110.0
 uvicorn[standard]>=0.28.0
 pandas>=2.2.0
 numpy>=1.26.0
-MetaTrader5>=5.0.45
+MetaTrader5>=5.0.45; sys_platform == "win32"
 playwright>=1.42.0
 websockets>=12.0
 pydantic>=2.6.0

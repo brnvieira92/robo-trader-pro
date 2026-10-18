@@ -1,0 +1,11 @@
+{
+  "name": "prospetrader-dashboard",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": { "build": "node build.cjs" },
+  "devDependencies": {
+    "tailwindcss": "3.4.17",
+    "lightweight-charts": "4.1.3",
+    "material-symbols": "0.48.0"
+  }
+}
