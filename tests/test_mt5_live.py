@@ -316,6 +316,8 @@ def test_native_api_round_trip_reports_fill_and_broker_pnl(live_bot,monkeypatch)
     from fastapi.testclient import TestClient
     import backend.main as main
     b,sdk=live_bot
+    # This test isolates transport and reconciliation; structural gates are tested separately.
+    b.update_config({"strategy_params":{"use_structure_stops":False,"use_structure_targets":False}})
     monkeypatch.setattr(main,'bot',b)
     with TestClient(main.app,base_url='http://127.0.0.1:8000') as client:
         response=client.post('/api/order/manual',json={'action':'BUY'})

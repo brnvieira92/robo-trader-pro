@@ -149,7 +149,7 @@
           <div class="audit-heading"><div><span class="eyebrow">ANÁLISE & EXECUÇÃO</span><h1>Decidir também é esperar.</h1><p>Sinais explicáveis, dados identificados e risco limitado antes de cada entrada.</p></div><span id="executionDetailBadge" class="paper-pill">PAPER • SEM ORDENS REAIS</span></div>
           <div class="execution-controls">
             <label>Modo de execução<select id="cfgExecutionMode" onchange="saveConfig()"><option value="PAPER">PAPER — ordens virtuais</option><option value="LIVE_MT5">MT5 — enviar ordens ao terminal conectado</option></select></label>
-            <div><strong id="mt5AccountSummary">MT5 não conectado</strong><p>O modo MT5 envia ordens à conta conectada, inclusive conta real. Selecione MT5 B3/Forex, conecte o terminal e confira conta, servidor e moeda.</p></div>
+            <div><strong id="mt5AccountSummary">MT5 não conectado</strong><p>O modo MT5 envia ordens à conta conectada, inclusive conta real. Selecione MT5 B3/Forex, conecte o terminal e confira conta, servidor e moeda.</p><p id="executionDiagnosis" role="status"></p></div>
             <button onclick="reconcileMt5()" id="btnReconcile">Sincronizar posições MT5</button>
           </div>
           <div class="execution-controls telegram-controls">
@@ -163,7 +163,8 @@
             <article class="audit-card"><span class="eyebrow">04 / DECISÃO ATUAL</span><strong id="decisionGate">Aguardando análise</strong><p id="decisionDetail">O score técnico não é uma probabilidade de acerto.</p></article>
           </div>
           <div class="audit-notice" id="chartAvailability">Resultados PAPER são hipotéticos. O modelo estima direção de uma vela; isso não comprova lucro, nem acerto na expiração da corretora.</div>
-          <details class="research-panel"><summary>Laboratório de estratégia <span>Backtest binário de uma vela com seu CSV</span></summary>
+          <div id="pricePlanPreview" class="price-plan-grid" aria-live="polite"></div>
+          <details class="research-panel"><summary>Laboratório de estratégia <span>Backtest binário de uma vela — não valida SL/TP Forex</span></summary>
             <p>Envie entre 150 e 2.000 velas fechadas e contínuas. Colunas: <code>time,open,high,low,close,volume</code> (time em segundos Unix ou ISO; volume opcional). As últimas até 200 velas serão avaliadas sem usar dados futuros.</p>
             <div class="research-controls"><label>Histórico OHLCV<input id="researchFile" type="file" accept=".csv,text/csv"></label><label>Custo por entrada (R$)<input id="researchCost" type="number" value="0" min="0" step="0.01"></label><button id="researchRun" onclick="runResearch()">Avaliar estratégia selecionada</button></div>
             <p>Usa a estratégia, o score mínimo e o payout salvos. Horizonte fixo de uma vela; custos e payout constantes. Não representa o resultado da conta na corretora.</p>
@@ -402,7 +403,7 @@
                   </div>
                 </div>
                 <div class="flex flex-col gap-space-xs">
-                  <span class="font-label-caps text-[10px] uppercase text-on-surface-variant">Expiração Vela</span>
+                  <span class="font-label-caps text-[10px] uppercase text-on-surface-variant">Expiração binária</span>
                   <div class="flex items-center bg-surface-container-lowest rounded-lg px-space-sm py-1.5 border border-surface-container-high/40">
                     <input id="cfgExpiration" aria-label="Expiração em minutos" type="number" step="1" min="1" max="15" value="1" onchange="saveConfig()" class="w-full bg-transparent text-on-surface font-code-log text-code-log focus:outline-none" />
                     <span class="font-code-log text-[11px] text-on-surface-variant">Min</span>
@@ -456,10 +457,10 @@
               <!-- Stop Gain & Stop Loss -->
               <div class="grid grid-cols-2 gap-space-xs">
                 <div class="flex flex-col gap-1">
-                  <span class="font-label-caps text-[10px] uppercase text-secondary">Stop Gain Diário</span>
+                  <span class="font-label-caps text-[10px] uppercase text-secondary">Meta diária (pausa entradas)</span>
                   <div class="flex items-center bg-surface-container-lowest rounded-lg px-space-sm py-1.5 border border-surface-container-high/40">
-                    <span class="font-code-log text-[11px] text-on-surface-variant mr-1" data-money-prefix>BRL</span>
-                    <input id="cfgStopGain" aria-label="Stop gain da sessão" type="number" step="10" value="500" onchange="saveConfig()" class="w-full bg-transparent text-secondary font-code-log text-code-log font-bold focus:outline-none" />
+                    <span class="font-code-log text-[11px] text-on-surface-variant mr-1" id="goalMoneyPrefix">BRL</span>
+                    <input id="cfgStopGain" aria-label="Meta diária" type="number" step="10" value="150" onchange="saveConfig()" class="w-full bg-transparent text-secondary font-code-log text-code-log font-bold focus:outline-none" />
                   </div>
                 </div>
                 <div class="flex flex-col gap-1">
@@ -478,6 +479,26 @@
                 <label>Intervalo entre entradas (s)<input id="cfgCooldown" type="number" value="60" min="5" max="3600" onchange="saveConfig()"></label>
                 <label>Payout hipotético PAPER (%)<input id="cfgPayout" type="number" value="80" min="1" max="100" onchange="saveConfig()"></label>
               </div>
+              <div class="risk-controls">
+                <label>Moeda da meta diária<select id="cfgGoalCurrency" onchange="saveConfig()"><option value="ACCOUNT">Moeda da conta (PAPER: BRL)</option><option value="BRL">Reais — BRL</option></select></label>
+                <label>Símbolo de câmbio da corretora (opcional)<input id="cfgGoalFx" type="text" placeholder="USDBRL ou USDBRL.s" onchange="saveConfig()"></label>
+                <label>Teto de lucro projetado por entrada (moeda da conta)<input id="cfgProfitCap" type="number" min="0.01" step="0.01" value="15" onchange="saveConfig()"></label>
+                <label>Custo por operação PAPER (BRL virtual)<input id="cfgPaperCost" type="number" min="0" step="0.01" value="0" onchange="saveConfig()"></label>
+              </div>
+              <p id="goalSummary" class="text-xs text-on-surface-variant"></p>
+              <details id="pricePlanSettings" class="mt5-settings"><summary>Plano de saída Forex / B3 por preço</summary>
+                <p>Sem expiração. ATR mede volatilidade; suporte e resistência delimitam o espaço da entrada. O robô descarta planos com retorno/risco insuficiente.</p>
+                <div class="risk-controls">
+                  <label>Stop loss × ATR<input id="cfgSlAtr" type="number" min="0.5" max="5" step="0.1" value="1.5" onchange="saveConfig()"></label>
+                  <label>Take profit × ATR<input id="cfgTpAtr" type="number" min="0.5" max="10" step="0.1" value="2.5" onchange="saveConfig()"></label>
+                  <label>Retorno / risco mínimo (após custos)<input id="cfgMinRR" type="number" min="1" max="5" step="0.1" value="1.5" onchange="saveConfig()"></label>
+                  <label>Estrutura: últimas velas fechadas<input id="cfgStructureBars" type="number" min="5" max="100" value="20" onchange="saveConfig()"></label>
+                  <label><input id="cfgStructureStops" type="checkbox" checked onchange="saveConfig()"> SL além do suporte / resistência</label>
+                  <label><input id="cfgStructureTargets" type="checkbox" checked onchange="saveConfig()"> TP antes do obstáculo</label>
+                </div>
+
+              </details>
+
               <details class="mt5-settings"><summary>Limites específicos do MT5</summary>
                 <p>Valores monetários são na moeda da conta. Entrada = orçamento de risco até o SL, não lotes. Volume é calculado pela especificação do símbolo.</p>
                 <div class="risk-controls">
@@ -486,7 +507,7 @@
                   <label>Teto de volume (lotes/contratos)<input id="cfgMt5VolumeCap" type="number" value="1" min="0.001" step="0.001" onchange="saveConfig()"></label>
                   <label>Reserva para custos (moeda da conta)<input id="cfgMt5Buffer" type="number" value="0" min="0" step="0.01" onchange="saveConfig()"></label>
                 </div>
-                <p>SL/TP são calculados pelo ATR e enviados ao servidor. Gaps, slippage e custos reais podem exceder a estimativa. Sem expiração por cronômetro no MT5.</p>
+                <p>SL/TP combinam ATR e estrutura de preços e são enviados ao servidor no modo LIVE_MT5. Gaps, slippage e custos reais podem exceder a estimativa. Sem expiração por cronômetro no MT5.</p>
               </details>
               <!-- Martingale toggle -->
               <div class="pt-2 border-t border-surface-container-high/30 flex items-center justify-between gap-2">
@@ -894,7 +915,19 @@
         custom_balance: parseFloat(document.getElementById('cfgCustomBalance').value || 1000),
         entry_amount: parseFloat(document.getElementById('cfgEntryAmount').value || 5),
         bankroll_mode: document.getElementById('cfgBankrollMode').value,
-        stop_gain: parseFloat(document.getElementById('cfgStopGain').value || 500),
+        goal_currency: document.getElementById('cfgGoalCurrency').value,
+        goal_fx_symbol: document.getElementById('cfgGoalFx').value.trim(),
+        profit_per_trade_cap: Number(document.getElementById('cfgProfitCap').value),
+        paper_cost_per_trade: Number(document.getElementById('cfgPaperCost').value),
+        strategy_params: {
+          sl_atr_mult: Number(document.getElementById('cfgSlAtr').value),
+          tp_atr_mult: Number(document.getElementById('cfgTpAtr').value),
+          min_reward_risk: Number(document.getElementById('cfgMinRR').value),
+          structure_lookback: Number(document.getElementById('cfgStructureBars').value),
+          use_structure_stops: document.getElementById('cfgStructureStops').checked,
+          use_structure_targets: document.getElementById('cfgStructureTargets').checked,
+        },
+        stop_gain: parseFloat(document.getElementById('cfgStopGain').value || 150),
         stop_loss: parseFloat(document.getElementById('cfgStopLoss').value || 250),
         use_martingale: document.getElementById('cfgUseMartingale').checked,
         martingale_factor: parseFloat(document.getElementById('cfgMartingaleFactor').value || 2.0),
@@ -1039,7 +1072,11 @@
           }
           document.getElementById('cfgUseMartingale').checked = Boolean(state.config.use_martingale);
           document.getElementById('cfgMartingaleFactor').value = state.config.martingale_factor ?? 2.0;
-          document.getElementById('cfgStopGain').value = state.config.stop_gain ?? 500;
+          document.getElementById('cfgStopGain').value = state.config.stop_gain ?? 150;
+          for (const [id,key] of Object.entries({cfgGoalCurrency:'goal_currency',cfgGoalFx:'goal_fx_symbol',cfgProfitCap:'profit_per_trade_cap',cfgPaperCost:'paper_cost_per_trade',cfgExpiration:'expiration_minutes'})) document.getElementById(id).value = state.config[key];
+          for (const [id,key] of Object.entries({cfgSlAtr:'sl_atr_mult',cfgTpAtr:'tp_atr_mult',cfgMinRR:'min_reward_risk',cfgStructureBars:'structure_lookback'})) document.getElementById(id).value = state.config.strategy_params[key];
+          document.getElementById('cfgStructureStops').checked = state.config.strategy_params.use_structure_stops;
+          document.getElementById('cfgStructureTargets').checked = state.config.strategy_params.use_structure_targets;
           document.getElementById('cfgStopLoss').value = state.config.stop_loss ?? 250;
 
           document.getElementById('cfgCustomBalance').value = state.config.paper_balance;
@@ -1109,11 +1146,11 @@
         document.getElementById('kpiPnlBadge').className = `inline-flex items-center px-space-xs py-0.5 rounded-full font-label-caps text-label-caps font-bold ${isPositivePnl ? 'bg-secondary/15 text-secondary' : 'bg-error-container/40 text-tertiary'}`;
         document.getElementById('kpiGale').textContent = state.execution_mode;
 
-        const stopGain = state.config.stop_gain || 500;
+        const stopGain = state.goal.target;
         const stopLoss = state.config.stop_loss || 250;
-        document.getElementById('lblMetaGain').textContent = `Meta Gain: ${formatMoney(stopGain,state.currency)}`;
+        document.getElementById('lblMetaGain').textContent = `Meta diária: ${formatMoney(stopGain,state.goal.currency)}`;
         document.getElementById('lblStopLoss').textContent = `Stop Loss: ${formatMoney(stopLoss,state.currency)}`;
-        const metaProgress = Math.min(100, Math.max(0, (pnl / stopGain) * 100));
+        const metaProgress = Math.min(100, Math.max(0, ((state.goal.realized || 0) / stopGain) * 100));
         document.getElementById('lblMetaPercent').textContent = `${metaProgress.toFixed(1)}%`;
         document.getElementById('barMetaGain').style.width = `${metaProgress}%`;
 
@@ -1258,6 +1295,8 @@
               statusMarkup = `<div class="text-right"><span class="font-code-log text-[12px] text-tertiary font-bold">-${escapeHtml(formatMoney(Math.abs(t.pnl || 0),t.currency || state.currency))}</span><div class="font-label-caps text-[9px] text-tertiary uppercase font-bold">LOSS</div></div>`;
             } else if (t.status === 'DRAW' || t.status === 'INTERRUPTED') {
               statusMarkup = `<div class="text-right text-xs">${t.status === 'DRAW' ? 'EMPATE' : 'INTERROMPIDA'}<br>${escapeHtml(formatMoney(t.pnl,t.currency || state.currency))}</div>`;
+            } else if (t.mode === 'PAPER' && t.exit_policy === 'SL_TP') {
+              statusMarkup = `<div class="text-right text-xs">ABERTA • SL/TP<br>${escapeHtml(formatMoney(t.floating_pnl || 0,'BRL'))}<br><button type="button" class="underline text-primary" data-close-paper="${escapeHtml(t.id)}">Encerrar PAPER</button></div>`;
             } else if (t.mode === 'LIVE_MT5') {
               statusMarkup = `<div class="text-right text-xs">${escapeHtml(t.status)}<br>${t.filled_volume != null ? 'Volume '+escapeHtml(t.filled_volume) : 'Aguardando confirmação'}</div>`;
             } else {
@@ -1272,12 +1311,17 @@
                     <span class="font-code-log text-[11px] text-on-surface font-bold">${escapeHtml(t.symbol)}</span>
                     <span class="px-1.5 py-0.2 rounded font-code-log text-[10px] font-bold ${badgeType}">${escapeHtml(t.action)}</span>
                   </div>
-                  <span class="font-code-log text-[10px] text-on-surface-variant">${escapeHtml(t.time)} • ${escapeHtml(t.mode || 'PAPER')} • ${escapeHtml(formatMoney(t.amount,t.currency || state.currency))} de ${t.mode === 'LIVE_MT5' ? 'risco estimado' : 'entrada'}<br>${escapeHtml(t.sync_error || t.sync_note || t.source)}</span>
+                  <span class="font-code-log text-[10px] text-on-surface-variant">${escapeHtml(t.time)} • ${escapeHtml(t.mode || 'PAPER')} • ${escapeHtml(formatMoney(t.amount,t.currency || state.currency))} de ${t.mode === 'LIVE_MT5' ? 'risco estimado' : 'entrada'}<br>${escapeHtml(t.sync_error || t.sync_note || t.source)}${t.exit_policy === 'SL_TP' ? `<br>Entrada ${escapeHtml(formatPrice(t.entry_price))} • SL ${escapeHtml(formatPrice(t.stop_loss))} • TP ${escapeHtml(formatPrice(t.take_profit))}${t.exit_reason ? ' • '+escapeHtml(t.exit_reason) : ''}` : ''}</span>
                 </div>
                 ${statusMarkup}
               </div>
             `;
           }).join('');
+          for (const button of tradesBox.querySelectorAll('[data-close-paper]')) button.onclick = async () => {
+            button.disabled = true;
+            try { await apiFetch('/api/paper/positions/'+encodeURIComponent(button.dataset.closePaper)+'/close',{method:'POST'}); await fetchState(); }
+            catch (error) { alert(error.message); button.disabled = false; }
+          };
         } else {
           tradesBox.innerHTML = '<div class="text-center py-8 text-on-surface-variant font-code-log text-xs">Nenhuma operação realizada ainda hoje.</div>';
         }
@@ -1315,6 +1359,8 @@
       }
     }
 
+    function formatPrice(value) { return Number.isFinite(Number(value)) ? Number(value).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:8}) : '—'; }
+
     function formatMoney(value,currency='BRL') {
       try { return new Intl.NumberFormat('pt-BR',{style:'currency',currency}).format(Number(value)||0); }
       catch { return `${Number(value).toFixed(2)} ${currency}`; }
@@ -1329,13 +1375,14 @@
     }
     function renderAudit(state) {
       const live = state.execution_mode === 'LIVE_MT5';
+      const priceBased = state.config.market_type !== 'SAFIRION_OB';
       const account = state.connections.mt5.account || {};
       const badge = live ? `MT5 • ${account.account_type || 'CONTA VINCULADA'} • ENVIO AO TERMINAL` : 'PAPER • SEM ORDENS REAIS';
       for (const id of ['executionBadge','executionDetailBadge']) document.getElementById(id).textContent = badge;
       document.getElementById('manualModeLabel').textContent = live ? 'Ordens enviadas ao MT5' : 'Ordens PAPER';
-      document.getElementById('manualBuyLabel').textContent = live ? 'BUY' : 'CALL';
-      document.getElementById('manualSellLabel').textContent = live ? 'SELL' : 'PUT';
-      document.getElementById('lblEntryAmount').textContent = live ? 'Orçamento de risco até SL' : 'Entrada PAPER';
+      document.getElementById('manualBuyLabel').textContent = priceBased ? 'BUY' : 'CALL';
+      document.getElementById('manualSellLabel').textContent = priceBased ? 'SELL' : 'PUT';
+      document.getElementById('lblEntryAmount').textContent = priceBased ? 'Orçamento de risco até SL' : 'Entrada PAPER';
       document.getElementById('mt5AccountSummary').textContent = state.connections.mt5.simulation_mode || !state.connections.mt5.connected ? 'MT5 não conectado' : `${account.login} / ${account.server} • ${account.currency} • ${account.account_type || 'verificar tipo no terminal'}${live ? ' • vinculada '+state.config.mt5_account_login+' / '+state.config.mt5_account_server : ''}`;
       document.getElementById('telegramStatus').textContent = state.telegram.configured ? (state.telegram.connected ? 'Bot conectado. ' : 'Bot configurado; conectando. ')+(state.telegram.last_error || '') : 'Não configurado. Execute python -m backend.telegram_setup após criar o bot no BotFather.';
       document.getElementById('chartAvailability').textContent = live ? `Execução MT5: SL/TP no servidor; encerramento e PnL pelo histórico. Pausar não fecha posições. Moeda da conta: ${state.currency}.` : 'Resultados PAPER são hipotéticos e não comprovam lucro. Nenhuma ordem virtual é enviada à corretora.';
@@ -1362,7 +1409,17 @@
       for (const id of ['btn-call','btn-put']) document.getElementById(id).disabled = open || state.risk.next_amount <= 0;
       document.getElementById('btnToggleBot').disabled = false;
       document.getElementById('researchRun').disabled = researchBusy || state.is_running || open;
-      document.getElementById('cfgExpiration').disabled = state.execution_mode === 'LIVE_MT5' || state.is_running || open;
+      document.getElementById('cfgExpiration').closest('.flex.flex-col').hidden = priceBased;
+      document.getElementById('cfgPayout').closest('label').hidden = priceBased;
+      document.getElementById('pricePlanSettings').hidden = !priceBased;
+      document.getElementById('pricePlanPreview').hidden = !priceBased;
+      document.getElementById('boxSafirionSubType').hidden = priceBased;
+      document.getElementById('goalMoneyPrefix').textContent = state.goal.currency;
+      document.getElementById('executionDiagnosis').textContent = `${state.diagnostics.reason} • ${state.diagnostics.version}`;
+      document.getElementById('goalSummary').textContent = state.goal.ready ? `Realizado: ${formatMoney(state.goal.realized,state.goal.currency)} • Falta: ${formatMoney(state.goal.remaining,state.goal.currency)}. ${state.goal.conversion_note || ''} A meta limita novas entradas; não garante lucro nem fecha posições abertas.` : state.goal.error;
+      document.getElementById('pricePlanPreview').innerHTML = Object.entries(state.trade_plans || {}).map(([side,p]) => `<div class="bg-surface-container-lowest rounded-lg p-space-sm text-xs price-plan-card"><strong>${side}</strong> ${p.ready ? `Entrada ${escapeHtml(formatPrice(p.entry_price))} • SL ${escapeHtml(formatPrice(p.stop_loss))} • TP ${escapeHtml(formatPrice(p.take_profit))}<br>Retorno/risco ${p.net_reward_risk.toFixed(2)} • perda estimada ${escapeHtml(formatMoney(p.estimated_loss,state.currency))} • lucro projetado ${escapeHtml(formatMoney(p.estimated_profit,state.currency))}<br>${escapeHtml(p.stop_basis)}; ${escapeHtml(p.target_basis)}. Prévia; revalidada na ordem.` : escapeHtml(p.reason)}</div>`).join('');
+      if (priceBased && !live) document.getElementById('chartAvailability').textContent = 'PAPER Forex/B3: saída por preço no SL/TP ou encerramento manual. Sem prazo de expiração. PnL e quantidade são virtuais; não simulam integralmente custos e liquidez da corretora.';
+      document.getElementById('cfgExpiration').disabled = priceBased || state.is_running || open;
     }
 
     async function runResearch() {

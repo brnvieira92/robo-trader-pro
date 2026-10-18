@@ -17,6 +17,14 @@ class StrategyParams(BaseModel):
     sl_atr_mult: float = Field(1.5, ge=.5, le=5)
     tp_atr_mult: float = Field(2.5, ge=.5, le=10)
     use_ml_filter: bool = True
+    use_structure_stops: bool = True
+    use_structure_targets: bool = True
+    structure_lookback: int = Field(20, ge=5, le=100)
+    structure_buffer_atr: float = Field(.15, ge=0, le=1)
+    target_buffer_atr: float = Field(.1, ge=0, le=1)
+    min_reward_risk: float = Field(1.5, ge=1, le=5)
+    max_stop_atr: float = Field(4, ge=1, le=10)
+    max_entry_drift_atr: float = Field(1, gt=0, le=5)
 
     @model_validator(mode='after')
     def ordered_emas(self):
@@ -43,7 +51,11 @@ class TradingConfig(BaseModel):
     entry_amount: float = Field(5, ge=1, le=100000)
     bankroll_mode: Literal['FIXED', 'PERCENT', 'SMART_AI', 'SOROS'] = 'FIXED'
     expiration_minutes: int = Field(1, ge=1, le=60)
-    stop_gain: float = Field(500, gt=0, le=1000000)
+    stop_gain: float = Field(150, gt=0, le=1000000)
+    goal_currency: Literal['ACCOUNT','BRL'] = 'ACCOUNT'
+    goal_fx_symbol: str = Field('', max_length=40, pattern=r'^[A-Za-z0-9_$.+/-]*$')
+    profit_per_trade_cap: float = Field(15, gt=0, le=100000)
+    paper_cost_per_trade: float = Field(0, ge=0, le=100000)
     stop_loss: float = Field(250, gt=0, le=1000000)
     risk_per_trade_pct: float = Field(1, gt=0, le=2)
     max_consecutive_losses: int = Field(3, ge=1, le=10)

@@ -170,7 +170,8 @@ async def update_config(payload: Dict[str, Any]):
 
 @app.post("/api/connect/mt5")
 async def connect_mt5(req: MT5ConnectRequest):
-    paper_open=any(t.get('mode','PAPER')=='PAPER' and t['status']=='OPEN' for t in bot.trade_history)
+    paper_positions=[t for t in bot.trade_history if t.get('mode','PAPER')=='PAPER' and t['status']=='OPEN']
+    paper_open=any(t.get('exit_policy')!='SL_TP' or t.get('source')!='MT5_LIVE' for t in paper_positions)
     if bot.is_running or paper_open or bot._mt5_busy:
         raise HTTPException(409, detail='Pause e encerre operações PAPER antes de trocar a fonte de dados.')
     # Cache one snapshot before handing the native SDK to a worker thread.
@@ -192,6 +193,11 @@ async def connect_mt5(req: MT5ConnectRequest):
     bot.add_log("MT5", res["message"])
     if res['status']=='error':
         raise HTTPException(409,detail=res['message'])
+    for trade in paper_positions:
+        try:
+            bot.live.account(trade.get('account_login'),trade.get('account_server'))
+        except ValueError as exc:
+            raise HTTPException(409,detail=str(exc)) from exc
     if bot.config['execution_mode']=='LIVE_MT5':
         try:
             bot.live.account(bot.config['mt5_account_login'],bot.config['mt5_account_server'])
@@ -226,6 +232,23 @@ async def manual_order(req: ManualOrderRequest):
     if not res['success']:
         raise HTTPException(409, detail=res['message'])
     return res
+
+
+@app.get("/api/execution/diagnostics")
+async def execution_diagnostics():
+    if bot._mt5_busy:
+        raise HTTPException(409, detail='MT5 ocupado; aguarde a conclusão da operação.')
+    return bot.execution_diagnostics()
+
+
+@app.post("/api/paper/positions/{identifier}/close")
+async def close_paper_position(identifier: str):
+    if bot._mt5_busy:
+        raise HTTPException(409, detail='MT5 ocupado; aguarde.')
+    try:
+        return await bot.close_paper_position(identifier)
+    except ValueError as exc:
+        raise HTTPException(409, detail=str(exc)) from exc
 
 
 @app.post("/api/stats/reset")

@@ -140,6 +140,8 @@ class StrategyEngine:
         ml_pred = ml_engine.predict_next_candle(df, context=f"{market_type}:{symbol}:{timeframe}:{params.get('data_source', 'unknown')}")
 
         indicators_snapshot = {
+            "support": float(df['low'].tail(params.get('structure_lookback',20)).min()),
+            "resistance": float(df['high'].tail(params.get('structure_lookback',20)).max()),
             "price": round(price, 5),
             "ema_fast": round(float(curr["ema_fast"]), 5),
             "ema_slow": round(float(curr["ema_slow"]), 5),

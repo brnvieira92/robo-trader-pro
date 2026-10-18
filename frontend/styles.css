@@ -92,3 +92,17 @@
 @media(max-width:640px) {.execution-controls label{width:100%;}.execution-controls select{width:100%;font-size:11px;}.execution-controls{gap:10px;} .audit-heading .paper-pill{white-space:normal;} }
 
 @media(max-width:1200px) {header #executionBadge {display:none;}}
+
+/* Keep binary-only controls hidden even when utility classes set display. */
+[hidden] {display:none!important;}
+.risk-controls {grid-template-columns:repeat(2,minmax(0,1fr));}
+.risk-controls label {min-width:0;}
+.risk-controls input,.risk-controls select {width:100%;}
+.risk-controls select {padding:8px;border:1px solid #364a62;border-radius:6px;background:#071729;color:#e4efff;min-width:0;}
+.risk-controls input[type=checkbox] {width:auto;align-self:flex-start;}
+#pricePlanPreview,#executionDiagnosis,#goalSummary,#tradesContainer {overflow-wrap:anywhere;}
+
+.price-plan-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;}
+.price-plan-card {border:1px solid #304558;font:12px/1.8 system-ui,sans-serif;color:#b8cada;}
+.price-plan-card strong {color:#b8f0da;}
+@media(max-width:640px) {.price-plan-grid {grid-template-columns:1fr;}}

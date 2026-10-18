@@ -6,7 +6,8 @@ closure and PnL come from deals, not a local expiration timer.
 import math
 import time
 from datetime import datetime, timezone
-from decimal import Decimal, ROUND_FLOOR, ROUND_CEILING
+from decimal import Decimal, ROUND_FLOOR
+from backend.trade_plan import price_plan, goal_limited_budget, TradePlanError
 
 ACTIVE_LIVE = {'SUBMITTING', 'PENDING', 'OPEN', 'NEEDS_REVIEW'}
 
@@ -63,7 +64,30 @@ class MT5Executor:
         timestamp = getattr(tick,'time_msc',0)/1000 or getattr(tick,'time',0)
         return time.time()-timestamp
 
-    def prepare(self, config, signal, remaining_loss_budget, client_tag):
+    def brl_rate(self, account_currency, symbol=''):
+        if account_currency=='BRL':
+            return 1.,None
+        sdk=self.sdk
+        if sdk is None or self.connector.simulation_mode or not self.connector.connected:
+            raise MT5ExecutionError('Conversão BRL indisponível: conecte o MT5 ou use meta na moeda da conta.')
+        symbol=symbol or account_currency+'BRL'
+        if not sdk.symbol_select(symbol,True):
+            raise MT5ExecutionError('Informe o símbolo de câmbio da corretora para converter a meta BRL.')
+        info=sdk.symbol_info(symbol);tick=sdk.symbol_info_tick(symbol)
+        if info is None or tick is None:
+            raise MT5ExecutionError('Sem símbolo/cotação de conversão para BRL.')
+        base=getattr(info,'currency_base','');quote=getattr(info,'currency_profit','')
+        timestamp=getattr(tick,'time_msc',0)/1000 or getattr(tick,'time',0)
+        if not -5<=time.time()-timestamp<=60 or not all(math.isfinite(float(x)) and x>0 for x in (tick.bid,tick.ask)) or tick.ask<tick.bid:
+            raise MT5ExecutionError('Cotação de conversão BRL ausente ou desatualizada (limite 60s).')
+        mid=(float(tick.bid)+float(tick.ask))/2
+        if (base,quote)==(account_currency,'BRL'):
+            return mid,symbol
+        if (base,quote)==('BRL',account_currency):
+            return 1/mid,symbol
+        raise MT5ExecutionError('O símbolo de conversão não corresponde à moeda da conta/BRL.')
+
+    def prepare(self, config, signal, remaining_loss_budget, client_tag, remaining_goal_account=None):
         sdk = self.sdk
         account = self.account(config['mt5_account_login'], config['mt5_account_server'], trading=True)
         symbol = config['symbol']
@@ -98,19 +122,19 @@ class MT5Executor:
         buy = action=='BUY'
         price = float(tick.ask if buy else tick.bid)
         minimum = (max(0, int(info.trade_stops_level))+1)*point
-        sl_distance = max(atr*config['strategy_params']['sl_atr_mult'], minimum+(tick.ask-tick.bid))
-        tp_distance = max(atr*config['strategy_params']['tp_atr_mult'], minimum)
-        def rounded(value, up):
-            units=(Decimal(str(value))/Decimal(str(size))).to_integral_value(rounding=ROUND_CEILING if up else ROUND_FLOOR)
-            return round(float(units*Decimal(str(size))), int(info.digits))
-        sl=rounded(price-sl_distance if buy else price+sl_distance, up=not buy)
-        tp=rounded(price+tp_distance if buy else price-tp_distance, up=buy)
-        if sl<=0 or tp<=0:
-            raise MT5ExecutionError('Stops calculados fora da faixa de preços válida.')
+        try:
+            plan=price_plan(config,signal,price,minimum+(tick.ask-tick.bid),minimum,size,int(info.digits))
+        except TradePlanError as exc:
+            raise MT5ExecutionError(str(exc)) from exc
+        sl=plan['stop_loss'];tp=plan['take_profit']
         order_type=sdk.ORDER_TYPE_BUY if buy else sdk.ORDER_TYPE_SELL
         budget=min(float(remaining_loss_budget), max(0,account['equity'])*config['risk_per_trade_pct']/100)
         if config['bankroll_mode'] != 'PERCENT':
             budget=min(budget,config['entry_amount'])
+        try:
+            budget=goal_limited_budget(config,budget,remaining_goal_account,plan['reward_risk'])
+        except TradePlanError as exc:
+            raise MT5ExecutionError(str(exc)) from exc
         buffer=config['mt5_cost_buffer']
         available=budget-buffer
         minimum_volume=float(info.volume_min)
@@ -128,6 +152,13 @@ class MT5Executor:
         estimated=sdk.order_calc_profit(order_type,symbol,volume,price,sl)
         if estimated is None or not math.isfinite(float(estimated)) or estimated>=0 or abs(estimated)+buffer>budget+1e-8:
             raise MT5ExecutionError('Risco calculado excede o orçamento de entrada.')
+        projected=sdk.order_calc_profit(order_type,symbol,volume,price,tp)
+        if projected is None or not math.isfinite(float(projected)) or projected<=0:
+            raise MT5ExecutionError('Não foi possível calcular o retorno monetário do alvo.')
+        net_reward=float(projected)-buffer
+        total_risk=abs(float(estimated))+buffer
+        if net_reward/total_risk+1e-8<config['strategy_params']['min_reward_risk']:
+            raise MT5ExecutionError('Retorno/risco insuficiente após reserva de custos; entrada descartada.')
         margin=sdk.order_calc_margin(order_type,symbol,volume,price)
         if margin is None or not math.isfinite(float(margin)) or margin>account['margin_free']:
             raise MT5ExecutionError('Margem livre insuficiente ou não verificável.')
@@ -148,7 +179,8 @@ class MT5Executor:
             code=getattr(checked,'retcode','sem resposta')
             raise MT5ExecutionError(f'Pré-validação MT5 recusou a ordem (código {code}).')
         return dict(request=request, account=account, risk_budget=budget, estimated_risk=abs(float(estimated))+buffer,
-                    volume=volume, price=price, stop_loss=sl, take_profit=tp, spread_points=round(spread,2))
+                    volume=volume, price=price, stop_loss=sl, take_profit=tp, spread_points=round(spread,2),
+                    plan={**plan,'estimated_profit':net_reward,'estimated_loss':total_risk,'net_reward_risk':net_reward/total_risk})
 
     def send(self, trade):
         """Called once, only after the SUBMITTING intent has been committed."""
