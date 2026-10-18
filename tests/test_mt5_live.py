@@ -342,3 +342,38 @@ def test_terminal_path_is_passed_as_documented_positional_argument(monkeypatch):
 
 def test_live_configuration_cannot_exist_without_an_account_binding():
     with pytest.raises(ValueError):TradingConfig(execution_mode='LIVE_MT5',market_type='MT5_FOREX')
+
+
+@pytest.mark.parametrize('target,field,value,expected', [
+    ('terminal','trade_allowed',False,'ative AlgoTrading'),
+    ('terminal','tradeapi_disabled',True,'desmarque Desabilitar'),
+    ('info','trade_allowed',False,'senha principal'),
+    ('info','trade_expert',False,'corretora'),
+])
+def test_permission_failure_identifies_action_and_never_sends(live_bot,target,field,value,expected):
+    b,sdk=live_bot
+    setattr(getattr(sdk,target),field,value)
+    result=asyncio.run(b.execute_trade_from_signal(signal(),True))
+    assert not result['success'] and expected in result['message']
+    assert field in result['message'] and not sdk.sent
+    # The same diagnosis is visible before switching from PAPER to native.
+    b.config['execution_mode']='PAPER'
+    diagnostic=b.execution_diagnostics()
+    assert expected in diagnostic['reason']
+    assert not diagnostic['native_orders_enabled']
+
+
+def test_all_terminal_permission_failures_are_reported_together(live_bot):
+    b,sdk=live_bot
+    sdk.terminal.trade_allowed=False;sdk.terminal.tradeapi_disabled=True
+    sdk.info.trade_allowed=False;sdk.info.trade_expert=False
+    with pytest.raises(MT5ExecutionError) as error:b.live.account(trading=True)
+    for field in ('terminal.trade_allowed','terminal.tradeapi_disabled','account.trade_allowed','account.trade_expert'):
+        assert field in str(error.value)
+    assert not sdk.sent
+
+
+def test_unknown_python_api_permission_is_not_assumed_allowed(live_bot):
+    b,sdk=live_bot;del sdk.terminal.tradeapi_disabled
+    with pytest.raises(MT5ExecutionError,match='indisponível'):b.live.account(trading=True)
+    assert not sdk.sent

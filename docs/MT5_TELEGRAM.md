@@ -30,6 +30,25 @@ O inicializador `iniciar_robo.bat` também pode ser usado. Mantenha uma única i
 
 A seleção do modo fica salva; **a automação sempre reinicia pausada**. Posições e intenções pendentes são recuperadas e monitoradas mesmo com o robô pausado. Para trocar de conta, encerre/reconcilie as posições, pause, volte a PAPER, conecte a outra conta e selecione novamente MT5. Salvar um parâmetro não troca silenciosamente a conta vinculada.
 
+## Erro: negociação algorítmica/API Python não autorizada
+
+Receber preços do MT5 não comprova permissão para enviar ordens. A versão atual informa o campo exato que bloqueou a negociação, inclusive enquanto o painel permanece em PAPER:
+
+| Campo bloqueado | Ação no Windows / MT5 |
+| --- | --- |
+| `terminal.trade_allowed=False` | Habilite o botão **AlgoTrading**. Em **Ferramentas > Opções > Expert Advisors**, marque **Permitir negociação algorítmica**. |
+| `terminal.tradeapi_disabled=True` | Na mesma aba, **desmarque** **Desabilitar negociação automática pela API Python externa** (em inglês, **Disable automated trading through the external Python API**). A caixa marcada bloqueia a API, mesmo com AlgoTrading ligado. |
+| `account.trade_allowed=False` | Confira se o login usa a **senha principal de negociação**. A senha de investidor é apenas leitura. A corretora também pode restringir a conta. |
+| `account.trade_expert=False` | A conta não permite negociação por robôs. Solicite à corretora a verificação da permissão de Expert Advisors / API nessa conta. |
+
+Clique em **OK**, mantenha o robô pausado, reconecte pelo painel e tente selecionar o modo MT5. Se houver vários terminais instalados, indique o caminho correto do `terminal64.exe` em **Conexões**; habilitar uma instalação diferente não resolve a permissão do terminal usado pela aplicação. Não é necessário anexar um EA ao gráfico para a API Python externa enviar ordens. Não é necessário habilitar DLLs para resolver esses quatro bloqueios.
+
+Se ainda aparecer a mensagem genérica antiga, atualize a branch `work`, reinicie o backend e faça Ctrl+F5 no navegador. O diagnóstico está também em `http://127.0.0.1:8000/api/execution/diagnostics`, acessado **no seu computador**. Não compartilhe senhas nem tokens; basta o nome do campo bloqueado e sua mensagem.
+
+O assistente na nuvem não possui controle remoto do Windows ou privilégios administrativos no seu computador. Pode alterar os arquivos do repositório; essas opções do MT5 precisam ser ajustadas localmente. A validação com SDK simulado não comprova as permissões efetivas da sua corretora.
+
+Se o painel informar idade de tick negativa, confira **Configurações do Windows > Hora e idioma > Data e hora**, a hora automática e o fuso correto, e sincronize o relógio. Se o problema persistir com o relógio certo, confira a cotação/servidor do terminal. O robô recusa ticks significativamente no futuro, sem remover essa verificação para forçar ordens. Poucas velas disponíveis também impedem a validação de estratégia: carregue histórico no terminal para o símbolo/timeframe escolhido. Corrigir permissões não elimina esses filtros.
+
 ## Dimensionamento e encerramento
 
 - No MT5, o campo de entrada representa **orçamento monetário de risco até o stop**, na moeda da conta, e não lotes. Com entrada 5 e conta em USD, o orçamento é de até 5 USD, também limitado pelo percentual de risco e pelo stop diário restante.

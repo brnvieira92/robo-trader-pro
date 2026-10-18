@@ -32,9 +32,18 @@ class MT5Executor:
             raise MT5ExecutionError('Sem conexão confirmada com o servidor MT5.')
         if expected_login is not None and (int(info.login) != int(expected_login) or info.server != expected_server):
             raise MT5ExecutionError('A conta/servidor MT5 mudou. Conecte a conta vinculada antes de continuar.')
-        if trading and (not getattr(terminal, 'trade_allowed', False) or getattr(terminal, 'tradeapi_disabled', True)
-                        or not getattr(info, 'trade_allowed', False) or not getattr(info, 'trade_expert', False)):
-            raise MT5ExecutionError('Negociação algorítmica/API Python não autorizada no terminal ou na conta.')
+        if trading:
+            blocked = []
+            if not getattr(terminal, 'trade_allowed', False):
+                blocked.append('terminal.trade_allowed=False: ative AlgoTrading no MT5 e marque Permitir negociação algorítmica em Ferramentas > Opções > Expert Advisors')
+            if getattr(terminal, 'tradeapi_disabled', True):
+                blocked.append('terminal.tradeapi_disabled=True ou indisponível: desmarque Desabilitar negociação automática pela API Python externa em Ferramentas > Opções > Expert Advisors')
+            if not getattr(info, 'trade_allowed', False):
+                blocked.append('account.trade_allowed=False: confira se entrou com a senha principal de negociação, não a senha de investidor; se persistir, peça à corretora para verificar a permissão da conta')
+            if not getattr(info, 'trade_expert', False):
+                blocked.append('account.trade_expert=False: a conta não autoriza negociação por robôs; confirme a permissão de Expert Advisors/API com a corretora')
+            if blocked:
+                raise MT5ExecutionError('Envio MT5 bloqueado. ' + '; '.join(blocked) + '.')
         if not all(math.isfinite(float(getattr(info, name))) for name in ('balance','equity','margin_free')):
             raise MT5ExecutionError('Saldo, patrimônio ou margem inválidos no MT5.')
         snapshot = dict(login=int(info.login), server=info.server, balance=float(info.balance),

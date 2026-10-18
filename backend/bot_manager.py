@@ -258,6 +258,8 @@ class BotManager:
         forex=self.config['market_type']!='SAFIRION_OB'
         if not native:
             reason='PAPER selecionado: nenhuma ordem será enviada ao MT5, mesmo com AlgoTrading habilitado no terminal.'
+            if permission_error and self.mt5.connected and not self.mt5.simulation_mode:
+                reason+=' Diagnóstico do terminal: '+permission_error
         else:
             reason='Envio nativo habilitado para a conta vinculada; entradas dependem dos filtros e limites.' if permissions else permission_error
         return dict(version='forex-price-exits-v1',mode=self.config['execution_mode'],market=self.config['market_type'],
