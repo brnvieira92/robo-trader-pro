@@ -42,6 +42,9 @@ class MT5Connector:
     }
 
     def __init__(self):
+        self.tick_time_offset_minutes = 0
+        self.bar_time_offset_minutes = 0
+        self.bar_clock = {}
         self.connected = False
         self.simulation_mode = True
         self.account_info: Dict[str, Any] = {
@@ -53,6 +56,16 @@ class MT5Connector:
         }
         self._sim_update_times = {}
         self._sim_series_cache: Dict[str, pd.DataFrame] = {}
+
+    def configure_time(self, config):
+        # Explicit offsets describe non-UTC API timestamps, not chart display zones.
+        self.tick_time_offset_minutes = config['mt5_tick_time_offset_minutes']
+        self.bar_time_offset_minutes = config['mt5_bar_time_offset_minutes']
+        self.bar_clock.clear()
+
+    def tick_timestamp(self, tick):
+        raw = getattr(tick, 'time_msc', 0) / 1000 or getattr(tick, 'time', 0)
+        return float(raw) - self.tick_time_offset_minutes * 60
 
     def connect(
         self,
@@ -126,7 +139,11 @@ class MT5Connector:
             rates = mt5.copy_rates_from_pos(symbol, mt5_tf, 0, count)
             if rates is not None and len(rates) > 0:
                 df = pd.DataFrame(rates)
-                df["time"] = pd.to_datetime(df["time"], unit="s")
+                raw_last = float(df['time'].iloc[-1])
+                normalized = df['time'] - self.bar_time_offset_minutes * 60
+                df["time"] = pd.to_datetime(normalized, unit="s")
+                self.bar_clock[(symbol,timeframe)] = dict(raw_epoch=raw_last,
+                    utc_epoch=raw_last-self.bar_time_offset_minutes*60)
                 df = df.rename(columns={"tick_volume": "volume"})
                 return df[["time", "open", "high", "low", "close", "volume"]]
             error = mt5.last_error()

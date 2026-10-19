@@ -377,3 +377,78 @@ def test_unknown_python_api_permission_is_not_assumed_allowed(live_bot):
     b,sdk=live_bot;del sdk.terminal.tradeapi_disabled
     with pytest.raises(MT5ExecutionError,match='indisponível'):b.live.account(trading=True)
     assert not sdk.sent
+
+
+def test_explicit_tick_offset_normalizes_server_time_without_accepting_stale_quotes(live_bot):
+    b,sdk=live_bot
+    sdk.quote.time_msc+=180*60*1000
+    assert b.live.quote_age('EURUSD') < -10790
+    with pytest.raises(MT5ExecutionError,match='desatualizada'):
+        b.live._tick('EURUSD',b.config)
+    b.update_config({'mt5_tick_time_offset_minutes':180})
+    assert -1 < b.live.quote_age('EURUSD') < 5
+    assert b.live._tick('EURUSD',b.config).ask==sdk.quote.ask
+    prepared=b.live.prepare(b.config,signal(),250,'clock-check')
+    assert prepared['price']==sdk.quote.ask
+    sdk.quote.time_msc-=60000
+    with pytest.raises(MT5ExecutionError,match='desatualizada'):
+        b.live._tick('EURUSD',b.config)
+    sdk.quote.time_msc+=120000
+    with pytest.raises(MT5ExecutionError,match='desatualizada'):
+        b.live._tick('EURUSD',b.config)
+    assert not sdk.sent
+
+
+def test_tick_offset_is_also_used_for_brl_quote_freshness(live_bot):
+    b,sdk=live_bot
+    sdk.symbol.currency_base='USD';sdk.symbol.currency_profit='BRL'
+    sdk.quote.bid=5.;sdk.quote.ask=5.01;sdk.quote.time_msc+=10800000
+    with pytest.raises(MT5ExecutionError,match='desatualizada'):b.live.brl_rate('USD')
+    b.update_config({'mt5_tick_time_offset_minutes':180})
+    assert b.live.brl_rate('USD')[0]==pytest.approx(5.005)
+    sdk.quote.time_msc-=61000
+    with pytest.raises(MT5ExecutionError,match='desatualizada'):b.live.brl_rate('USD')
+
+
+def test_clock_settings_persist_and_are_locked_with_open_position(live_bot):
+    b,sdk=live_bot
+    b.update_config({'mt5_tick_time_offset_minutes':180,'mt5_bar_time_offset_minutes':180})
+    assert b.journal.load_config()['mt5_tick_time_offset_minutes']==180
+    restored=BotManager()
+    assert restored.mt5.tick_time_offset_minutes==180 and restored.mt5.bar_time_offset_minutes==180
+    b._has_open_trade=True
+    with pytest.raises(ValueError):b.update_config({'mt5_tick_time_offset_minutes':0})
+    assert b.mt5.tick_time_offset_minutes==180
+
+
+@pytest.mark.parametrize('value',[-841,841,1.5])
+def test_invalid_clock_offsets_do_not_mutate_runtime(live_bot,value):
+    b,sdk=live_bot
+    with pytest.raises(ValueError):b.update_config({'mt5_tick_time_offset_minutes':value})
+    assert b.mt5.tick_time_offset_minutes==0 and b.config['mt5_tick_time_offset_minutes']==0
+
+
+def test_clock_diagnostics_include_raw_and_normalized_times(live_bot):
+    b,sdk=live_bot;sdk.quote.time_msc+=10800000
+    b.update_config({'mt5_tick_time_offset_minutes':180})
+    c=b.execution_diagnostics()['clock']
+    assert c['raw_tick_age_seconds'] < -10790
+    assert -1 < c['tick_age_seconds'] < 5
+    assert c['raw_tick_utc']!=c['tick_utc']
+    assert c['bar_offset_minutes']==0  # No unverified bar conversion.
+
+
+@pytest.mark.parametrize('offset',[-180,180])
+def test_offset_sign_and_seconds_only_tick_timestamp(live_bot,offset):
+    b,sdk=live_bot
+    sdk.quote.time_msc=0;sdk.quote.time=int(time.time())+offset*60
+    b.update_config({'mt5_tick_time_offset_minutes':offset})
+    assert -1<b.live.quote_age('EURUSD')<5
+    assert b.live._tick('EURUSD',b.config) is sdk.quote
+
+
+def test_nonfinite_tick_timestamp_is_not_authorized_by_clock_adjustment(live_bot):
+    b,sdk=live_bot;sdk.quote.time_msc=float('nan')
+    assert b.live.quote_age('EURUSD') is None
+    with pytest.raises(MT5ExecutionError,match='desatualizada'):b.live._tick('EURUSD',b.config)
+    assert not sdk.sent

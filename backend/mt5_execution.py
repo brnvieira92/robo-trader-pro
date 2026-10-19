@@ -56,9 +56,9 @@ class MT5Executor:
         tick = self.sdk.symbol_info_tick(symbol)
         if tick is None:
             raise MT5ExecutionError('Sem cotação MT5 para o símbolo exato selecionado.')
-        quote_time = getattr(tick, 'time_msc', 0)/1000 or getattr(tick, 'time', 0)
+        quote_time = self.connector.tick_timestamp(tick)
         age = time.time()-quote_time
-        if age < -5 or age > config['max_tick_age_seconds']:
+        if not math.isfinite(age) or age < -5 or age > config['max_tick_age_seconds']:
             raise MT5ExecutionError('Cotação MT5 desatualizada; nenhuma ordem enviada.')
         if not all(math.isfinite(float(x)) and x>0 for x in (tick.ask,tick.bid)) or tick.ask < tick.bid:
             raise MT5ExecutionError('Bid/ask inválidos no MT5.')
@@ -70,8 +70,30 @@ class MT5Executor:
         tick = self.sdk.symbol_info_tick(symbol)
         if tick is None:
             return None
-        timestamp = getattr(tick,'time_msc',0)/1000 or getattr(tick,'time',0)
-        return time.time()-timestamp
+        timestamp = self.connector.tick_timestamp(tick)
+        age = time.time()-timestamp
+        return age if math.isfinite(age) else None
+
+    def clock_diagnostics(self, symbol, timeframe):
+        now = time.time()
+        result = dict(computer_utc=datetime.fromtimestamp(now,timezone.utc).isoformat(),
+                      tick_offset_minutes=self.connector.tick_time_offset_minutes,
+                      bar_offset_minutes=self.connector.bar_time_offset_minutes)
+        if self.sdk is None or not self.connector.connected or self.connector.simulation_mode:
+            return result
+        tick = self.sdk.symbol_info_tick(symbol)
+        def iso(value):
+            return datetime.fromtimestamp(value,timezone.utc).isoformat()
+        if tick is not None:
+            normalized = self.connector.tick_timestamp(tick)
+            raw = normalized + self.connector.tick_time_offset_minutes*60
+            if math.isfinite(raw) and raw>0:
+                result.update(raw_tick_utc=iso(raw),tick_utc=iso(normalized),
+                              raw_tick_age_seconds=round(now-raw,3),tick_age_seconds=round(now-normalized,3))
+        bar = self.connector.bar_clock.get((symbol,timeframe))
+        if bar:
+            result.update(raw_bar_utc=iso(bar['raw_epoch']),bar_utc=iso(bar['utc_epoch']))
+        return result
 
     def brl_rate(self, account_currency, symbol=''):
         if account_currency=='BRL':
@@ -86,7 +108,7 @@ class MT5Executor:
         if info is None or tick is None:
             raise MT5ExecutionError('Sem símbolo/cotação de conversão para BRL.')
         base=getattr(info,'currency_base','');quote=getattr(info,'currency_profit','')
-        timestamp=getattr(tick,'time_msc',0)/1000 or getattr(tick,'time',0)
+        timestamp=self.connector.tick_timestamp(tick)
         if not -5<=time.time()-timestamp<=60 or not all(math.isfinite(float(x)) and x>0 for x in (tick.bid,tick.ask)) or tick.ask<tick.bid:
             raise MT5ExecutionError('Cotação de conversão BRL ausente ou desatualizada (limite 60s).')
         mid=(float(tick.bid)+float(tick.ask))/2

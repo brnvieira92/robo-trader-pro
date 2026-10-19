@@ -106,3 +106,5 @@
 .price-plan-card {border:1px solid #304558;font:12px/1.8 system-ui,sans-serif;color:#b8cada;}
 .price-plan-card strong {color:#b8f0da;}
 @media(max-width:640px) {.price-plan-grid {grid-template-columns:1fr;}}
+
+#mt5ClockSummary {overflow-wrap:anywhere;}

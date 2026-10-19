@@ -31,6 +31,7 @@ class BotManager:
         self.is_running = False
         self.journal = PaperJournal()
         self.config = TradingConfig.model_validate(self.journal.load_config() or {}).model_dump()
+        self.mt5.configure_time(self.config)
         self.mt5.connect(use_simulation_if_unavailable=self.config['execution_mode']=='PAPER')
         self._session_day = datetime.now(timezone.utc).date().isoformat()
         self._order_lock = asyncio.Lock()
@@ -163,6 +164,7 @@ class BotManager:
         previous_mode=self.config['execution_mode']
         self.journal.save_config(validated)
         self.config = validated
+        self.mt5.configure_time(self.config)
         if previous_mode != validated['execution_mode']:
             self.trade_history=self._session_trades()
             self._refresh_stats()
@@ -265,7 +267,8 @@ class BotManager:
         return dict(version='forex-price-exits-v1',mode=self.config['execution_mode'],market=self.config['market_type'],
                     exit_policy='SL_TP' if forex else 'BINARY_EXPIRATION',native_available=self.live.sdk is not None,
                     terminal_permissions=permissions,native_orders_enabled=native and permissions,
-                    reason=reason,terminal_error=permission_error)
+                    reason=reason,terminal_error=permission_error,
+                    clock=self.live.clock_diagnostics(self.config['symbol'],self.config['timeframe']))
 
     def plan_preview(self, signal, entry=None):
         if self.config['market_type']=='SAFIRION_OB':
