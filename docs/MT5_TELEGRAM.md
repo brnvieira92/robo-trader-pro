@@ -24,7 +24,7 @@ O inicializador `iniciar_robo.bat` também pode ser usado. Mantenha uma única i
 1. No navegador desse computador, abra `http://127.0.0.1:8000`.
 2. Clique em **Conexões**, deixe o MT5 aberto e conecte. Login e servidor podem ficar vazios quando o terminal já está conectado corretamente. Se houver vários terminais, informe o caminho completo do `terminal64.exe`. O caminho também pode ser definido em `MT5_TERMINAL_PATH` no `.env` local.
 3. Selecione **MT5 Forex** ou **MT5 B3** na plataforma de dados.
-4. Informe o **símbolo exato negociável da corretora**. EURUSD pode ter sufixos; para B3, use o contrato efetivamente negociável com vencimento. `WIN$N` e `WDO$N` podem ser apenas séries contínuas de análise e não contratos que aceitam ordens.
+4. Informe o **símbolo exato negociável da corretora**. Sufixos com `#` são aceitos: se `EURUSD` estiver desabilitado e `EURUSD#` tiver acesso completo nessa conta, informe `EURUSD#` no painel. EURUSD pode ter sufixos; para B3, use o contrato efetivamente negociável com vencimento. `WIN$N` e `WDO$N` podem ser apenas séries contínuas de análise e não contratos que aceitam ordens.
 5. No campo **Modo de execução**, selecione **MT5 — enviar ordens ao terminal conectado**. O backend vincula login e servidor e a tela mostra conta, tipo e moeda. Não há fallback para PAPER quando o modo é MT5.
 6. Confira os limites abaixo e clique em **INICIAR MT5** para permitir novas entradas automáticas. Os botões manuais também enviam ordens ao terminal quando esse modo está selecionado.
 

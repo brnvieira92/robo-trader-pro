@@ -46,7 +46,7 @@ class TradingConfig(BaseModel):
     mt5_magic: int = Field(202610, gt=0, le=2147483647)
     market_type: Literal['SAFIRION_OB', 'MT5_B3', 'MT5_FOREX'] = 'SAFIRION_OB'
     safirion_sub_type: Literal['BINARY', 'DIGITAL', 'BLITZ'] = 'BINARY'
-    symbol: str = Field('EURUSD', min_length=2, max_length=30, pattern=r'^[A-Za-z0-9_$./-]+$')
+    symbol: str = Field('EURUSD', min_length=2, max_length=30, pattern=r'^[A-Za-z0-9_$./#-]+$')
     timeframe: Literal['M1', 'M5', 'M15', 'M30', 'H1'] = 'M1'
     strategy_id: STRATEGIES = 'bollinger_rsi_reversal'
     min_confidence: float = Field(78, ge=50, le=100)
