@@ -80,3 +80,5 @@ npm run build --prefix frontend
 Os testes cobrem separação temporal, ausência de dados futuros, RSI, estimativas da IA, validação OHLCV, cálculo de custos no backtest, limites de risco, concorrência, ausência de envio real em PAPER, envio/reconciliação MT5 com SDK controlado, notificações Telegram, empate, fonte desatualizada, reinício, persistência e rotas HTTP/WebSocket. Um teste de navegador reproduzível está em `tests/browser_smoke.py`.
 
 Para verificar a interface Forex em um servidor isolado PAPER: `python tests/browser_forex.py http://127.0.0.1:8001`. Esse roteiro altera apenas a configuração do servidor de teste, abre e encerra posições virtuais e usa parâmetros permissivos para testar a interface; não valida a estratégia.
+
+Se a API MT5 retornar timestamps de mercado fora de UTC, configure os ajustes explícitos e independentes de tick e velas em **Limites específicos do MT5**, após conferir os horários brutos no diagnóstico. O padrão é zero; consulte [o procedimento de normalização](docs/MT5_TELEGRAM.md#api-retorna-tick-cerca-de-três-horas-no-futuro).

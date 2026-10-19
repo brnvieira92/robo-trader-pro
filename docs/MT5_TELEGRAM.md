@@ -62,6 +62,23 @@ A aplicação atual identifica falha de seleção de símbolo e, quando a leitur
 
 Se persistir, compartilhe a mensagem detalhada mais recente. Não é necessário reinstalar o pacote Python ou mudar novamente as permissões de AlgoTrading para investigar um erro de histórico.
 
+## API retorna tick cerca de três horas no futuro
+
+Alterar o fuso de um indicador ou a exibição do gráfico não altera os timestamps retornados pelo pacote Python. Quando uma consulta mostra o relógio UTC do computador correto e o tick aproximadamente três horas à frente, a aplicação precisa de uma configuração explícita para esse formato de timestamp. Não há correção automática por corretora, nem inferência de fuso a partir de uma cotação antiga.
+
+Atualize os arquivos e reinicie o backend. Com automação pausada e sem posição pendente, em **Gestão de risco > Limites específicos do MT5**, há dois ajustes independentes:
+
+- **Ajuste de timestamp do tick (minutos):** informe `180` se o tick estiver comprovadamente três horas à frente do UTC real. O valor é **subtraído** do timestamp recebido. Assim, computador `01:37:26 UTC` e tick bruto `04:37:21` tornam-se idade de aproximadamente 5 segundos, em vez de −10.795 segundos. Não use −180 nesse exemplo. A idade exata continua variando com o recebimento de novos ticks.
+- **Ajuste de timestamp das velas (minutos):** o padrão continua `0`. Confira a **última vela bruta interpretada como UTC**, exibida na mesma seção. Só informe `180` se essa vela também estiver três horas à frente do UTC do computador, respeitando o período do gráfico. Exemplo: relógio `01:37 UTC`, última vela M5 bruta `04:35 UTC` → normalizada `01:35 UTC`. Se a vela já vier como `01:35`, mantenha `0`.
+
+Os horários brutos, normalizados e UTC do computador também aparecem em `http://127.0.0.1:8000/api/execution/diagnostics`, no campo `clock`. Em caso de dúvida, compartilhe esse campo antes de alterar o ajuste das velas.
+
+Os ajustes são salvos no diário, têm padrão zero e limites de −840 a +840 minutos. Não alteram o relógio do Windows, preços, spread ou distância dos stops. Aplicam-se aos dados de mercado: tick da entrada/saída PAPER, validação de tick LIVE, conversão cambial e velas da análise/gráfico. Não reinterpretam timestamps dos negócios no histórico da corretora. Mudanças de configuração são recusadas com automação ligada ou operação pendente.
+
+Cotações antigas ou no futuro após a normalização continuam bloqueadas. A aplicação não deve ser usada para forçar uma cotação antiga a parecer recente. Confira a configuração ao mudar de corretora/servidor ou em mudança sazonal do fuso do servidor; a compensação não muda sozinha.
+
+Receber 240 velas não garante 239 velas contínuas válidas: depois de uma lacuna de mercado, como o fim de semana, a análise usa o trecho posterior à última lacuna. Uma amostra insuficiente ainda bloqueia o plano ou o filtro de ML. Isso é separado da normalização de horário e não é resolvido mudando o fuso.
+
 ## Dimensionamento e encerramento
 
 - No MT5, o campo de entrada representa **orçamento monetário de risco até o stop**, na moeda da conta, e não lotes. Com entrada 5 e conta em USD, o orçamento é de até 5 USD, também limitado pelo percentual de risco e pelo stop diário restante.
