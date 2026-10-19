@@ -452,3 +452,33 @@ def test_nonfinite_tick_timestamp_is_not_authorized_by_clock_adjustment(live_bot
     assert b.live.quote_age('EURUSD') is None
     with pytest.raises(MT5ExecutionError,match='desatualizada'):b.live._tick('EURUSD',b.config)
     assert not sdk.sent
+
+
+def test_hash_suffixed_symbol_reaches_native_sdk_and_reconciliation(live_bot,monkeypatch):
+    b,sdk=live_bot
+    before=dict(b.config)
+    b.update_config({'symbol':'EURUSD#'})
+    assert b.config=={**before,'symbol':'EURUSD#'}
+    queried=[]
+    for method in ('symbol_select','symbol_info','symbol_info_tick'):
+        original=getattr(sdk,method)
+        def exact_symbol(symbol,*args,_method=method,_original=original,**kwargs):
+            assert symbol=='EURUSD#'
+            queried.append(_method)
+            return _original(symbol,*args,**kwargs)
+        monkeypatch.setattr(sdk,method,exact_symbol)
+    candles=b.mt5.get_candles
+    def exact_history(symbol,*args,**kwargs):
+        assert symbol=='EURUSD#'
+        queried.append('get_candles')
+        return candles(symbol,*args,**kwargs)
+    monkeypatch.setattr(b.mt5,'get_candles',exact_history)
+    async def run():
+        result=await b.execute_trade_from_signal(signal(),manual=True)
+        assert result['success'] and result['pending']
+        assert len(sdk.sent)==1 and sdk.sent[0]['symbol']=='EURUSD#'
+        assert b.trade_history[0]['symbol']=='EURUSD#'
+        await b.reconcile_live()
+        assert b.trade_history[0]['status']=='OPEN'
+    asyncio.run(run())
+    assert {'get_candles','symbol_select','symbol_info','symbol_info_tick'}<=set(queried)

@@ -64,3 +64,13 @@ def test_durable_pending_mt5_api_response_uses_202(client,monkeypatch):
     monkeypatch.setattr(main.bot,'execute_trade_from_signal',pending)
     response=client.post('/api/order/manual',json={'action':'BUY'})
     assert response.status_code==202 and response.json()['pending']
+
+
+def test_broker_hash_suffix_is_saved_without_changing_strategy_or_limits(client):
+    before=client.get('/api/state').json()['config']
+    response=client.post('/api/config',json={'symbol':'EURUSD#'})
+    assert response.status_code==200,response.text
+    expected={**before,'symbol':'EURUSD#'}
+    assert response.json()['config']==expected
+    assert client.get('/api/state').json()['config']==expected
+    assert BotManager().config==expected
