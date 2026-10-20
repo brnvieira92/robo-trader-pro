@@ -7,16 +7,21 @@ com a guia aberta da Safirion (Binárias, Digital, Blitz e OTC), funcionando mes
 import asyncio
 import re
 import uuid
+import csv
+import io
+import json
+import sqlite3
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from urllib.parse import urlsplit
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, ValidationError
 from typing import Literal
@@ -136,17 +141,57 @@ async def get_state():
         raise HTTPException(503, detail="Dados de mercado indisponíveis; nenhuma ordem enviada.") from exc
 
 
+@app.get("/api/diagnostics/events")
+async def diagnostic_events(symbol: Optional[str]=None,kind: Optional[str]=None,
+                            limit: int=Query(100,ge=1,le=500),before: Optional[int]=Query(None,ge=1)):
+    try:
+        items=bot.journal.diagnostics(symbol,kind,limit,before)
+        return dict(items=items,next_before=items[-1]['id'] if len(items)==limit else None,
+                    operational=bot.operational_status())
+    except sqlite3.Error as exc:
+        raise HTTPException(503,detail='Diário temporariamente indisponível; monitoramento e recuperação continuam.') from exc
+
+
+@app.get("/api/diagnostics/summary")
+async def diagnostic_summary():
+    try:
+        return dict(items=bot.journal.diagnostic_summary(),operational=bot.operational_status())
+    except sqlite3.Error as exc:
+        raise HTTPException(503,detail='Resumo de diagnósticos temporariamente indisponível.') from exc
+
+
+@app.get("/api/diagnostics/export.csv")
+async def diagnostic_export(symbol: Optional[str]=None,kind: Optional[str]=None,
+                            limit: int=Query(1000,ge=1,le=5000),before: Optional[int]=Query(None,ge=1)):
+    try:
+        rows=bot.journal.diagnostics(symbol,kind,limit,before)
+    except sqlite3.Error as exc:
+        raise HTTPException(503,detail='Exportação temporariamente indisponível.') from exc
+    content=io.StringIO();writer=csv.writer(content)
+    writer.writerow(['id','symbol','timeframe','bar_time_source','kind','code','first_seen_utc','last_seen_utc','observations','payload_json'])
+    def cell(value):
+        value=str(value or '')
+        return "'"+value if value.startswith(('=','+','-','@')) else value
+    for row in rows:
+        writer.writerow([row['id'],cell(row['symbol']),row['timeframe'],cell(row['bar_time']),row['kind'],row['code'],
+            datetime.fromtimestamp(row['first_seen'],timezone.utc).isoformat(),datetime.fromtimestamp(row['last_seen'],timezone.utc).isoformat(),
+            row['observations'],json.dumps(row['payload'],ensure_ascii=False)])
+    headers={'Content-Disposition':'attachment; filename="diagnosticos.csv"'}
+    if len(rows)==limit:headers['X-Next-Before']=str(rows[-1]['id'])
+    return Response(content='\ufeff'+content.getvalue(),media_type='text/csv; charset=utf-8',headers=headers)
+
+
 @app.post("/api/bot/toggle")
 async def toggle_bot():
     if research_lock.locked() or (bot._mt5_busy and not bot.is_running):
         raise HTTPException(409, detail='Aguarde o laboratório encerrar antes de iniciar o robô.')
     if not bot.is_running:
         blocked = bot._risk_block(manual=True)
-        if blocked:
-            raise HTTPException(409, detail=blocked)
+    else:
+        blocked=None
     bot.is_running = not bot.is_running
     if bot.is_running:
-        bot.stats["status_reason"] = f"Robô ATIVO monitorando {bot.config['symbol']} ({bot.config['timeframe']})..."
+        bot.stats["status_reason"] = ("Monitoramento ativo; entradas bloqueadas: "+blocked) if blocked else f"Robô ATIVO monitorando {bot.config['symbol']} ({bot.config['timeframe']})..."
         bot.add_log("START", f"Robô iniciado automaticamente em {bot.config['symbol']} ({bot.config['market_type']}).")
     else:
         bot.stats["status_reason"] = "Robô PAUSADO pelo usuário."

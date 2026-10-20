@@ -122,6 +122,7 @@ class MLEngine:
         if len(df) < 100:
             return result
         signature = hashlib.sha256(pd.util.hash_pandas_object(df, index=True).values.tobytes()).hexdigest()
+        result.update(dataset_version=signature,model_version=hashlib.sha256((context+signature+'RF80-depth4-leaf6-seed42-v1').encode()).hexdigest())
         key = (context, signature)
         with self._cache_lock:
             if key in self._cache:
@@ -157,7 +158,7 @@ class MLEngine:
             action = ("BUY" if up > down else "SELL") if validated and confidence >= 60 else "NEUTRAL"
             self.samples_trained = len(X)
             self.last_accuracy = round(accuracy * 100, 1)
-            result.update(enabled=True, validated=validated, prob_up=round(up, 1), prob_down=round(down, 1),
+            result.update(validation_checks=dict(accuracy=accuracy>baseline,balanced=balanced>=.55,brier=brier<.25),enabled=True, validated=validated, prob_up=round(up, 1), prob_down=round(down, 1),
                           ml_action=action, ml_confidence=round(confidence, 1), accuracy=self.last_accuracy,
                           baseline_accuracy=round(baseline*100, 1), balanced_accuracy=round(balanced*100, 1),
                           brier_score=round(brier, 4),

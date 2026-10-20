@@ -162,3 +162,7 @@ Mantenha `data/paper.sqlite3` (ou o caminho em `TRADER_JOURNAL_PATH`) entre rein
 Os testes automatizados usam um SDK MT5 controlado para exercitar envio, SL/TP, cálculo de risco, rejeição, preenchimento parcial, resposta perdida, reinício e fechamento com custos; Telegram usa transporte simulado. Isso não substitui a validação com a corretora.
 
 Este ambiente Linux não possui o terminal MT5 Windows nem o token/chat do seu bot. Portanto não foi enviada uma ordem a uma corretora, nem uma mensagem ao seu Telegram durante a implementação. A etapa operacional pendente é conectar seu terminal Windows e seu bot e verificar esses fluxos na conta demo antes de usar uma conta real. Não há garantia de precisão dos sinais ou retorno financeiro.
+
+## Diagnóstico persistente e recuperação contínua
+
+Erros recuperáveis não desativam mais o pedido de automação. O serviço mantém monitoramento, alertas controlados e novas avaliações, respeitando os bloqueios de dados, risco e reconciliação. Consulte [Diagnóstico e recuperação](DIAGNOSTICO_RECUPERACAO.md) para interpretar os estados, consultar registros e exportar CSV. Ao encontrar descrição antiga de “robô pausado” em mensagens de proteção do histórico, interprete a operação como bloqueada para novas entradas; o estado atual de monitoramento é mostrado separadamente no painel e `/status`.

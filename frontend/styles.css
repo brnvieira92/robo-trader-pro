@@ -108,3 +108,7 @@
 @media(max-width:640px) {.price-plan-grid {grid-template-columns:1fr;}}
 
 #mt5ClockSummary {overflow-wrap:anywhere;}
+
+#operationalStatus,#decisionDiagnosticOutput {overflow-wrap:anywhere;white-space:pre-wrap;}
+#decisionDiagnosticOutput {max-height:420px;overflow:auto;}
+#diagnosticExport {color:#a6e9d5;text-decoration:underline;}

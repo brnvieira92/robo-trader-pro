@@ -12,9 +12,12 @@ class PaperJournal:
         with self.connection() as db:
             db.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, payload TEXT NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS trades (id TEXT PRIMARY KEY, day TEXT NOT NULL, payload TEXT NOT NULL)')
+            db.execute('CREATE TABLE IF NOT EXISTS diagnostic_events (id INTEGER PRIMARY KEY, event_key TEXT NOT NULL UNIQUE, kind TEXT NOT NULL, symbol TEXT NOT NULL, timeframe TEXT NOT NULL, bar_time TEXT, code TEXT NOT NULL, first_seen REAL NOT NULL, last_seen REAL NOT NULL, observations INTEGER NOT NULL DEFAULT 1, payload TEXT NOT NULL)')
+            db.execute('CREATE INDEX IF NOT EXISTS diagnostic_symbol_time ON diagnostic_events(symbol,first_seen)')
+            db.execute('CREATE INDEX IF NOT EXISTS diagnostic_kind_code ON diagnostic_events(kind,code)')
 
     def connection(self):
-        return sqlite3.connect(self.path)
+        return sqlite3.connect(self.path,timeout=1)
 
     def save(self, trade):
         with self.connection() as db:
@@ -88,3 +91,28 @@ class PaperJournal:
         with self.connection() as db:
             db.execute('INSERT INTO settings VALUES (?,?) ON CONFLICT(key) DO UPDATE SET payload=excluded.payload',
                        (key,json.dumps(value,allow_nan=False)))
+
+    def record_diagnostic(self, event):
+        with self.connection() as db:
+            db.execute('INSERT INTO diagnostic_events (event_key,kind,symbol,timeframe,bar_time,code,first_seen,last_seen,payload) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(event_key) DO UPDATE SET last_seen=excluded.last_seen,observations=diagnostic_events.observations+1,payload=excluded.payload',
+                (event['event_key'],event['kind'],event['symbol'],event['timeframe'],event.get('bar_time'),event['code'],event['observed_at'],event['observed_at'],json.dumps(event['payload'],allow_nan=False)))
+
+    def diagnostics(self, symbol=None, kind=None, limit=100, before=None):
+        filters=[];args=[]
+        if symbol is not None:filters.append('symbol=?');args.append(symbol)
+        if kind is not None:filters.append('kind=?');args.append(kind)
+        if before is not None:filters.append('id<?');args.append(before)
+        where=' WHERE '+' AND '.join(filters) if filters else ''
+        with self.connection() as db:
+            db.row_factory=sqlite3.Row
+            rows=db.execute('SELECT * FROM diagnostic_events'+where+' ORDER BY id DESC LIMIT ?',(*args,limit)).fetchall()
+            return [{**dict(row),'payload':json.loads(row['payload'])} for row in rows]
+
+    def diagnostic_summary(self):
+        with self.connection() as db:
+            rows=db.execute('SELECT symbol,kind,code,COUNT(*),SUM(observations) FROM diagnostic_events GROUP BY symbol,kind,code').fetchall()
+            return [dict(symbol=r[0],kind=r[1],code=r[2],events=r[3],observations=r[4]) for r in rows]
+
+    def diagnostic_count(self):
+        with self.connection() as db:
+            return db.execute('SELECT COUNT(*) FROM diagnostic_events').fetchone()[0]

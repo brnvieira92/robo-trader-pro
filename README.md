@@ -34,6 +34,14 @@ Use um único processo Uvicorn. A aplicação é local, sem autenticação multi
 - API valida parâmetros antes de alterar estado. Os controles são bloqueados enquanto há operação em curso; erros não são apresentados como sucesso.
 - Interface responsiva, diagnóstico de dados/IA/risco, estado offline, navegação por teclado, modal com Escape e foco contido, redução de animações e tratamento seguro de texto de logs.
 
+## Diagnóstico persistente e monitoramento contínuo — etapa 1
+
+O monitoramento continua solicitado após erros recuperáveis, rejeições de pré-validação e limites de risco; novas entradas permanecem bloqueadas enquanto os critérios não forem satisfeitos. Pausa explícita pelo painel/Telegram continua válida, e o processo reinicia pausado. Não há reenvio automático de ordem incerta.
+
+O painel inclui **Diagnóstico persistente de decisões**, consulta dos registros e exportação CSV por símbolo. Análises, filtros, tentativas, execução e recuperação ficam em `diagnostic_events` no mesmo SQLite do diário. O monitoramento e a consulta continuam separados da autorização financeira de uma ordem. Veja [estados, retentativas e consultas](docs/DIAGNOSTICO_RECUPERACAO.md).
+
+Esta etapa permanece no fluxo de um par. Não habilita execução multipares nem modifica a estratégia, as métricas exigidas, a confiança mínima configurada ou o dimensionamento de risco.
+
 ## Diário PAPER e limites
 
 Padrões: banca virtual de R$ 1.000, entrada de R$ 5, risco máximo de 1% por entrada, três perdas consecutivas, vinte entradas por sessão e intervalo de sessenta segundos. São parâmetros de pesquisa, não uma recomendação de investimento. Configuração, operações e resultados são gravados em `data/paper.sqlite3`, ignorado pelo Git. Para testes isolados, defina `TRADER_JOURNAL_PATH` apontando a outro arquivo.

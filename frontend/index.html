@@ -118,7 +118,7 @@
         <span id="telLatency" class="font-code-log text-code-log text-secondary font-bold">—</span>
       </div>
       <div class="flex items-center justify-between mb-space-xs">
-        <span class="font-label-caps text-label-caps text-on-surface-variant uppercase">Sinais Processados</span>
+        <span class="font-label-caps text-label-caps text-on-surface-variant uppercase">Eventos de diagnóstico</span>
         <span id="telSignalsProcessed" class="font-code-log text-code-log text-primary font-bold">1.482</span>
       </div>
       <div class="text-[10px] font-code-log text-on-surface-variant/80 border-t border-surface-container-high/40 pt-1 mt-1">
@@ -156,6 +156,13 @@
             <div><strong>Bot Telegram</strong><p id="telegramStatus" role="status">Não configurado. Use BotFather e o assistente local.</p><p>Comandos privados: /status e /pausar. Pausar impede novas entradas automáticas; não fecha posições abertas.</p></div>
             <button onclick="testTelegram()" id="btnTelegramTest">Testar Telegram</button>
           </div>
+          <div id="operationalStatus" class="audit-notice" role="status">Aguardando diagnóstico do monitoramento.</div>
+          <details id="decisionDiagnostics" class="research-panel">
+            <summary>Diagnóstico persistente de decisões</summary>
+            <p>Análises, bloqueios e recuperações do par atual. Abrir esta consulta não envia ordens. O monitoramento continua quando uma condição impede novas entradas.</p>
+            <div class="research-controls"><button type="button" onclick="loadDecisionDiagnostics()">Atualizar registros</button><a id="diagnosticExport" href="/api/diagnostics/export.csv">Exportar CSV do par</a></div>
+            <output id="decisionDiagnosticOutput" aria-live="polite">Clique em Atualizar registros para consultar o diário persistente.</output>
+          </details>
           <div class="audit-grid">
             <article class="audit-card"><span class="eyebrow">01 / ORIGEM DOS DADOS</span><strong id="dataSource">Aguardando servidor</strong><p id="dataDetail">Sem histórico validado.</p></article>
             <article class="audit-card"><span class="eyebrow">02 / VALIDAÇÃO TEMPORAL</span><strong id="validationScore">Sem evidência</strong><p id="validationDetail">Acurácia fora do treino, comparada à referência.</p></article>
@@ -1354,7 +1361,7 @@
         }
 
         // 13. Telemetria do Dock Esquerdo
-        document.getElementById('telSignalsProcessed').textContent = `${(safConn.ws_messages_received || 0) + (state.stats.total_trades || 0)}`;
+        document.getElementById('telSignalsProcessed').textContent = `${state.operational?.audit?.persisted_count || 0}`;
 
       } catch (err) {
       document.getElementById('lastUpdated').textContent = 'OFFLINE • '+err.message;
@@ -1382,6 +1389,11 @@
     function renderAudit(state) {
       const live = state.execution_mode === 'LIVE_MT5';
       const priceBased = state.config.market_type !== 'SAFIRION_OB';
+      const op=state.operational || {};
+      const stateLabels={PAUSED:'Pausado pelo usuário',MONITORING:'Monitoramento ativo',RECOVERING:'Monitoramento ativo em recuperação'};
+      const faults=Object.values(op.faults || {}).map(f => `${f.code}: ${f.message}`).join(' • ');
+      document.getElementById('operationalStatus').textContent=(stateLabels[op.state] || 'Monitorando')+' • '+(op.blocked_reason || state.risk.blocked_reason || 'Condições sendo avaliadas')+(faults ? ' • '+faults : '');
+      document.getElementById('diagnosticExport').href='/api/diagnostics/export.csv?'+new URLSearchParams({symbol:state.config.symbol});
       const account = state.connections.mt5.account || {};
       const clock = state.diagnostics.clock || {};
       document.getElementById('mt5ClockSummary').textContent = `Computador UTC: ${clock.computer_utc || '—'} • Tick bruto interpretado como UTC: ${clock.raw_tick_utc || '—'} • Tick normalizado UTC: ${clock.tick_utc || '—'} • Última vela bruta como UTC: ${clock.raw_bar_utc || '—'} • Última vela normalizada UTC: ${clock.bar_utc || '—'}`;
@@ -1428,6 +1440,20 @@
       document.getElementById('pricePlanPreview').innerHTML = Object.entries(state.trade_plans || {}).map(([side,p]) => `<div class="bg-surface-container-lowest rounded-lg p-space-sm text-xs price-plan-card"><strong>${side}</strong> ${p.ready ? `Entrada ${escapeHtml(formatPrice(p.entry_price))} • SL ${escapeHtml(formatPrice(p.stop_loss))} • TP ${escapeHtml(formatPrice(p.take_profit))}<br>Retorno/risco ${p.net_reward_risk.toFixed(2)} • perda estimada ${escapeHtml(formatMoney(p.estimated_loss,state.currency))} • lucro projetado ${escapeHtml(formatMoney(p.estimated_profit,state.currency))}<br>${escapeHtml(p.stop_basis)}; ${escapeHtml(p.target_basis)}. Prévia; revalidada na ordem.` : escapeHtml(p.reason)}</div>`).join('');
       if (priceBased && !live) document.getElementById('chartAvailability').textContent = 'PAPER Forex/B3: saída por preço no SL/TP ou encerramento manual. Sem prazo de expiração. PnL e quantidade são virtuais; não simulam integralmente custos e liquidez da corretora.';
       document.getElementById('cfgExpiration').disabled = priceBased || state.is_running || open;
+    }
+
+    async function loadDecisionDiagnostics() {
+      const output=document.getElementById('decisionDiagnosticOutput');
+      if (!latestState) return;
+      try {
+        const response=await apiFetch('/api/diagnostics/events?'+new URLSearchParams({symbol:latestState.config.symbol,limit:'30'}));
+        const data=await response.json();
+        output.textContent=data.items.map(e => {
+          const p=e.payload;
+          const failures=(p.checks || []).filter(g => g.status==='FAIL').map(g => g.code).join(', ');
+          return `${new Date(e.last_seen*1000).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'})} • ${e.symbol} / ${e.timeframe} • ${e.kind} [${e.code}]\n${p.reason || p.message || p.first_block || ''}${failures ? '\nBloqueios: '+failures : ''}\nID ${e.id} • análise ${p.analysis_id || '—'}`;
+        }).join('\n\n') || 'Nenhum registro disponível para este par.';
+      } catch (error) { output.textContent=error.message; }
     }
 
     async function runResearch() {

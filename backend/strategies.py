@@ -29,6 +29,7 @@ class SignalResult:
     expiration_minutes: Optional[int]
     indicators: Dict[str, Any]
     reason: str
+    diagnostic: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -407,11 +408,13 @@ class StrategyEngine:
 
         # Model estimates never inflate a heuristic technical score.
         # Refuse automated signals without independent chronological evidence.
+        raw_action, raw_confidence = action, confidence
+        directional_estimate = ml_pred['prob_up'] if action=='BUY' else (ml_pred['prob_down'] if action=='SELL' else ml_pred.get('ml_confidence',50.))
         if action in ("BUY", "SELL") and bool(params.get("use_ml_filter", True)):
             directional = ml_pred["prob_up"] if action == "BUY" else ml_pred["prob_down"]
             if not ml_pred.get("validated") or directional < 60.0:
                 action, confidence = "NEUTRAL", 0.0
-                reason = "Filtro temporal: " + ml_pred["reason"]
+                reason = "Filtro temporal: " + (ml_pred["reason"] if not ml_pred.get('validated') else f'Estimativa direcional {directional:.1f}% abaixo de 60%.')
 
         indicators_snapshot["score_kind"] = "technical_confluence_not_win_probability"
         indicators_snapshot["regime"] = ("TENDÊNCIA" if abs(float(curr["ema_fast"])-float(curr["ema_slow"])) / atr > .7 else "LATERAL")
@@ -436,7 +439,10 @@ class StrategyEngine:
                 stop_loss = round(price + (atr * sl_atr_mult), 5)
                 take_profit = round(price - (atr * tp_atr_mult), 5)
 
-        return SignalResult(
+        diagnostic=dict(candidate_action=raw_action,candidate_confidence=round(raw_confidence,1),
+                        directional_estimate=directional_estimate,ml_estimated_direction=('BUY' if ml_pred['prob_up']>ml_pred['prob_down'] else ('SELL' if ml_pred['prob_down']>ml_pred['prob_up'] else 'NEUTRAL')),
+                        extreme_volatility=bool(float(curr['high'])-float(curr['low'])>atr*3))
+        result = SignalResult(
             symbol=symbol,
             market_type=market_type,
             timeframe=timeframe,
@@ -450,3 +456,5 @@ class StrategyEngine:
             indicators=indicators_snapshot,
             reason=reason,
         )
+        result.diagnostic=diagnostic
+        return result

@@ -40,10 +40,12 @@ A prévia BUY/SELL no painel mostra preços, perda/lucro estimados, retorno/risc
 ## Acompanhamento e interrupções
 
 - **PAPER Forex/B3:** a posição permanece aberta até preço no SL/TP ou “Encerrar PAPER”. O preenchimento usa o preço observado, incluindo gaps, e o custo fixo configurado. Não é uma execução da corretora; o saldo é virtual.
-- Se faltar cotação, não se inventa lucro ou encerramento. PAPER permanece pendente e novas entradas são pausadas. O programa precisa estar aberto para acompanhar esses stops virtuais; não existem ordens protetoras PAPER no servidor.
+- Se faltar cotação, não se inventa lucro ou encerramento. PAPER permanece pendente e novas entradas são bloqueadas; o monitoramento continua tentando recuperar a cotação. O programa precisa estar aberto para acompanhar esses stops virtuais; não existem ordens protetoras PAPER no servidor.
 - Após reinício, posições PAPER baseadas em dados MT5 reais aguardam reconexão à mesma conta/servidor. Em fonte artificial, o reinício interrompe a simulação e debita conservadoramente a reserva; isso não é perda confirmada de mercado.
 - **LIVE_MT5:** SL/TP ficam no servidor. O programa acompanha posição/histórico e apura negócios e custos identificados. O terminal é o local para conferir e encerrar manualmente posições reais. Uma resposta incerta não provoca reenvio automático.
 - **Pausar** impede novas entradas automáticas; o acompanhamento de posições continua. Uma posição não fecha só porque passou um minuto ou terminou a vela.
 - Uma posição carregada para o dia seguinte continua sendo acompanhada. PnL realizado é atribuído ao dia UTC do encerramento no PAPER e dos negócios no MT5.
 
 O diagnóstico de execução também está em `GET /api/execution/diagnostics`, sem credenciais. Telegram e instruções do BotFather permanecem em [MT5_TELEGRAM.md](MT5_TELEGRAM.md).
+
+O funcionamento contínuo, os alertas e os registros persistentes estão descritos em [Diagnóstico e recuperação](DIAGNOSTICO_RECUPERACAO.md).

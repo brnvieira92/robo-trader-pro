@@ -313,7 +313,7 @@ class MT5Executor:
                 within_budget=loss is not None and math.isfinite(float(loss)) and max(0,-float(loss))<=trade['risk_budget']+1e-8
                 protected=protected and sl>0 and stop_not_widened and target_direction and within_budget
             return dict(**common,status='OPEN',floating_pnl=sum(float(getattr(p,'profit',0))+float(getattr(p,'swap',0)) for p in open_positions),
-                        protected=protected,sync_note='Posição confirmada no terminal.' if protected else 'Proteções não confirmadas: robô pausado; verifique SL/TP no terminal.')
+                        protected=protected,sync_note='Posição confirmada no terminal.' if protected else 'Proteções não confirmadas: novas entradas bloqueadas; monitoramento ativo. Verifique SL/TP no terminal.')
         if exit_volume+1e-8 < entry_volume:
             return dict(**common,status='PENDING',sync_note='Posição ausente, mas fechamento ainda incompleto no histórico. Aguardando sincronização.')
         total=common['realized_pnl']
