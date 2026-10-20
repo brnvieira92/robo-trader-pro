@@ -141,6 +141,14 @@ async def get_state():
         raise HTTPException(503, detail="Dados de mercado indisponíveis; nenhuma ordem enviada.") from exc
 
 
+@app.get("/api/forex/radar")
+async def forex_radar():
+    # Read model only: no analysis, SDK calls or trading side effects.
+    if not bot.config.get('forex_multi_enabled'):
+        return dict(enabled=False, rows=[], read_only=True)
+    return bot.get_market_snapshot()['forex_radar']
+
+
 @app.get("/api/diagnostics/events")
 async def diagnostic_events(symbol: Optional[str]=None,kind: Optional[str]=None,
                             limit: int=Query(100,ge=1,le=500),before: Optional[int]=Query(None,ge=1)):

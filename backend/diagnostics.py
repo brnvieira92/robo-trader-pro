@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import time
+import threading
 from collections import OrderedDict
 
 
@@ -62,6 +63,7 @@ def analysis_event(snapshot, last_bar, last_trade_timestamp):
 
 class DiagnosticRecorder:
     def __init__(self,journal):
+        self._lock = threading.RLock()
         self.journal=journal
         self.pending=OrderedDict()
         self.healthy=True;self.error=None;self.dropped=0
@@ -69,36 +71,39 @@ class DiagnosticRecorder:
         self.persisted_count=journal.diagnostic_count()
 
     def record(self,event):
-        event={**event,'observed_at':time.time()}
-        if event['event_key']!=self.last_key:
-            if len(self.pending)>=1000:
-                self.pending.popitem(last=False);self.dropped+=1
-            self.pending[event['event_key']]=event
-            self.last_key=event['event_key'];self.last_event=event
-        return self.flush()
+        with self._lock:
+            event={**event,'observed_at':time.time()}
+            if event['event_key']!=self.last_key:
+                if len(self.pending)>=1000:
+                    self.pending.popitem(last=False);self.dropped+=1
+                self.pending[event['event_key']]=event
+                self.last_key=event['event_key'];self.last_event=event
+            return self.flush()
 
     def flush(self):
-        now=time.monotonic()
-        if not self.healthy and now-self.last_flush<2:
-            return False
-        self.last_flush=now
-        try:
-            written=False
-            for key in list(self.pending)[:100]:
-                self.journal.record_diagnostic(self.pending[key])
-                del self.pending[key]
-                written=True
-            if written:self.persisted_count=self.journal.diagnostic_count()
-            self.healthy=not self.pending
-            self.error=None if self.healthy else 'Diagnósticos aguardando persistência.'
-        except Exception:
-            self.healthy=False
-            self.error='Diário de diagnósticos indisponível; novas entradas bloqueadas até recuperação.'
-        return self.healthy
+        with self._lock:
+            now=time.monotonic()
+            if not self.healthy and now-self.last_flush<2:
+                return False
+            self.last_flush=now
+            try:
+                written=False
+                for key in list(self.pending)[:100]:
+                    self.journal.record_diagnostic(self.pending[key])
+                    del self.pending[key]
+                    written=True
+                if written:self.persisted_count=self.journal.diagnostic_count()
+                self.healthy=not self.pending
+                self.error=None if self.healthy else 'Diagnósticos aguardando persistência.'
+            except Exception:
+                self.healthy=False
+                self.error='Diário de diagnósticos indisponível; novas entradas bloqueadas até recuperação.'
+            return self.healthy
 
     def status(self):
-        return dict(healthy=self.healthy,persisted_count=self.persisted_count,pending=len(self.pending),dropped=self.dropped,error=self.error,
-                    last_event_key=self.last_event['event_key'] if self.last_event else None)
+        with self._lock:
+            return dict(healthy=self.healthy,persisted_count=self.persisted_count,pending=len(self.pending),dropped=self.dropped,error=self.error,
+                        last_event_key=self.last_event['event_key'] if self.last_event else None)
 
 
 class RecoveryState:

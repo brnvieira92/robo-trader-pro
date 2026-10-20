@@ -145,6 +145,20 @@
           </div>
         </div>
 
+        <section class="audit-workspace" aria-label="Radar Forex">
+          <div class="audit-heading"><div><span class="eyebrow">MONITORAMENTO MULTIPARES</span><h2>Radar Forex</h2><p>Leitura do motor automático. Uma posição ou intenção por vez na conta inteira.</p></div></div>
+          <p id="radarGlobal" role="status">Modo individual preservado. Ative o motor nas configurações abaixo.</p>
+          <div id="forexRadarRows" class="forex-radar-grid"></div>
+          <details class="execution-controls" style="display:block;margin-top:16px">
+            <summary>Configurar pares monitorados</summary>
+            <p>Pause o robô e aguarde as posições encerrarem. Use o símbolo exato com permissão de negociação no MT5 (por exemplo, EURUSD#). Mantenha Random Forest, filtro ML e score mínimo de 78%. O timeframe é o selecionado no Setup.</p>
+            <label><input id="cfgForexMulti" type="checkbox"> Ativar motor multipares automático (MT5 Forex)</label>
+            <div id="forexPairSettings" class="forex-radar-grid"></div>
+            <button id="cfgSaveForexPairs" type="button" onclick="saveForexPairs()">Salvar seleção de pares</button>
+            <p>Selecionar pares não inicia o robô. Use Iniciar MT5 após salvar. O gráfico principal continua mostrando o ativo do Setup; o Radar acompanha todos os selecionados.</p>
+          </details>
+        </section>
+
         <section class="audit-workspace" aria-label="Qualidade da análise">
           <div class="audit-heading"><div><span class="eyebrow">ANÁLISE & EXECUÇÃO</span><h1>Decidir também é esperar.</h1><p>Sinais explicáveis, dados identificados e risco limitado antes de cada entrada.</p></div><span id="executionDetailBadge" class="paper-pill">PAPER • SEM ORDENS REAIS</span></div>
           <div class="execution-controls">
@@ -904,6 +918,58 @@
       if (symbolSelect.value) saveConfig();
     }
 
+    const forexPairNames = ['EURUSD','USDJPY','GBPUSD','USDCHF'];
+    function initializeForexSettings(config) {
+      document.getElementById('cfgForexMulti').checked = !!config.forex_multi_enabled;
+      const container = document.getElementById('forexPairSettings');
+      container.replaceChildren();
+      for (const pair of forexPairNames) {
+        const saved = (config.forex_pairs || []).find(p => p.pair === pair);
+        const legacy = config.symbol.startsWith(pair) ? config.symbol : pair;
+        const label = document.createElement('label');
+        const check = document.createElement('input'); check.type='checkbox'; check.id='cfgPairEnabled'+pair;
+        check.checked = saved?.enabled ?? config.symbol.startsWith(pair);
+        const text = document.createTextNode(' '+pair+' — símbolo exato');
+        const input = document.createElement('input'); input.id='cfgPairSymbol'+pair;
+        input.value = saved?.symbol || legacy; input.maxLength=30;
+        input.setAttribute('aria-label','Símbolo MT5 de '+pair);
+        check.disabled=input.disabled=!!latestState?.is_running || !!latestState?.has_open_trade;
+        label.append(check,text,input); container.append(label);
+      }
+    }
+    async function saveForexPairs() {
+      const pairs = forexPairNames.map(pair => ({pair, enabled:document.getElementById('cfgPairEnabled'+pair).checked,
+        symbol:document.getElementById('cfgPairSymbol'+pair).value.trim()}));
+      const enabled = document.getElementById('cfgForexMulti').checked;
+      const selected = pairs.filter(p => p.enabled);
+      const focus = selected.some(p => p.symbol === latestState.config.symbol) ? latestState.config.symbol : selected[0]?.symbol;
+      try {
+        await apiFetch('/api/config', {method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({forex_multi_enabled:enabled,forex_pairs:pairs,...(enabled && focus ? {symbol:focus}: {})})});
+        isInitialized=false; showToast('Seleção salva. O motor respeitará os filtros e o risco global.','success');
+        await fetchState();
+      } catch (err) { showToast(err.message,'error'); }
+    }
+    function renderForexRadar(state) {
+      const radar=state.forex_radar;
+      const container=document.getElementById('forexRadarRows'); container.replaceChildren();
+      document.getElementById('radarGlobal').textContent=radar?.enabled
+        ? (radar.global_block || 'Motor multipares: modelos independentes; execução automática com risco global.')+(radar.updated_at ? ' • Atualizado '+new Date(radar.updated_at*1000).toLocaleTimeString() : '')
+        : 'Modo individual preservado. O Radar passa a monitorar após ativar o motor multipares.';
+      for (const pair of forexPairNames) {
+        const row=radar?.rows?.find(r => r.pair===pair);
+        const card=document.createElement('article'); card.className='forex-radar-card';
+        const title=document.createElement('h3'); title.textContent=pair+(row && row.symbol!==pair ? ' • '+row.symbol : '');
+        const status=document.createElement('p'); status.textContent=row?.status || 'DESATIVADO';
+        const signal=document.createElement('p'); signal.textContent='Sinal: '+(row?.action || '—')+' • Confiança ML: '+(row?.confidence == null ? '—' : row.confidence.toFixed(1)+'%');
+        const valid=document.createElement('p'); valid.textContent='Validação: '+(row?.validated == null ? '—' : row.validated ? 'aprovada' : 'sem vantagem demonstrada');
+        const reason=document.createElement('p'); reason.textContent=row?.blocked_reason || row?.signal_reason || 'Par não selecionado.';
+        const link=document.createElement('a'); link.textContent='Exportar diagnóstico deste símbolo';
+        link.href='/api/diagnostics/export.csv?'+new URLSearchParams({symbol:row?.symbol || pair});
+        card.append(title,status,signal,valid,reason,link); container.append(card);
+      }
+    }
+
     async function saveConfig() {
       const payload = {
         execution_mode: document.getElementById('cfgExecutionMode').value,
@@ -1069,6 +1135,7 @@
 
         // 1. Inicializa inputs uma única vez
         if (!isInitialized) {
+          initializeForexSettings(state.config);
           document.getElementById('cfgExecutionMode').value = state.config.execution_mode;
           for (const [id,key] of Object.entries({cfgMt5TickOffset:'mt5_tick_time_offset_minutes',cfgMt5BarOffset:'mt5_bar_time_offset_minutes',cfgMt5Spread:'mt5_max_spread_points',cfgMt5Deviation:'mt5_deviation_points',cfgMt5VolumeCap:'mt5_volume_cap',cfgMt5Buffer:'mt5_cost_buffer'})) document.getElementById(id).value = state.config[key];
           document.getElementById('cfgMarketType').value = state.config.market_type;
@@ -1387,6 +1454,7 @@
       catch (err) { showToast(err.message,'error'); }
     }
     function renderAudit(state) {
+      renderForexRadar(state);
       const live = state.execution_mode === 'LIVE_MT5';
       const priceBased = state.config.market_type !== 'SAFIRION_OB';
       const op=state.operational || {};
@@ -1426,7 +1494,7 @@
       document.getElementById('cfgCustomBalance').disabled = state.execution_mode === 'LIVE_MT5' || state.is_running || open || state.stats.total_trades > 0;
       document.getElementById('cfgUseMartingale').disabled = true;
       document.getElementById('cfgMartingaleFactor').disabled = true;
-      for (const id of ['btn-call','btn-put']) document.getElementById(id).disabled = open || state.risk.next_amount <= 0;
+      for (const id of ['btn-call','btn-put']) document.getElementById(id).disabled = !!state.config.forex_multi_enabled || open || state.risk.next_amount <= 0;
       document.getElementById('btnToggleBot').disabled = false;
       document.getElementById('researchRun').disabled = researchBusy || state.is_running || open;
       document.getElementById('cfgExpiration').closest('.flex.flex-col').hidden = priceBased;

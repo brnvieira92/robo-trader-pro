@@ -32,6 +32,13 @@ class StrategyParams(BaseModel):
             raise ValueError('EMA rápida deve ser menor que a lenta.')
         return self
 
+class ForexPair(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    pair: Literal['EURUSD', 'USDJPY', 'GBPUSD', 'USDCHF']
+    symbol: str = Field(min_length=2, max_length=30, pattern=r'^[A-Za-z0-9_$./#-]+$')
+    enabled: bool = False
+
+
 class TradingConfig(BaseModel):
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
     execution_mode: Literal['PAPER', 'LIVE_MT5'] = 'PAPER'
@@ -47,6 +54,8 @@ class TradingConfig(BaseModel):
     market_type: Literal['SAFIRION_OB', 'MT5_B3', 'MT5_FOREX'] = 'SAFIRION_OB'
     safirion_sub_type: Literal['BINARY', 'DIGITAL', 'BLITZ'] = 'BINARY'
     symbol: str = Field('EURUSD', min_length=2, max_length=30, pattern=r'^[A-Za-z0-9_$./#-]+$')
+    forex_multi_enabled: bool = False
+    forex_pairs: list[ForexPair] = Field(default_factory=list, max_length=4)
     timeframe: Literal['M1', 'M5', 'M15', 'M30', 'H1'] = 'M1'
     strategy_id: STRATEGIES = 'bollinger_rsi_reversal'
     min_confidence: float = Field(78, ge=50, le=100)
@@ -73,6 +82,17 @@ class TradingConfig(BaseModel):
 
     @model_validator(mode='after')
     def native_execution_market(self):
+        if len({p.pair for p in self.forex_pairs}) != len(self.forex_pairs) or len({p.symbol for p in self.forex_pairs}) != len(self.forex_pairs):
+            raise ValueError('Pares e símbolos exatos devem ser únicos.')
+        if self.forex_multi_enabled:
+            if self.market_type != 'MT5_FOREX' or self.execution_mode != 'LIVE_MT5':
+                raise ValueError('Motor multipares exige MT5 Forex com conta vinculada; PAPER continua no modo individual.')
+            if self.strategy_id != 'ml_random_forest' or self.min_confidence < 78 or not self.strategy_params.use_ml_filter:
+                raise ValueError('Multipares exige Random Forest, filtro ML ativo e score mínimo de 78%.')
+            if not any(p.enabled for p in self.forex_pairs):
+                raise ValueError('Selecione pelo menos um par para monitorar.')
+            if self.symbol not in [p.symbol for p in self.forex_pairs if p.enabled]:
+                raise ValueError('O símbolo do gráfico deve estar entre os pares selecionados.')
         if self.execution_mode == 'LIVE_MT5' and (self.mt5_account_login is None or not self.mt5_account_server):
             raise ValueError('Execução MT5 exige conta e servidor vinculados pela conexão do terminal.')
         if self.execution_mode == 'LIVE_MT5' and self.market_type == 'SAFIRION_OB':

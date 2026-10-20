@@ -40,7 +40,11 @@ O monitoramento continua solicitado após erros recuperáveis, rejeições de pr
 
 O painel inclui **Diagnóstico persistente de decisões**, consulta dos registros e exportação CSV por símbolo. Análises, filtros, tentativas, execução e recuperação ficam em `diagnostic_events` no mesmo SQLite do diário. O monitoramento e a consulta continuam separados da autorização financeira de uma ordem. Veja [estados, retentativas e consultas](docs/DIAGNOSTICO_RECUPERACAO.md).
 
-Esta etapa permanece no fluxo de um par. Não habilita execução multipares nem modifica a estratégia, as métricas exigidas, a confiança mínima configurada ou o dimensionamento de risco.
+A etapa 1 preservou o fluxo individual. As etapas seguintes acrescentam o **motor multipares opcional**, mantendo o modo individual como padrão e preservando filtros e risco.
+
+## Radar e motor Forex multipares
+
+Seleção independente de EURUSD, USDJPY, GBPUSD e USDCHF, com códigos exatos da corretora, modelos Random Forest separados e score mínimo de 78%. Um coordenador serializa consultas/execução, mantém uma única posição ou intenção na conta inteira e conserva o orçamento global. Falhas locais ficam isoladas; incerteza de exposição ou persistência bloqueia novas entradas sem desligar o monitoramento. O Radar é uma projeção em cache, sem decisões ou ordens disparadas por consultas da interface. Consulte [ativação em demo, estados, diagnóstico e limitações](docs/FOREX_MULTIPARES.md).
 
 ## Diário PAPER e limites
 

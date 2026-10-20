@@ -112,6 +112,8 @@ class StrategyEngine:
         timeframe: str,
         strategy_id: str,
         params: Optional[Dict[str, Any]] = None,
+        model_engine=None,
+        model_context=None,
     ) -> SignalResult:
         params = params or {}
         validate_candles(df)
@@ -138,7 +140,7 @@ class StrategyEngine:
         atr = float(curr["atr"]) if float(curr["atr"]) > 0 else price * 0.0015
 
         # Executa o motor de Machine Learning (Random Forest scikit-learn) nas velas enriquecidas
-        ml_pred = ml_engine.predict_next_candle(df, context=f"{market_type}:{symbol}:{timeframe}:{params.get('data_source', 'unknown')}")
+        ml_pred = (model_engine or ml_engine).predict_next_candle(df, context=f"{model_context or market_type}:{symbol}:{timeframe}:{params.get('data_source', 'unknown')}")
 
         indicators_snapshot = {
             "support": float(df['low'].tail(params.get('structure_lookback',20)).min()),

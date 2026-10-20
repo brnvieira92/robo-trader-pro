@@ -121,6 +121,12 @@ class MT5Executor:
     def prepare(self, config, signal, remaining_loss_budget, client_tag, remaining_goal_account=None):
         sdk = self.sdk
         account = self.account(config['mt5_account_login'], config['mt5_account_server'], trading=True)
+        if config.get('forex_multi_enabled'):
+            positions, orders = sdk.positions_get(), sdk.orders_get()
+            if positions is None or orders is None:
+                raise MT5ExecutionError('Não foi possível confirmar exposição global da conta.')
+            if positions or orders:
+                raise MT5ExecutionError('Já há posição ou ordem na conta; exposição global bloqueada.')
         symbol = config['symbol']
         if not sdk.symbol_select(symbol, True):
             raise MT5ExecutionError('Símbolo não disponível. Use o código negociável exato da corretora, incluindo sufixos.')
@@ -217,6 +223,14 @@ class MT5Executor:
         """Called once, only after the SUBMITTING intent has been committed."""
         sdk=self.sdk
         self.account(trade['account_login'],trade['account_server'],trading=True)
+        if trade.get('forex_multi'):
+            positions, orders = sdk.positions_get(), sdk.orders_get()
+            if positions is None or orders is None:
+                return dict(status='REJECTED', success=False, pending=False,
+                    message='Envio cancelado antes de order_send: exposição global não confirmada.')
+            if positions or orders:
+                return dict(status='REJECTED', success=False, pending=False,
+                    message='Envio cancelado antes de order_send: surgiu posição ou ordem na conta.')
         try:
             result=sdk.order_send(trade['request'])
         except Exception:
