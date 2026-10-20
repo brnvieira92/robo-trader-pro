@@ -1501,9 +1501,11 @@
       const live = state.execution_mode === 'LIVE_MT5';
       const priceBased = state.config.market_type !== 'SAFIRION_OB';
       const op=state.operational || {};
-      const stateLabels={PAUSED:'Pausado pelo usuário',MONITORING:'Monitoramento ativo',RECOVERING:'Monitoramento ativo em recuperação'};
-      const faults=Object.values(op.faults || {}).map(f => `${f.code}: ${f.message}`).join(' • ');
-      document.getElementById('operationalStatus').textContent=(stateLabels[op.state] || 'Monitorando')+' • '+(op.blocked_reason || state.risk.blocked_reason || 'Condições sendo avaliadas')+(faults ? ' • '+faults : '');
+      const stateLabels={PAUSED:'Pausado pelo usuário',MONITORING:'Monitoramento solicitado',RECOVERING:'Falha ou espera de recuperação registrada'};
+      const faults=Object.entries(op.faults || {}).map(([key,f]) => `${key} [${f.code}]: ${f.message}`).join(' • ');
+      const pending=Object.entries(op.pending_revalidation || {}).map(([key,f]) => `${key} [${f.code}]: ${f.message}`).join(' • ');
+      const operationalReason=op.blocked_reason || faults || 'Sem falha operacional ativa registrada.';
+      document.getElementById('operationalStatus').textContent=(stateLabels[op.state] || 'Aguardando diagnóstico')+'\nOperacional: '+operationalReason+'\nAnálises: '+(state.stats.status_reason || state.risk.blocked_reason || 'Condições sendo avaliadas')+(pending ? '\nRejeições anteriores aguardando revalidação: '+pending+'. O fim da espera não aprova uma entrada.' : '');
       document.getElementById('diagnosticExport').href='/api/diagnostics/export.csv?'+new URLSearchParams({symbol:state.config.symbol});
       const account = state.connections.mt5.account || {};
       const clock = state.diagnostics.clock || {};

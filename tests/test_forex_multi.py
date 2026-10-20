@@ -290,6 +290,53 @@ def test_pair_recovers_without_losing_other_models(live_bot,monkeypatch):
     assert not sdk.sent
 
 
+def test_expired_stop_rejection_keeps_scanning_and_revalidates_before_send(live_bot, monkeypatch):
+    b, sdk = live_bot
+    multi = enable(b)
+    b._multi = multi
+    b.is_running = True
+    attempts = []
+    def reject(*args):
+        attempts.append(args[0]['symbol'])
+        raise MT5ExecutionError('Stop estrutural distante demais para a volatilidade atual; entrada descartada.')
+    monkeypatch.setattr(b.live, 'prepare', reject)
+    snapshot = candidate(multi.views['EURUSD'])
+    asyncio.run(b._execute_mt5(snapshot['signal'], snapshot))
+    key = 'pair-preflight:EURUSD#'
+    assert b.operational_status()['state'] == 'RECOVERING'
+    b.recovery.faults[key]['retry_at'] = 0
+    asyncio.run(multi.cycle())
+    assert len(multi.rows) == 4 and not sdk.sent
+    assert b.operational_status()['state'] == 'MONITORING'
+    assert key in b.operational_status()['pending_revalidation']
+    candidates(multi, monkeypatch)
+    asyncio.run(multi.cycle())
+    assert attempts.count('EURUSD#') == 2 and not sdk.sent
+    assert b.recovery.faults[key]['attempts'] == 2
+    assert b.operational_status()['state'] == 'RECOVERING'
+    assert b.config['min_confidence'] == 78
+    assert b.config['strategy_params']['use_ml_filter']
+
+
+def test_pair_operational_failure_is_visible_without_blocking_other_pairs(live_bot, monkeypatch):
+    b, sdk = live_bot
+    multi = enable(b)
+    b._multi = multi
+    b.is_running = True
+    def broken():
+        raise RuntimeError('Falha de metadados EURUSD#')
+    monkeypatch.setattr(multi.views['EURUSD'], 'refresh', broken)
+    asyncio.run(multi.cycle())
+    status = b.operational_status()
+    assert status['state'] == 'RECOVERING'
+    assert 'pair:EURUSD#:pair' in status['faults']
+    assert len(multi.rows) == 4 and multi.rows['USDCHF']['status'] != 'ERRO'
+    assert b._runtime_block() is None
+    assert 'Falha de metadados EURUSD#' in b.telegram_status()
+    assert 'Última atualização USDCHF#:' in b.telegram_status()
+    assert not sdk.sent
+
+
 def test_only_selected_pairs_are_analyzed_and_budget_projection_is_current(live_bot,monkeypatch):
     b,sdk=live_bot
     multi=enable(b,entry_amount=8)

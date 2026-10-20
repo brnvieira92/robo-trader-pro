@@ -131,13 +131,28 @@ class BotManager:
         account=f"{c['mt5_account_login']} / {c['mt5_account_server']}" if c['execution_mode']=='LIVE_MT5' else 'banca virtual'
         currency=self.mt5.account_info.get('currency','') if c['execution_mode']=='LIVE_MT5' else 'BRL virtual'
         monitored = ', '.join(p['symbol'] for p in c.get('forex_pairs', []) if p['enabled']) if c.get('forex_multi_enabled') else c['symbol']
-        monitoring_label={'PAUSED':'PAUSADO','MONITORING':'MONITORANDO','RECOVERING':'EM RECUPERAÇÃO'}[self.operational_status()['state']]
+        operational = self.operational_status()
+        monitoring_label={'PAUSED':'PAUSADO','MONITORING':'MONITORANDO','RECOVERING':'EM RECUPERAÇÃO'}[operational['state']]
+        active = ' • '.join(f"{key} [{fault['code']}]: {fault['message']}" for key, fault in operational['faults'].items())
+        pending_revalidation = ' • '.join(f"{key} [{fault['code']}]" for key, fault in operational['pending_revalidation'].items())
+        operational_reason = operational['blocked_reason'] or active or 'Sem falha operacional ativa registrada.'
+        details = f"\nCausa operacional: {operational_reason}"
+        if pending_revalidation:
+            details += f"\nRejeições anteriores aguardando revalidação: {pending_revalidation}. Nenhuma entrada autorizada por expiração da espera."
+        if c.get('forex_multi_enabled'):
+            rows = self._multi.rows if self._multi else {}
+            for item in c.get('forex_pairs', []):
+                if item['enabled']:
+                    updated = rows.get(item['pair'], {}).get('updated_at')
+                    last_analysis = datetime.fromtimestamp(updated, timezone.utc).isoformat(timespec='seconds') if updated else 'aguardando primeira análise'
+                    details += f"\nÚltima atualização {item['symbol']}: {last_analysis}"
         pending=sum(t.get('mode')=='LIVE_MT5' and t['status'] in ACTIVE_LIVE for t in self.trade_history)
         return (f"ProspeTraderBot\nModo: {c['execution_mode']} | {'ATIVO' if self.is_running else 'PAUSADO'}\n"
                 f"Conta: {account}\nAtivo(s): {monitored} / {c['timeframe']}\n"
                 f"PnL realizado hoje (UTC): {self.stats['daily_pnl']:.2f} {currency}\n"
                 f"PnL aberto: {self.stats.get('floating_pnl',0):.2f} {currency}\nPosições/intenção MT5 pendentes: {pending}\n"
-                f"Monitoramento: {monitoring_label}\nMotivo atual: {self.stats['status_reason']}")
+                f"Monitoramento: {monitoring_label}{details}\nResultado das análises: {self.stats['status_reason']}\n"
+                f"Status gerado em UTC: {datetime.now(timezone.utc).isoformat(timespec='seconds')}")
 
     def pause_from_telegram(self):
         self.is_running=False
@@ -205,13 +220,15 @@ class BotManager:
     def _recover(self, key):
         old=self.recovery.clear(key)
         if old:
-            self.add_log('INFO',f"Recuperação: {key}. Condições serão reavaliadas; limites permanecem ativos.")
+            preflight = key == 'preflight' or key.startswith('pair-preflight:')
+            outcome = 'Rejeição anterior encerrada após revalidação.' if preflight else f'Componente {key} voltou a responder.'
+            self.add_log('INFO',f"Recuperação: {key}. {outcome} Limites permanecem ativos.")
             self._diagnostic_event('RECOVERY',old['code'],dict(component=key,previous_fault=old))
             notification_key=('recovery',key,old['code'],self.config['symbol'])
             if time.time()-self.recovery.alerted.get(notification_key,0)>=300:
                 self.recovery.alerted[notification_key]=time.time()
                 self._notify('recovery:'+uuid.uuid4().hex,
-                    f"RECUPERAÇÃO {self.config['symbol']} [{old['code']}]\nComponente {key} voltou a responder. Automação {'solicitada' if self.is_running else 'pausada pelo usuário'}; todos os filtros serão reavaliados.")
+                    f"RECUPERAÇÃO {self.config['symbol']} [{old['code']}]\n{outcome} Automação {'solicitada' if self.is_running else 'pausada pelo usuário'}; todos os filtros serão reavaliados.")
 
     def _runtime_block(self):
         if not self.audit.healthy:
@@ -224,9 +241,18 @@ class BotManager:
 
     def operational_status(self):
         block=self._runtime_block()
+        active, pending = self.recovery.presentation()
+        # Include local incidents for visibility only. The coordinator retains
+        # its existing per-pair backoff and global execution safety decisions.
+        if self.config.get('forex_multi_enabled') and self._multi:
+            for view in self._multi.views.values():
+                local_active, local_pending = view.recovery.presentation()
+                prefix = 'pair:'+view.config['symbol']+':'
+                active.update({prefix+key: fault for key, fault in local_active.items()})
+                pending.update({prefix+key: fault for key, fault in local_pending.items()})
         return dict(automation_requested=self.is_running,
-                    state='PAUSED' if not self.is_running else ('RECOVERING' if block or self.recovery.faults else 'MONITORING'),
-                    blocked_reason=block,faults=dict(self.recovery.faults),audit=self.audit.status(),
+                    state='PAUSED' if not self.is_running else ('RECOVERING' if block or active else 'MONITORING'),
+                    blocked_reason=block,faults=active,pending_revalidation=pending,audit=self.audit.status(),
                     pending_trade_saves=len(self._pending_trade_saves),pending_notifications=len(self._pending_notifications))
 
     def _save_trade(self, trade):

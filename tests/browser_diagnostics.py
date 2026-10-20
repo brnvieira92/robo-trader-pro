@@ -15,6 +15,28 @@ with sync_playwright() as p:
         page.goto(base,wait_until='networkidle')
         page.wait_for_function("document.querySelector('#lastUpdated').textContent.includes('Atualizado')")
         assert 'Pausado pelo usuário' in page.locator('#operationalStatus').inner_text()
+        # Render incident phases using a copy; never start or configure the bot.
+        page.evaluate("""() => {
+          const state=structuredClone(latestState);
+          state.stats.status_reason='Sem confluência técnica suficiente.';
+          state.operational={state:'RECOVERING',blocked_reason:null,
+            faults:{sdk:{code:'SDK_SLOW',message:'MT5 sem resposta.'}},pending_revalidation:{}};
+          renderAudit(state);
+        }""")
+        text=page.locator('#operationalStatus').inner_text()
+        assert 'Operacional: sdk [SDK_SLOW]: MT5 sem resposta.' in text
+        assert 'Análises: Sem confluência técnica suficiente.' in text
+        page.evaluate("""() => {
+          const state=structuredClone(latestState);
+          state.operational={state:'MONITORING',blocked_reason:null,faults:{},
+            pending_revalidation:{'pair-preflight:EURUSD#':{code:'STRUCTURAL_STOP',message:'Stop distante.'}}};
+          renderAudit(state);
+        }""")
+        text=page.locator('#operationalStatus').inner_text()
+        assert 'Sem falha operacional ativa registrada.' in text
+        assert 'Rejeições anteriores aguardando revalidação: pair-preflight:EURUSD# [STRUCTURAL_STOP]' in text
+        assert 'O fim da espera não aprova uma entrada.' in text
+        page.evaluate('renderAudit(latestState)')
         page.locator('#decisionDiagnostics summary').click()
         page.get_by_role('button',name='Atualizar registros',exact=True).click()
         page.wait_for_function("document.querySelector('#decisionDiagnosticOutput').textContent.includes('ANALYSIS')")

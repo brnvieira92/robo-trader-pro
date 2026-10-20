@@ -405,7 +405,8 @@ class StrategyEngine:
             else:
                 reason = (
                     f"🧠 IA analisando padrões: Prob. Alta {p_up}% | Prob. Queda {p_down}% "
-                    f"(Aguardando vantagem estatística >= 58%)."
+                    f"(Aguardando validação temporal aprovada e força direcional mínima do modelo; "
+                    f"o score mínimo configurado também será exigido na entrada)."
                 )
 
         # Model estimates never inflate a heuristic technical score.

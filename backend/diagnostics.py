@@ -203,6 +203,14 @@ class DiagnosticRecorder:
 
 class RecoveryState:
     """Error backoff never disables the user's automation request."""
+    # These are opportunity rejections, not proof that an operational component
+    # is unavailable. Expiry permits revalidation; it never approves an order.
+    OPPORTUNITY_REJECTIONS = frozenset({
+        'SPREAD_LIMIT', 'STRUCTURAL_STOP', 'REWARD_RISK', 'ENTRY_DRIFT',
+        'STALE_QUOTE', 'QUOTE_UNAVAILABLE', 'MINIMUM_VOLUME', 'MARGIN',
+        'SYMBOL_UNAVAILABLE',
+    })
+
     def __init__(self):
         self.faults={}
         self.alerted={}
@@ -221,6 +229,22 @@ class RecoveryState:
 
     def clear(self,key):
         return self.faults.pop(key,None)
+
+    def presentation(self):
+        """Project incident phases without clearing faults or changing gates.
+
+        Keep the original incident until successful revalidation. Unknown,
+        account, persistence and SDK failures never expire into a healthy state.
+        """
+        now = time.time()
+        active, pending = {}, {}
+        for key, fault in self.faults.items():
+            opportunity = (key == 'preflight' or key.startswith('pair-preflight:')) and fault['code'] in self.OPPORTUNITY_REJECTIONS
+            waiting = opportunity and fault['retry_at'] > now
+            ready = opportunity and not waiting
+            phase = 'AWAITING_REVALIDATION' if ready else ('WAITING_RETRY' if waiting else 'RECOVERING')
+            (pending if ready else active)[key] = dict(fault, phase=phase)
+        return active, pending
 
     def retry_block(self):
         now=time.time()

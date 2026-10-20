@@ -7,7 +7,7 @@ import time
 from unittest.mock import AsyncMock
 import pytest
 from backend.bot_manager import BotManager
-from backend.diagnostics import analysis_event
+from backend.diagnostics import RecoveryState, analysis_event
 from test_mt5_live import live_bot, signal
 
 @pytest.fixture
@@ -15,6 +15,85 @@ def bot(tmp_path,monkeypatch):
     monkeypatch.setenv('TRADER_JOURNAL_PATH',str(tmp_path/'decisions.db'))
     monkeypatch.delenv('TELEGRAM_BOT_TOKEN',raising=False)
     return BotManager()
+
+
+@pytest.mark.parametrize('key', ['preflight', 'pair-preflight:EURUSD#'])
+@pytest.mark.parametrize('code', sorted(RecoveryState.OPPORTUNITY_REJECTIONS))
+def test_opportunity_rejection_waits_then_requires_revalidation(bot, key, code):
+    bot.is_running = True
+    bot._fault(key, code, 'Oportunidade rejeitada.')
+    before = bot.operational_status()
+    assert before['state'] == 'RECOVERING'
+    assert before['faults'][key]['phase'] == 'WAITING_RETRY'
+    assert not before['pending_revalidation']
+    bot.recovery.faults[key]['retry_at'] = 0
+    incident = dict(bot.recovery.faults[key])
+    count = bot.journal.diagnostic_count()
+    for _ in range(2):
+        ready = bot.operational_status()
+        assert ready['state'] == 'MONITORING' and not ready['faults']
+        assert ready['pending_revalidation'][key]['phase'] == 'AWAITING_REVALIDATION'
+        # Reads cannot clear, mutate or falsely report a recovered incident.
+        assert bot.recovery.faults[key] == incident
+        assert bot.journal.diagnostic_count() == count
+    assert not bot.journal.diagnostics(kind='RECOVERY')
+    bot._fault(key, code, 'Nova rejeição na revalidação.')
+    assert bot.operational_status()['state'] == 'RECOVERING'
+    assert bot.recovery.faults[key]['attempts'] == 2
+    bot._recover(key)
+    assert not bot.operational_status()['pending_revalidation']
+    assert bot.journal.diagnostics(kind='RECOVERY')
+
+
+@pytest.mark.parametrize('key,code', [
+    ('analysis', 'ANALYSIS_UNAVAILABLE'), ('sdk', 'SDK_SLOW'),
+    ('persistence', 'INTENT_PERSISTENCE'), ('global-exposure', 'GLOBAL_EXPOSURE_UNAVAILABLE'),
+    ('preflight', 'ACCOUNT_PERMISSIONS'), ('preflight', 'ACCOUNT_BINDING'),
+    ('preflight', 'EXTERNAL_EXPOSURE'), ('preflight', 'PREFLIGHT_REJECTED'),
+    ('pair-preflight:EURUSD#', 'BROKER_REJECTED'),
+])
+def test_operational_or_unknown_failure_never_expires_into_healthy_status(bot, key, code):
+    bot.is_running = True
+    bot._fault(key, code, 'Falha ainda não recuperada.')
+    bot.recovery.faults[key]['retry_at'] = 0
+    status = bot.operational_status()
+    assert status['state'] == 'RECOVERING'
+    assert status['faults'][key]['phase'] == 'RECOVERING'
+    assert not status['pending_revalidation']
+
+
+def test_pending_revalidation_never_hides_persistence_block_or_reverses_pause(bot):
+    bot.is_running = True
+    bot._fault('pair-preflight:EURUSD#', 'STRUCTURAL_STOP', 'Stop distante.')
+    bot.recovery.faults['pair-preflight:EURUSD#']['retry_at'] = 0
+    bot._intent_uncertain = True
+    assert bot.operational_status()['state'] == 'RECOVERING'
+    assert 'Persistência' in bot.operational_status()['blocked_reason']
+    bot._intent_uncertain = False
+    bot.audit.healthy = False
+    bot.audit.error = 'Diário indisponível'
+    assert bot.operational_status()['state'] == 'RECOVERING'
+    assert bot._runtime_block() == 'Diário indisponível'
+    bot.pause_from_telegram()
+    assert bot.operational_status()['state'] == 'PAUSED'
+    assert not bot.is_running
+
+
+def test_telegram_separates_operational_cause_from_current_signals(bot):
+    bot.is_running = True
+    bot.stats['status_reason'] = 'Sem confluência técnica suficiente.'
+    bot._fault('pair-preflight:EURUSD#', 'STRUCTURAL_STOP', 'Stop distante.')
+    bot.recovery.faults['pair-preflight:EURUSD#']['retry_at'] = 0
+    reply = bot.telegram_status()
+    assert 'Monitoramento: MONITORANDO' in reply
+    assert 'Causa operacional: Sem falha operacional ativa registrada.' in reply
+    assert 'Rejeições anteriores aguardando revalidação: pair-preflight:EURUSD# [STRUCTURAL_STOP]' in reply
+    assert 'Resultado das análises: Sem confluência' in reply
+    assert 'Status gerado em UTC:' in reply
+    bot._fault('sdk', 'SDK_SLOW', 'MT5 sem resposta.')
+    reply = bot.telegram_status()
+    assert 'Monitoramento: EM RECUPERAÇÃO' in reply
+    assert 'Causa operacional: sdk [SDK_SLOW]: MT5 sem resposta.' in reply
 
 
 def test_analysis_survives_restart_and_panel_reads_are_deduplicated(bot):

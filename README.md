@@ -83,6 +83,8 @@ A extensão `safirion-extension` pode fornecer ticks da aba autenticada. Escolha
 A execução MT5 é habilitada pelo modo LIVE_MT5, com a conta e servidor vinculados e terminal autorizado para a API Python. O backend não substitui um envio real que falhou por uma simulação. Pausar não fecha posições abertas; elas mantêm os stops no servidor e o acompanhamento por histórico, inclusive após reinício. A aplicação inicia a automação pausada. A extensão Safirion continua uma fonte experimental para PAPER.
 
 O Telegram é opcional: `/status`, `/pausar` e alertas de ordens, resultados e falhas, restritos ao chat configurado. Use `python -m backend.telegram_setup` depois de criar um bot dedicado no BotFather. O token fica no `.env` local ignorado pelo Git. Veja o manual acima.
+
+O painel e o `/status` distinguem falhas operacionais ativas de rejeições anteriores aguardando revalidação. Rejeições conhecidas de uma oportunidade (por exemplo, stop estrutural ou spread) aparecem em recuperação durante a espera; ao vencer o prazo, passam para `operational.pending_revalidation`. O incidente interno e seu histórico permanecem até uma revalidação bem-sucedida. O fim da espera nunca aprova uma ordem, reduz filtros ou remove bloqueios de conta, exposição, persistência ou SDK. `operational.faults` apresenta as falhas ativas, incluindo as locais de cada par. O `/status` separa a causa operacional do resultado dos sinais e informa o horário UTC de geração e a última atualização de cada par; uma mensagem atrasada no Telegram ou horários congelados não comprovam monitoramento atual.
 Também não há calendário econômico integrado nem validação de múltiplos usuários. O filtro de notícias que existia apenas visualmente foi removido.
 
 ## Validar
