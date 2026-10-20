@@ -11,8 +11,9 @@ import pandas as pd
 def run():
     with TemporaryDirectory(prefix='forex-multi-browser-') as directory:
         os.environ['TRADER_JOURNAL_PATH'] = os.path.join(directory, 'browser.sqlite3')
-        os.environ.pop('TELEGRAM_BOT_TOKEN', None)
-        os.environ.pop('TELEGRAM_CHAT_ID', None)
+        # Empty values prevent load_dotenv(override=False) from restoring real credentials.
+        os.environ['TELEGRAM_BOT_TOKEN'] = ''
+        os.environ['TELEGRAM_CHAT_ID'] = ''
         import backend.mt5_connector as connector
         connector.MT5_AVAILABLE = False
         connector.mt5 = None
