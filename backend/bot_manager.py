@@ -94,6 +94,21 @@ class BotManager:
         result=[]
         for t in self.journal.all_trades():
             tmode=t.get('mode','PAPER')
+            if tmode == 'LIVE_MT5' and t.get('deals') and t.get('deal_times_version') != 1:
+                same_account = (t.get('account_login'), t.get('account_server')) == (self.config['mt5_account_login'], self.config['mt5_account_server'])
+                try:
+                    normalized = MT5Executor.normalize_trade_times(t, self.config.get('mt5_deal_time_offset_minutes') if same_account else None)
+                except MT5ExecutionError as exc:
+                    # Preserve an unprovable legacy timestamp, never guess or
+                    # overwrite its financial result. New sync requires proof.
+                    t['deal_time_warning'] = str(exc)
+                else:
+                    t.update(normalized)
+                    t.pop('deal_time_warning', None)
+                    try:
+                        self.journal.save(t)
+                    except Exception:
+                        self._pending_trade_saves[t['id']] = t
             pending=(tmode=='LIVE_MT5' and t['status'] in ACTIVE_LIVE) or (tmode=='PAPER' and t['status']=='OPEN' and t.get('exit_policy')=='SL_TP')
             if tmode!=mode and not pending:
                 continue
@@ -235,6 +250,8 @@ class BotManager:
             return self.audit.error
         if self._pending_trade_saves or self._intent_uncertain:
             return 'Persistência de operações pendente; novas entradas bloqueadas até recuperação.'
+        if any(t.get('mode') == 'LIVE_MT5' and t.get('deal_time_warning') for t in self.trade_history):
+            return 'Horário de negócios antigos não confirmado; confira o ajuste dos negócios antes de novas entradas.'
         if 'analysis' in self.recovery.faults:
             return 'Análise em recuperação; aguarde uma avaliação válida.'
         return self.recovery.retry_block()
@@ -276,7 +293,8 @@ class BotManager:
         self._recover('persistence')
 
     def update_config(self, new_cfg: Dict[str, Any]) -> Dict[str, Any]:
-        if self.is_running or self._has_open_trade or self._mt5_busy:
+        clock_only = set(new_cfg) == {'mt5_deal_time_offset_minutes'}
+        if self.is_running or self._mt5_busy or (self._has_open_trade and not clock_only):
             raise ValueError("Pause o robô e aguarde a operação encerrar antes de alterar parâmetros.")
         payload = dict(new_cfg)
         # Legacy dashboard balance is virtual only, never a broker balance override.
@@ -301,7 +319,7 @@ class BotManager:
         self._multi = None
         self._last_snapshot = None
         self.mt5.configure_time(self.config)
-        if previous_mode != validated['execution_mode']:
+        if previous_mode != validated['execution_mode'] or 'mt5_deal_time_offset_minutes' in payload:
             self.trade_history=self._session_trades()
             self._refresh_stats()
             self._last_signal_bar=None
@@ -933,6 +951,7 @@ class BotManager:
             result=dict(status='PENDING',success=False,pending=True,message='Envio inconclusivo; aguarde reconciliação no MT5, sem repetir a entrada.')
         finally:
             self._mt5_busy=False
+        trade['submission_confirmed_at'] = time.time()
         trade.update({k:v for k,v in result.items() if k in ('status','retcode','order_ticket','deal_ticket')})
         trade['sync_note']=result['message']
         if result.get('success'):
@@ -959,6 +978,9 @@ class BotManager:
             try:
                 update=await self._native_call(self.live.reconcile,trade)
                 trade.update(update)
+                trade['last_reconciled_at'] = time.time()
+                if trade['status'] in ('WIN','LOSS','DRAW') and trade['status'] != old_status:
+                    trade['closure_confirmed_at'] = trade['last_reconciled_at']
                 trade.pop('sync_error',None)
                 if trade['status']=='OPEN' and not trade.get('protected',False):
                     self._fault('position:'+trade['id'],'UNPROTECTED_POSITION',trade['sync_note'])
@@ -976,10 +998,12 @@ class BotManager:
                 self._mt5_busy=False
             self._save_trade(trade)
             if trade['status']!=old_status:
-                self._diagnostic_event('RECONCILIATION',trade['status'],dict(attempt_id=trade.get('client_tag'),trade_id=trade['id'],analysis_id=trade.get('analysis_id'),reason=trade.get('sync_note')),bar_time=trade.get('bar_time'))
+                self._diagnostic_event('RECONCILIATION',trade['status'],dict(attempt_id=trade.get('client_tag'),trade_id=trade['id'],analysis_id=trade.get('analysis_id'),reason=trade.get('sync_note'),position_id=trade.get('position_id'),settled_at=trade.get('settled_at'),closure_confirmed_at=trade.get('closure_confirmed_at'),deal_time_offset_seconds=trade.get('deal_time_offset_seconds')),bar_time=trade.get('bar_time'))
                 if trade['status'] in ('WIN','LOSS','DRAW'):
                     self._last_trade_timestamp=datetime.now().timestamp()
-                    self._notify(trade['id']+':closed',f"MT5 {trade['status']} {trade['symbol']}\nPosição {trade.get('position_id')} | PnL confirmado {trade['pnl']:.2f} {trade['currency']}\n{trade['sync_note']}")
+                    closed = datetime.fromtimestamp(trade['settled_at'], timezone.utc).isoformat(timespec='seconds')
+                    confirmed = datetime.fromtimestamp(trade['closure_confirmed_at'], timezone.utc).isoformat(timespec='seconds')
+                    self._notify(trade['id']+':closed',f"MT5 {trade['status']} {trade['symbol']}\nPosição {trade.get('position_id')} | PnL confirmado {trade['pnl']:.2f} {trade['currency']}\nFechamento UTC: {closed}\nConfirmação pelo robô UTC: {confirmed}\n{trade['sync_note']}")
                 elif trade['status']=='REJECTED':
                     self._fault('preflight','BROKER_REJECTED',trade.get('sync_note','Ordem rejeitada pelo histórico.'))
                     self._notify(trade['id']+':rejected',f"MT5 {trade['symbol']}: {trade['sync_note']}")

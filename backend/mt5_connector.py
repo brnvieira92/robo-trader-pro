@@ -61,6 +61,7 @@ class MT5Connector:
         # Explicit offsets describe non-UTC API timestamps, not chart display zones.
         self.tick_time_offset_minutes = config['mt5_tick_time_offset_minutes']
         self.bar_time_offset_minutes = config['mt5_bar_time_offset_minutes']
+        self.deal_time_offset_minutes = config.get('mt5_deal_time_offset_minutes')
         self.bar_clock.clear()
 
     def tick_timestamp(self, tick):

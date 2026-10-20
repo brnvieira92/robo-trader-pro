@@ -550,12 +550,14 @@
                 <div class="risk-controls">
                   <label>Ajuste de timestamp do tick (minutos)<input id="cfgMt5TickOffset" type="number" min="-840" max="840" step="1" value="0" onchange="saveConfig()"></label>
                   <label>Ajuste de timestamp das velas (minutos)<input id="cfgMt5BarOffset" type="number" min="-840" max="840" step="1" value="0" onchange="saveConfig()"></label>
+                  <label>Ajuste de timestamp dos negócios (minutos)<input id="cfgMt5DealOffset" type="number" min="-840" max="840" step="1" placeholder="Automático" onchange="saveDealClock()"></label>
                   <label>Spread máximo (pontos MT5)<input id="cfgMt5Spread" type="number" value="30" min="1" onchange="saveConfig()"></label>
                   <label>Desvio de preço (pontos)<input id="cfgMt5Deviation" type="number" value="20" min="0" onchange="saveConfig()"></label>
                   <label>Teto de volume (lotes/contratos)<input id="cfgMt5VolumeCap" type="number" value="1" min="0.001" step="0.001" onchange="saveConfig()"></label>
                   <label>Reserva para custos (moeda da conta)<input id="cfgMt5Buffer" type="number" value="0" min="0" step="0.01" onchange="saveConfig()"></label>
                 </div>
                 <p>O ajuste é subtraído dos timestamps recebidos: API 3 horas à frente de UTC → +180 minutos. Padrão 0. Tick e velas são independentes; confira os horários antes de alterar. Não mude o relógio do Windows para imitar o servidor. Reveja os ajustes se a corretora mudar o fuso.</p>
+                <p>Negócios: vazio usa confirmação automática pelo negócio de uma execução imediata; 0 declara UTC e 180 subtrai três horas. Não herda o ajuste de tick ou velas. Horários ambíguos mantêm a operação pendente para reconciliação segura.</p>
                 <p id="mt5ClockSummary"></p>
                 <p>SL/TP combinam ATR e estrutura de preços e são enviados ao servidor no modo LIVE_MT5. Gaps, slippage e custos reais podem exceder a estimativa. Sem expiração por cronômetro no MT5.</p>
               </details>
@@ -1007,11 +1009,22 @@
       }
     }
 
+    async function saveDealClock() {
+      const value=document.getElementById('cfgMt5DealOffset').value;
+      try {
+        await apiFetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({mt5_deal_time_offset_minutes:value === '' ? null : Number(value)})});
+      } catch (error) {showToast(error.message,'error');}
+      isInitialized=false;
+      await fetchState();
+    }
+
     async function saveConfig() {
       const payload = {
         execution_mode: document.getElementById('cfgExecutionMode').value,
         mt5_tick_time_offset_minutes: Number(document.getElementById('cfgMt5TickOffset').value),
         mt5_bar_time_offset_minutes: Number(document.getElementById('cfgMt5BarOffset').value),
+        mt5_deal_time_offset_minutes: document.getElementById('cfgMt5DealOffset').value === '' ? null : Number(document.getElementById('cfgMt5DealOffset').value),
         mt5_max_spread_points: Number(document.getElementById('cfgMt5Spread').value),
         mt5_deviation_points: Number(document.getElementById('cfgMt5Deviation').value),
         mt5_volume_cap: Number(document.getElementById('cfgMt5VolumeCap').value),
@@ -1175,6 +1188,7 @@
           initializeForexSettings(state.config);
           document.getElementById('cfgExecutionMode').value = state.config.execution_mode;
           for (const [id,key] of Object.entries({cfgMt5TickOffset:'mt5_tick_time_offset_minutes',cfgMt5BarOffset:'mt5_bar_time_offset_minutes',cfgMt5Spread:'mt5_max_spread_points',cfgMt5Deviation:'mt5_deviation_points',cfgMt5VolumeCap:'mt5_volume_cap',cfgMt5Buffer:'mt5_cost_buffer'})) document.getElementById(id).value = state.config[key];
+          document.getElementById('cfgMt5DealOffset').value = state.config.mt5_deal_time_offset_minutes ?? '';
           document.getElementById('cfgMarketType').value = state.config.market_type;
           if (state.config.safirion_sub_type) {
             document.getElementById('cfgSafirionSubType').value = state.config.safirion_sub_type;
@@ -1536,6 +1550,7 @@
       document.getElementById('decisionDetail').textContent = state.risk.blocked_reason || 'Score técnico é confluência de regras, não probabilidade de lucro.';
       const open = state.has_open_trade;
       for (const input of document.querySelectorAll('[id^="cfg"]')) input.disabled = forexResearchBusy || researchBusy || state.is_running || open;
+      document.getElementById('cfgMt5DealOffset').disabled = forexResearchBusy || researchBusy || state.is_running;
       document.getElementById('cfgCustomBalance').disabled = state.execution_mode === 'LIVE_MT5' || state.is_running || open || state.stats.total_trades > 0;
       document.getElementById('cfgUseMartingale').disabled = true;
       document.getElementById('cfgMartingaleFactor').disabled = true;

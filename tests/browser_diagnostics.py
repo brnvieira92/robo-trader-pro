@@ -37,6 +37,19 @@ with sync_playwright() as p:
         assert 'Rejeições anteriores aguardando revalidação: pair-preflight:EURUSD# [STRUCTURAL_STOP]' in text
         assert 'O fim da espera não aprova uma entrada.' in text
         page.evaluate('renderAudit(latestState)')
+        page.evaluate("""() => {
+          const state=structuredClone(latestState);
+          state.is_running=false;state.has_open_trade=true;
+          renderAudit(state);
+        }""")
+        assert page.locator('#cfgMt5DealOffset').is_enabled()
+        assert page.locator('#cfgRiskPct').is_disabled()
+        page.evaluate("""() => {
+          const state=structuredClone(latestState);state.is_running=true;
+          renderAudit(state);
+        }""")
+        assert page.locator('#cfgMt5DealOffset').is_disabled()
+        page.evaluate('renderAudit(latestState)')
         page.locator('#decisionDiagnostics summary').click()
         page.get_by_role('button',name='Atualizar registros',exact=True).click()
         page.wait_for_function("document.querySelector('#decisionDiagnosticOutput').textContent.includes('ANALYSIS')")

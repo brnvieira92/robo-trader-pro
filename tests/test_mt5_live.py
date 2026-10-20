@@ -49,7 +49,9 @@ class FakeMT5:
         if self.no_response:return None
         return NS(retcode=self.sendcode,order=500 if self.fill else 0,deal=700 if self.fill else 0)
     def history_deals_get(self,*args,**kw):
-        return None if self.deals is None else tuple(d for d in self.deals if not kw.get('position') or d.position_id==kw['position'])
+        return None if self.deals is None else tuple(d for d in self.deals if
+            (not kw.get('position') or d.position_id==kw['position']) and
+            (not kw.get('ticket') or d.order==kw['ticket']))
     def close_position(self):
         self.positions=[]
         incoming=self.deals[0]

@@ -46,6 +46,7 @@ class TradingConfig(BaseModel):
     mt5_account_server: str | None = None
     mt5_tick_time_offset_minutes: int = Field(0, ge=-840, le=840)
     mt5_bar_time_offset_minutes: int = Field(0, ge=-840, le=840)
+    mt5_deal_time_offset_minutes: int | None = Field(None, ge=-840, le=840)
     mt5_max_spread_points: float = Field(30, gt=0, le=100000)
     mt5_deviation_points: int = Field(20, ge=0, le=1000)
     mt5_volume_cap: float = Field(1, gt=0, le=10000)
