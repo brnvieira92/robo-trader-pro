@@ -29,10 +29,15 @@ from contextlib import suppress
 
 from backend.bot_manager import BotManager
 from backend.backtest import BacktestRequest, run_backtest
+from backend.forex_backtest import ForexBacktestRequest, run_forex_backtest
+from backend.forex_history import capture_forex_history
+from backend.pair_report import pair_report
 
 load_dotenv(Path(__file__).resolve().parent.parent / '.env', override=False)
 bot = BotManager()
 research_lock = asyncio.Lock()
+forex_jobs = {}
+forex_tasks = set()
 
 
 @asynccontextmanager
@@ -46,6 +51,8 @@ async def lifespan(app: FastAPI):
         loop_task.cancel()
         with suppress(asyncio.CancelledError):
             await loop_task
+        if forex_tasks:
+            await asyncio.gather(*list(forex_tasks), return_exceptions=True)
         await bot.close()
 
 
@@ -189,6 +196,22 @@ async def diagnostic_export(symbol: Optional[str]=None,kind: Optional[str]=None,
     return Response(content='\ufeff'+content.getvalue(),media_type='text/csv; charset=utf-8',headers=headers)
 
 
+@app.get('/api/diagnostics/pairs')
+async def pair_comparison(start: float=Query(0,ge=0), end: Optional[float]=Query(None,ge=0),
+                          mode: Literal['PAPER','LIVE_MT5']='LIVE_MT5'):
+    import time
+    end=time.time() if end is None else end
+    if end<start:raise HTTPException(422,detail='Fim deve ser posterior ao início.')
+    if mode=='LIVE_MT5' and bot.config.get('mt5_account_login') is None:
+        raise HTTPException(409,detail='Vincule a conta MT5 para consultar o relatório LIVE sem misturar contas.')
+    try:
+        return await asyncio.to_thread(pair_report,bot.journal,start,end,mode,
+            bot.config.get('mt5_account_login') if mode=='LIVE_MT5' else None,
+            bot.config.get('mt5_account_server') if mode=='LIVE_MT5' else None)
+    except sqlite3.Error as exc:
+        raise HTTPException(503,detail='Diário temporariamente indisponível.') from exc
+
+
 @app.post("/api/bot/toggle")
 async def toggle_bot():
     if research_lock.locked() or (bot._mt5_busy and not bot.is_running):
@@ -210,6 +233,8 @@ async def toggle_bot():
 
 @app.post("/api/config")
 async def update_config(payload: Dict[str, Any]):
+    if research_lock.locked():
+        raise HTTPException(409,detail='Aguarde o laboratório concluir antes de alterar a configuração.')
     try:
         updated = bot.update_config(payload)
     except ValidationError as exc:
@@ -277,6 +302,8 @@ async def connect_safirion(req: SafirionConnectRequest):
 
 @app.post("/api/order/manual")
 async def manual_order(req: ManualOrderRequest):
+    if research_lock.locked():
+        raise HTTPException(409,detail='Laboratório em execução; aguarde concluir antes de enviar ordens.')
     snapshot = bot.get_market_snapshot()
     signal = {**snapshot["signal"], "action": req.action}
     res = await bot.execute_trade_from_signal(signal, manual=True)
@@ -339,6 +366,102 @@ async def research_backtest(payload: BacktestRequest):
         raise HTTPException(409, detail='Pause a operação e aguarde o processamento atual antes de executar o laboratório.')
     async with research_lock:
         return await asyncio.to_thread(run_backtest, payload)
+
+
+async def _wait_forex_research_ready():
+    """A paused monitoring cycle may still own the SDK; wait without overlap."""
+    loop=asyncio.get_running_loop();deadline=loop.time()+5
+    while True:
+        if research_lock.locked() or bot.is_running or bot._has_open_trade:
+            raise HTTPException(409,detail='Pause e aguarde posições/laboratório antes de iniciar a pesquisa Forex.')
+        if not bot._mt5_busy:return
+        if loop.time()>=deadline:
+            raise HTTPException(409,detail='MT5 ainda processando. Aguarde concluir antes de iniciar a pesquisa Forex.')
+        await asyncio.sleep(.05)
+
+
+@app.post('/api/research/forex/history')
+async def forex_history(count: int=Query(1000,ge=150,le=2000)):
+    await _wait_forex_research_ready()
+    async with research_lock:
+        bot._mt5_busy=True
+        try:
+            return await bot._native_call(capture_forex_history,bot,count)
+        except (ValueError,RuntimeError,AttributeError,TypeError) as exc:
+            raise HTTPException(409,detail='Falha ao carregar dados reais: '+str(exc)) from exc
+        finally:
+            bot._mt5_busy=False
+
+
+async def _run_forex_job(job_id, payload, owner):
+    job=forex_jobs[job_id]
+    def progress(done,total):job.update(completed_bars=done,total_bars=total)
+    try:
+        result=await asyncio.to_thread(run_forex_backtest,payload,progress)
+        job.update(state='DONE',result=result)
+        try:
+            await asyncio.to_thread(owner.journal.set_setting,'forex_backtest_last',dict(id=job_id,**job))
+        except Exception:
+            job['persistence_warning']='Resultado disponível nesta sessão; falha ao salvar no diário. Exporte o JSON.'
+    except Exception as exc:
+        job.update(state='FAILED',error=str(exc))
+    finally:
+        owner._research_busy=False
+        research_lock.release()
+
+
+@app.post('/api/research/forex/jobs',status_code=202)
+async def start_forex_job(payload: ForexBacktestRequest):
+    await _wait_forex_research_ready()
+    await research_lock.acquire()
+    job_id=uuid.uuid4().hex
+    while len(forex_jobs)>=3:forex_jobs.pop(next(iter(forex_jobs)))
+    forex_jobs[job_id]=dict(state='RUNNING',completed_bars=0,total_bars=payload.evaluated_bars)
+    bot._research_busy=True
+    task=asyncio.create_task(_run_forex_job(job_id,payload,bot));forex_tasks.add(task)
+    task.add_done_callback(forex_tasks.discard)
+    return dict(id=job_id,**forex_jobs[job_id])
+
+
+def _forex_job(job_id):
+    if job_id in forex_jobs:return forex_jobs[job_id]
+    saved=bot.journal.setting('forex_backtest_last',{})
+    if saved.get('id')==job_id:return saved
+    raise HTTPException(404,detail='Avaliação não encontrada nesta sessão ou no último resultado persistido.')
+
+
+@app.get('/api/research/forex/latest')
+async def latest_forex_job():
+    return bot.journal.setting('forex_backtest_last',{})
+
+
+@app.get('/api/research/forex/jobs/{job_id}')
+async def forex_job(job_id: str):
+    return dict(id=job_id,**_forex_job(job_id))
+
+
+@app.get('/api/research/forex/jobs/{job_id}/export')
+async def export_forex_job(job_id: str, kind: Literal['json','trades','analyses']='json'):
+    job=_forex_job(job_id)
+    if job['state']!='DONE':raise HTTPException(409,detail='Aguarde o resultado concluir.')
+    if kind=='json':
+        return Response(json.dumps(job['result'],ensure_ascii=False,allow_nan=False),media_type='application/json',
+            headers={'Content-Disposition':'attachment; filename="backtest-forex.json"'})
+    rows=job['result'][kind];output=io.StringIO()
+    base=['symbol','action','entry_time','exit_time','status','net_pnl'] if kind=='trades' else []
+    fields=list(dict.fromkeys([*base,*(k for row in rows for k in row)]))
+    writer=csv.DictWriter(output,fieldnames=fields);writer.writeheader()
+    for row in rows:
+        clean={}
+        for key,value in row.items():
+            if isinstance(value,(int,float)) and not isinstance(value,bool):
+                clean[key]=value
+            else:
+                value=json.dumps(value,ensure_ascii=False) if isinstance(value,(dict,list)) else '' if value is None else str(value)
+                clean[key]="'"+value if value.startswith(('=','+','-','@')) else value
+        writer.writerow(clean)
+    return Response('\ufeff'+output.getvalue(),media_type='text/csv; charset=utf-8',
+        headers={'Content-Disposition':f'attachment; filename="forex-{kind}.csv"'})
 
 
 @app.get("/")

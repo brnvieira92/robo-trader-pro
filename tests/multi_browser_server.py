@@ -25,6 +25,7 @@ def run():
 
         def info(symbol):
             value = copy.copy(original(symbol))
+            value.trade_tick_value_profit = value.trade_tick_value_loss = 1.
             value.currency_base = symbol[:3]
             value.currency_profit = symbol[3:6]
             return value
@@ -38,6 +39,11 @@ def run():
                 time=pd.date_range(end=pd.Timestamp.now('UTC').floor('min').tz_localize(None), periods=240, freq='min'),
                 open=close, high=close+.0003, low=close-.0003, close=close, volume=100))
 
+        sdk.TIMEFRAME_M1=1
+        def rates(symbol,tf,start,count):
+            frame=candles(symbol,'M1').tail(count)
+            return [dict(time=int(row['time'].timestamp()),open=row['open'],high=row['high'],low=row['low'],close=row['close'],tick_volume=row['volume'],spread=20) for _,row in frame.iterrows()]
+        sdk.copy_rates_from_pos=rates
         sdk.symbol_info = info
         sdk.order_send = no_send
         bot = main.bot
@@ -50,7 +56,7 @@ def run():
             forex_pairs=[dict(pair=p, symbol=p+'#', enabled=True)
                          for p in ('EURUSD', 'USDJPY', 'GBPUSD', 'USDCHF')]))
         import uvicorn
-        uvicorn.run(main.app, host='127.0.0.1', port=8011)
+        uvicorn.run(main.app, host='127.0.0.1', port=int(os.environ.get('TRADER_TEST_PORT','8011')))
 
 
 if __name__ == '__main__':

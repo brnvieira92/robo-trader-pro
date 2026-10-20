@@ -8,7 +8,7 @@ import copy
 import time
 from backend.bot_manager import BotManager
 from backend.ml_engine import MLEngine
-from backend.diagnostics import RecoveryState, digest
+from backend.diagnostics import RecoveryState, digest, supplemental_check
 from backend.mt5_execution import MT5ExecutionError
 
 PAIRS = ('EURUSD', 'USDJPY', 'GBPUSD', 'USDCHF')
@@ -67,6 +67,8 @@ class PairAnalysis(BotManager):
             restriction = 'Símbolo indisponível para abrir posições; negociação desativada ou somente encerramento.'
         elif (mode == 1 and action == 'SELL') or (mode == 2 and action == 'BUY'):
             restriction = 'Direção não permitida pela especificação do símbolo.'
+        snapshot['entry_checks'] = [*snapshot.get('entry_checks', []), supplemental_check(
+            'SYMBOL_TRADE_MODE', not restriction, mode, '1=compra, 2=venda, 4=ambas; direção precisa ser permitida', restriction or '')]
         if restriction:
             snapshot['risk']['blocked_reason'] = restriction
         return snapshot
@@ -114,6 +116,10 @@ class ForexCoordinator:
                        blocked_reason='Aguardando análise.' if item['enabled'] else 'Monitoramento não selecionado.')
             row.update(copy.deepcopy(self.rows.get(pair, {})))
             radar.append(row)
+        focus=next((row for row in radar if row['symbol']==o.config['symbol']),{})
+        if focus.get('checks'):
+            base['entry_checks']=copy.deepcopy(focus['checks'])
+            base['failed_checks']=copy.deepcopy(focus.get('failed_checks',[]))
         base['forex_radar'] = dict(enabled=True, updated_at=self.updated_at,
                                   global_block=self.global_block, rows=radar,
                                   max_open_positions=1, read_only=True)
@@ -156,7 +162,10 @@ class ForexCoordinator:
                 if preflight and time.time() < preflight['retry_at']:
                     local = preflight['message']
                 block = self.global_block or local
-                row = dict(status='BLOQUEADO' if block else 'CANDIDATO', action=signal['action'],
+                checks = [*snap.get('entry_checks', []),
+                    supplemental_check('GLOBAL_EXPOSURE', not self.global_block, self.global_block or 'Sem exposição externa', 'Sem posição/ordem na conta'),
+                    supplemental_check('PAIR_RETRY', not (preflight and time.time()<preflight['retry_at']), preflight['message'] if preflight else None, 'Sem espera de recuperação local')]
+                row = dict(checks=checks, failed_checks=[g for g in checks if g['status']=='FAIL' and not g.get('informational')], status='BLOQUEADO' if block else 'CANDIDATO', action=signal['action'],
                            confidence=ml.get('ml_confidence'), signal_score=signal['confidence'],
                            validated=ml.get('validated', False), validation=ml,
                            blocked_reason=block, local_block=local, global_block=self.global_block,

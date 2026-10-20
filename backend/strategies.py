@@ -443,7 +443,8 @@ class StrategyEngine:
 
         diagnostic=dict(candidate_action=raw_action,candidate_confidence=round(raw_confidence,1),
                         directional_estimate=directional_estimate,ml_estimated_direction=('BUY' if ml_pred['prob_up']>ml_pred['prob_down'] else ('SELL' if ml_pred['prob_down']>ml_pred['prob_up'] else 'NEUTRAL')),
-                        extreme_volatility=bool(float(curr['high'])-float(curr['low'])>atr*3))
+                        extreme_volatility=bool(float(curr['high'])-float(curr['low'])>atr*3),
+                        candle_range=float(curr['high'])-float(curr['low']), atr=atr)
         result = SignalResult(
             symbol=symbol,
             market_type=market_type,

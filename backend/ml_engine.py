@@ -135,7 +135,8 @@ class MLEngine:
             # Purge the boundary label: its next close must not enter validation.
             X_train, y_train = X[:split-1], y[:split-1]
             X_test, y_test = X[split:], y[split:]
-            result.update(samples=len(X), validation_samples=len(X_test), current_features=features)
+            result.update(samples=len(X), training_samples=len(X_train), validation_samples=len(X_test),
+                          training_classes=[int(x) for x in np.unique(y_train)],validation_classes=[int(x) for x in np.unique(y_test)],current_features=features)
             if len(X_train) < 40 or len(X_test) < 20 or len(np.unique(y_train)) < 2 or len(np.unique(y_test)) < 2:
                 result["reason"] = "Amostra temporal insuficiente ou sem as duas direções."
                 return result

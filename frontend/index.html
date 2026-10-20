@@ -185,6 +185,31 @@
           </div>
           <div class="audit-notice" id="chartAvailability">Resultados PAPER são hipotéticos. O modelo estima direção de uma vela; isso não comprova lucro, nem acerto na expiração da corretora.</div>
           <div id="pricePlanPreview" class="price-plan-grid" aria-live="polite"></div>
+          <details id="fullEntryChecks" class="research-panel"><summary>Todos os filtros do ativo do gráfico</summary><p>Valores observados e limites. Critérios não avaliados não estão aprovados. A estimativa ML é diferente do score final liberado para operar.</p><output id="fullEntryChecksOutput">Aguardando análise.</output></details>
+          <details id="pairComparison" class="research-panel"><summary>Relatório comparativo por par</summary>
+            <p>Candles distintos por símbolo e timeframe. A última projeção do candle representa seu estado; consultas repetidas não viram novas oportunidades. Filtros podem reprovar simultaneamente.</p>
+            <div class="research-controls"><label>Início (horário do navegador)<input id="pairReportStart" type="datetime-local"></label><label>Fim (horário do navegador; vazio = agora)<input id="pairReportEnd" type="datetime-local"></label><button type="button" onclick="loadPairReport()">Comparar pares</button><button id="pairReportDownload" type="button" disabled onclick="downloadPairReport()">Baixar relatório JSON</button></div>
+            <p id="pairReportScope"></p><div id="pairReportTable" class="research-table-wrap"></div><output id="pairReportOutput">Selecione um período. Os registros antigos podem ter cobertura parcial dos filtros.</output>
+          </details>
+          <details id="forexResearch" class="research-panel"><summary>Backtest Forex — SL/TP e risco global</summary>
+            <p>Estudo histórico separado da execução. Pause e aguarde posições encerrarem. O teste mantém Random Forest, validação, score mínimo de 78% e uma posição global. Usa somente candles anteriores a cada entrada.</p>
+            <div class="research-controls"><button id="forexHistoryLoad" type="button" onclick="loadForexHistory()">Carregar histórico real do MT5</button><label>Ou importar base JSON<input id="forexResearchFile" type="file" accept=".json,application/json" onchange="importForexHistory()"></label><button id="forexDatasetDownload" disabled type="button" onclick="downloadForexDataset()">Baixar base JSON</button></div>
+            <p id="forexDatasetSummary">Nenhuma base carregada. Cada símbolo exige spread por vela e especificação monetária própria. O carregamento MT5 utiliza até 1.000 velas fechadas por par.</p>
+            <div class="research-controls">
+              <label>Saldo inicial (moeda da conta)<input id="forexInitialBalance" type="number" min="1" value="10000" step="0.01"></label>
+              <label>Velas avaliadas (máx. 200)<input id="forexEvaluatedBars" type="number" min="1" max="200" value="100"></label>
+              <label>Comissão por lote, por lado<input id="forexCommission" type="number" min="0" value="0" step="0.01"></label>
+              <label>Slippage adverso por preenchimento (pontos MT5)<input id="forexSlippage" type="number" min="0" value="0" step="0.1"></label>
+              <label>Custo swap por lote, por dia UTC<input id="forexSwap" type="number" min="0" value="0" step="0.01"></label>
+              <label>Moeda da conta por R$ 1 (se meta em BRL)<input id="forexGoalRate" type="number" min="0" step="0.000001" placeholder="Ex.: 0,20 USD por BRL"></label>
+            </div>
+            <p>Custos monetários na moeda da conta. Zero é uma hipótese de custo zero, não uma consulta da tarifa da XM. Especificações importadas do MT5 são atuais e assumidas constantes no histórico.</p>
+            <label><input id="forexAssumptions" type="checkbox"> Revisei os custos e as especificações. Aceito stop primeiro quando SL/TP ocorrerem na mesma vela, gaps adversos e as limitações do OHLC.</label>
+            <div class="research-controls"><button id="forexResearchRun" type="button" onclick="runForexResearch()">Executar backtest Forex</button><button type="button" onclick="restoreForexResearch()">Recuperar último resultado</button></div>
+            <output id="forexResearchOutput" aria-live="polite">Nenhum backtest Forex executado. Sem operações não significa estratégia aprovada.</output>
+            <div id="forexEquityChart" class="forex-equity-chart" aria-label="Curva histórica de equity"></div>
+            <div id="forexResearchExports" class="research-controls"></div>
+          </details>
           <details class="research-panel"><summary>Laboratório de estratégia <span>Backtest binário de uma vela — não valida SL/TP Forex</span></summary>
             <p>Envie entre 150 e 2.000 velas fechadas e contínuas. Colunas: <code>time,open,high,low,close,volume</code> (time em segundos Unix ou ISO; volume opcional). As últimas até 200 velas serão avaliadas sem usar dados futuros.</p>
             <div class="research-controls"><label>Histórico OHLCV<input id="researchFile" type="file" accept=".csv,text/csv"></label><label>Custo por entrada (R$)<input id="researchCost" type="number" value="0" min="0" step="0.01"></label><button id="researchRun" onclick="runResearch()">Avaliar estratégia selecionada</button></div>
@@ -802,6 +827,11 @@
     let polling = false;
     let latestState = null;
     let researchBusy = false;
+    let forexDataset = null;
+    let forexResearchBusy = false;
+    let lastPairReport = null;
+    let forexEquityChart = null;
+    let forexChartResizeObserver = null;
     let modalOpener = null;
 
     // Inicializa o gráfico Lightweight Charts com o tema Obsidian
@@ -952,7 +982,9 @@
     }
     function renderForexRadar(state) {
       const radar=state.forex_radar;
-      const container=document.getElementById('forexRadarRows'); container.replaceChildren();
+      const container=document.getElementById('forexRadarRows');
+      const expanded = new Set([...container.querySelectorAll('details[open]')].map(d => d.dataset.pair));
+      container.replaceChildren();
       document.getElementById('radarGlobal').textContent=radar?.enabled
         ? (radar.global_block || 'Motor multipares: modelos independentes; execução automática com risco global.')+(radar.updated_at ? ' • Atualizado '+new Date(radar.updated_at*1000).toLocaleTimeString() : '')
         : 'Modo individual preservado. O Radar passa a monitorar após ativar o motor multipares.';
@@ -966,7 +998,12 @@
         const reason=document.createElement('p'); reason.textContent=row?.blocked_reason || row?.signal_reason || 'Par não selecionado.';
         const link=document.createElement('a'); link.textContent='Exportar diagnóstico deste símbolo';
         link.href='/api/diagnostics/export.csv?'+new URLSearchParams({symbol:row?.symbol || pair});
-        card.append(title,status,signal,valid,reason,link); container.append(card);
+        const details=document.createElement('details'); details.dataset.pair=pair; details.open=expanded.has(pair);
+        const summary=document.createElement('summary'); summary.textContent='Ver filtros e valores ('+(row?.failed_checks?.length || 0)+' reprovados)';
+        const checks=document.createElement('div'); checks.className='forex-check-list';
+        checks.textContent=(row?.checks || []).map(formatEntryCheck).join('\n\n') || 'Sem análise detalhada disponível.';
+        details.append(summary,checks);
+        card.append(title,status,signal,valid,reason,details,link); container.append(card);
       }
     }
 
@@ -1455,6 +1492,12 @@
     }
     function renderAudit(state) {
       renderForexRadar(state);
+      document.getElementById('fullEntryChecksOutput').textContent=(state.entry_checks || []).map(formatEntryCheck).join('\n\n') || 'Aguardando análise detalhada.';
+      for (const id of ['forexHistoryLoad','forexResearchRun']) document.getElementById(id).disabled=forexResearchBusy || state.is_running || state.has_open_trade;
+      if (!document.getElementById('pairReportStart').value) {
+        const localInput = d => new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);
+        document.getElementById('pairReportStart').value=localInput(new Date(Date.now()-86400000));
+      }
       const live = state.execution_mode === 'LIVE_MT5';
       const priceBased = state.config.market_type !== 'SAFIRION_OB';
       const op=state.operational || {};
@@ -1490,11 +1533,11 @@
       document.getElementById('decisionGate').textContent = state.risk.blocked_reason ? 'AGUARDAR' : 'SETUP DISPONÍVEL';
       document.getElementById('decisionDetail').textContent = state.risk.blocked_reason || 'Score técnico é confluência de regras, não probabilidade de lucro.';
       const open = state.has_open_trade;
-      for (const input of document.querySelectorAll('[id^="cfg"]')) input.disabled = state.is_running || open;
+      for (const input of document.querySelectorAll('[id^="cfg"]')) input.disabled = forexResearchBusy || researchBusy || state.is_running || open;
       document.getElementById('cfgCustomBalance').disabled = state.execution_mode === 'LIVE_MT5' || state.is_running || open || state.stats.total_trades > 0;
       document.getElementById('cfgUseMartingale').disabled = true;
       document.getElementById('cfgMartingaleFactor').disabled = true;
-      for (const id of ['btn-call','btn-put']) document.getElementById(id).disabled = !!state.config.forex_multi_enabled || open || state.risk.next_amount <= 0;
+      for (const id of ['btn-call','btn-put']) document.getElementById(id).disabled = forexResearchBusy || researchBusy || !!state.config.forex_multi_enabled || open || state.risk.next_amount <= 0;
       document.getElementById('btnToggleBot').disabled = false;
       document.getElementById('researchRun').disabled = researchBusy || state.is_running || open;
       document.getElementById('cfgExpiration').closest('.flex.flex-col').hidden = priceBased;
@@ -1518,10 +1561,101 @@
         const data=await response.json();
         output.textContent=data.items.map(e => {
           const p=e.payload;
-          const failures=(p.checks || []).filter(g => g.status==='FAIL').map(g => g.code).join(', ');
+          const failures=(p.checks || []).filter(g => g.status==='FAIL').map(formatEntryCheck).join('\n');
           return `${new Date(e.last_seen*1000).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'})} • ${e.symbol} / ${e.timeframe} • ${e.kind} [${e.code}]\n${p.reason || p.message || p.first_block || ''}${failures ? '\nBloqueios: '+failures : ''}\nID ${e.id} • análise ${p.analysis_id || '—'}`;
         }).join('\n\n') || 'Nenhum registro disponível para este par.';
       } catch (error) { output.textContent=error.message; }
+    }
+
+
+    function formatEntryCheck(g) {
+      const status={PASS:'APROVADO',FAIL:'REPROVADO',NOT_EVALUATED:'NÃO AVALIADO'}[g.status] || g.status;
+      const value = v => v == null ? '—' : typeof v === 'boolean' ? (v ? 'sim':'não') : typeof v === 'object' ? JSON.stringify(v) : String(v);
+      return `${g.informational ? '[Informativo] ' : ''}${g.label || g.code}: ${status}`+
+        ('observed' in g ? `\nObservado: ${value(g.observed)} ${g.unit || ''} • Exigido: ${g.operator || ''} ${value(g.required)}` : '')+
+        (g.reason ? '\n'+g.reason : '')+(g.note ? '\n'+g.note : '');
+    }
+    function downloadJSON(value,name) {
+      const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:'application/json'}));
+      const link=document.createElement('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    }
+    async function loadPairReport() {
+      const output=document.getElementById('pairReportOutput');
+      try {
+        const start=new Date(document.getElementById('pairReportStart').value).getTime()/1000;
+        const end=document.getElementById('pairReportEnd').value ? new Date(document.getElementById('pairReportEnd').value).getTime()/1000 : Date.now()/1000;
+        if (!Number.isFinite(start) || !Number.isFinite(end) || end<start) throw new Error('Confira o início e o fim do período.');
+        const response=await apiFetch('/api/diagnostics/pairs?'+new URLSearchParams({start,end,mode:latestState.execution_mode}));
+        const data=await response.json();lastPairReport=data;
+        document.getElementById('pairReportScope').textContent=`Modo ${data.mode} • Conta ${data.account_login || 'PAPER'} / ${data.account_server || 'virtual'} • Horários exibidos pelo navegador; consulta por última observação UTC.`;
+        const box=document.getElementById('pairReportTable');box.replaceChildren();
+        const table=document.createElement('table');const head=document.createElement('tr');
+        for (const name of ['Símbolo / TF','Candles','ML aprovado','Score aprovado','Sinal qualificado','Candidatos à pré-validação','Pré-validação aprovada','Tentativas rejeitadas','Intenções registradas','Principais bloqueios']) {const th=document.createElement('th');th.textContent=name;head.append(th);}
+        table.append(head);
+        for (const row of data.rows) {
+          const tr=document.createElement('tr');
+          for (const value of [row.symbol+' / '+row.timeframe,row.analyzed_candles,row.ml_validated_candles,row.score_passed_candles,row.signal_qualified_candles,row.candidate_candles,row.preflight_approved,row.preflight_rejected,row.recorded_intents,row.blocks.slice(0,5).map(g => g.label+': '+g.candles).join(' • ')+' • Rejeições em tentativas: '+((row.preflight_rejection_details || []).map(g=>g.label+': '+g.attempts).join(' • ') || 'nenhuma')]) {const td=document.createElement('td');td.textContent=String(value);tr.append(td);}
+          table.append(tr);
+        }
+        box.append(table);output.textContent=(data.rows.length ? data.counting : 'Nenhum registro Forex no período e escopo selecionados.')+'\n'+data.limitations.join('\n');
+        document.getElementById('pairReportDownload').disabled=false;
+      } catch (error) {output.textContent=error.message;}
+    }
+    function downloadPairReport() {if(lastPairReport) downloadJSON(lastPairReport,'relatorio-pares.json');}
+    function setForexDataset(data) {
+      if (!Array.isArray(data.markets) || !data.markets.length) throw new Error('Base JSON precisa conter markets, specification e candles por símbolo. Baixe uma base do MT5 como referência.');
+      forexDataset=data;
+      document.getElementById('forexDatasetSummary').textContent=data.markets.map(m => `${m.symbol}: ${m.candles?.length || 0} velas • ${m.source} • ${m.specification_basis}`).join(' • ');
+      for (const [id,key] of Object.entries({forexInitialBalance:'initial_balance',forexEvaluatedBars:'evaluated_bars',forexCommission:'commission_per_lot_side',forexSlippage:'adverse_slippage_points',forexSwap:'swap_cost_per_lot_utc_day',forexGoalRate:'goal_fx_account_per_brl'})) if (data[key]!=null) document.getElementById(id).value=data[key];
+      document.getElementById('forexDatasetDownload').disabled=false;
+      document.getElementById('forexAssumptions').checked=false;
+    }
+    async function loadForexHistory() {
+      if(forexResearchBusy)return;
+      const output=document.getElementById('forexResearchOutput');forexResearchBusy=true;
+      output.textContent='Consultando histórico e especificações no terminal. Nenhuma ordem será enviada.';
+      try {const res=await apiFetch('/api/research/forex/history?count=1000',{method:'POST',signal:AbortSignal.timeout(120000)});setForexDataset(await res.json());output.textContent='Base carregada. Revise custos, saldo, câmbio e hipóteses antes de executar.';}
+      catch(error) {output.textContent=error.message;}
+      finally {forexResearchBusy=false;}
+    }
+    async function importForexHistory() {
+      try {const file=document.getElementById('forexResearchFile').files[0];if(!file)return;if(file.size>8*1024*1024)throw new Error('Arquivo acima de 8 MB.');setForexDataset(JSON.parse(await file.text()));}
+      catch(error) {document.getElementById('forexResearchOutput').textContent=error.message;}
+    }
+    function downloadForexDataset() {if(forexDataset)downloadJSON(forexDataset,'base-forex.json');}
+    function showForexResult(job) {
+      const r=job.result,output=document.getElementById('forexResearchOutput');
+      output.textContent=`Backtest Forex • ${r.currency} • ${r.evaluated_bars} velas avaliadas\nPeríodo: ${new Date(r.start*1000).toLocaleString('pt-BR')} a ${new Date(r.end*1000).toLocaleString('pt-BR')} (horário do navegador) • ${r.config.timeframe} • score mínimo ${r.config.min_confidence}%\nCustos assumidos: comissão ${r.assumptions.commission_per_lot_side} por lote/lado; slippage ${r.assumptions.adverse_slippage_points} pontos/preenchimento; swap ${r.assumptions.swap_cost_per_lot_utc_day} por lote/dia UTC.\nOperações encerradas: ${r.closed_trades} • Ganhos: ${r.wins} • Perdas: ${r.losses}\nPnL realizado: ${r.realized_pnl.toFixed(2)} • Equity final: ${r.ending_equity.toFixed(2)} • Drawdown amostrado: ${r.max_drawdown.toFixed(2)}\nProfit factor: ${r.profit_factor ?? (r.closed_trades ? 'indefinido (sem perdas)' : 'sem amostra')} • Expectativa por trade encerrado: ${r.expectancy ?? 'sem amostra'}\nVelas ambíguas (stop primeiro): ${r.ambiguous_bars} • Posição aberta no fim: ${r.open_position ? r.open_position.symbol : 'nenhuma'}\n${r.per_pair.map(p=>p.symbol+': '+p.analyses+' análises, '+p.validated+' validações, '+p.entries+' entradas; bloqueios '+JSON.stringify(p.blocks)).join('\n')}\n${r.closed_trades ? 'Resultado exploratório; não comprova rentabilidade futura.' : 'SEM OPERAÇÕES: não há evidência de rentabilidade.'}\n${r.limitations.join('\n')}`+(job.persistence_warning ? '\n'+job.persistence_warning : '');
+      const exports=document.getElementById('forexResearchExports');exports.replaceChildren();
+      for(const [kind,label] of [['json','Baixar resultado completo JSON'],['trades','Baixar operações CSV'],['analyses','Baixar análises e rejeições CSV']]) {const link=document.createElement('a');link.textContent=label;link.href='/api/research/forex/jobs/'+job.id+'/export?kind='+kind;exports.append(link);}
+      const container=document.getElementById('forexEquityChart');
+      if(forexEquityChart)forexEquityChart.remove();
+      forexEquityChart=LightweightCharts.createChart(container,{width:container.clientWidth,height:240,layout:{background:{type:'solid',color:'#061422'},textColor:'#bcc9cd'},localization:{timeFormatter:time=>new Date(Number(time)*1000).toLocaleString('pt-BR')},timeScale:{timeVisible:true,tickMarkFormatter:(time,type)=>type<=2 ? new Date(Number(time)*1000).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}) : new Date(Number(time)*1000).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}});
+      forexEquityChart.addLineSeries({color:'#40dcea'}).setData(r.equity_curve.map(p=>({time:p.time,value:p.equity})));
+      forexEquityChart.timeScale().fitContent();
+      if(forexChartResizeObserver)forexChartResizeObserver.disconnect();
+      forexChartResizeObserver=new ResizeObserver(entries=>{const width=Math.floor(entries[0].contentRect.width);if(width>0)forexEquityChart?.applyOptions({width});});
+      forexChartResizeObserver.observe(container);
+    }
+    async function runForexResearch() {
+      if(forexResearchBusy)return;
+      const output=document.getElementById('forexResearchOutput');
+      try {
+        if(!forexDataset)throw new Error('Carregue ou importe uma base de histórico primeiro.');
+        if(!document.getElementById('forexAssumptions').checked)throw new Error('Revise e confirme as hipóteses de custos e execução.');
+        forexResearchBusy=true;
+        const payload={...forexDataset,config:latestState.config,assumptions_acknowledged:true,
+          initial_balance:Number(document.getElementById('forexInitialBalance').value),evaluated_bars:Number(document.getElementById('forexEvaluatedBars').value),commission_per_lot_side:Number(document.getElementById('forexCommission').value),adverse_slippage_points:Number(document.getElementById('forexSlippage').value),swap_cost_per_lot_utc_day:Number(document.getElementById('forexSwap').value),goal_fx_account_per_brl:document.getElementById('forexGoalRate').value ? Number(document.getElementById('forexGoalRate').value) : null};
+        const res=await apiFetch('/api/research/forex/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        const initial=await res.json();let job=initial;
+        while(job.state==='RUNNING') {output.textContent=`Avaliando histórico: ${job.completed_bars}/${job.total_bars} velas. O robô permanece pausado. Este estudo não envia ordens.`;await new Promise(resolve=>setTimeout(resolve,1000));const next=await apiFetch('/api/research/forex/jobs/'+initial.id);job=await next.json();}
+        if(job.state!=='DONE')throw new Error(job.error || 'Avaliação não concluída.');showForexResult(job);
+      } catch(error) {output.textContent=error.message;}
+      finally {forexResearchBusy=false;}
+    }
+    async function restoreForexResearch() {
+      try {const res=await apiFetch('/api/research/forex/latest');const job=await res.json();if(!job.result)throw new Error('Nenhum resultado persistido neste diário.');showForexResult(job);}
+      catch(error) {document.getElementById('forexResearchOutput').textContent=error.message;}
     }
 
     async function runResearch() {

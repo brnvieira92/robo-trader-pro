@@ -11,7 +11,7 @@ import hashlib
 import time
 import pandas as pd
 from backend.config import TradingConfig
-from backend.diagnostics import DiagnosticRecorder, RecoveryState, analysis_event, digest
+from backend.diagnostics import DiagnosticRecorder, RecoveryState, analysis_event, digest, preflight_code
 from backend.journal import PaperJournal
 from backend.market_data import validate_candles
 from backend.mt5_execution import MT5Executor, MT5ExecutionError, ACTIVE_LIVE
@@ -646,6 +646,8 @@ class BotManager:
 
         event=analysis_event(snapshot,self._last_signal_bar,self._last_trade_timestamp)
         self._audit_state(self.audit.record(event))
+        snapshot['entry_checks']=event['payload']['checks']
+        snapshot['failed_checks']=event['payload']['failed_checks']
         snapshot['analysis_id']=event['payload']['analysis_id']
         snapshot['signal']['analysis_id']=snapshot['analysis_id']
         snapshot['operational']=self.operational_status()
@@ -823,14 +825,7 @@ class BotManager:
 
     @staticmethod
     def _preflight_code(reason):
-        rules=[('Spread ','SPREAD_LIMIT'),('Símbolo indisponível','SYMBOL_UNAVAILABLE'),
-               ('Símbolo não disponível','SYMBOL_UNAVAILABLE'),('lote mínimo','MINIMUM_VOLUME'),
-               ('Margem','MARGIN'),('Já há posição','EXTERNAL_EXPOSURE'),('retorno/risco','REWARD_RISK'),
-               ('Retorno/risco','REWARD_RISK'),('Stop estrutural','STRUCTURAL_STOP'),
-               ('Preço se afastou','ENTRY_DRIFT'),('Cotação','STALE_QUOTE'),
-               ('Sem cotação','QUOTE_UNAVAILABLE'),('Envio MT5 bloqueado','ACCOUNT_PERMISSIONS'),
-               ('conta/servidor','ACCOUNT_BINDING'),('Pré-validação MT5 recusou','ORDER_CHECK')]
-        return next((code for text,code in rules if text in reason),'PREFLIGHT_REJECTED')
+        return preflight_code(reason)
 
     SDK_WAIT_SECONDS = 15
 
@@ -1021,6 +1016,8 @@ class BotManager:
         self.journal.release_runtime_lock()
 
     async def run_cycle(self):
+        if getattr(self, "_research_busy", False):
+            return
         if self._mt5_busy:
             return
         self._audit_state(self.audit.flush())

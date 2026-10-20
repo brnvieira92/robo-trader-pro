@@ -10,11 +10,14 @@ class PaperJournal:
         self.path = Path(path or os.environ.get('TRADER_JOURNAL_PATH', Path(__file__).resolve().parent.parent / 'data' / 'paper.sqlite3'))
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as db:
+            # Long read-only reports must not hold up trading/audit writes.
+            db.execute('PRAGMA journal_mode=WAL')
             db.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, payload TEXT NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS trades (id TEXT PRIMARY KEY, day TEXT NOT NULL, payload TEXT NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS diagnostic_events (id INTEGER PRIMARY KEY, event_key TEXT NOT NULL UNIQUE, kind TEXT NOT NULL, symbol TEXT NOT NULL, timeframe TEXT NOT NULL, bar_time TEXT, code TEXT NOT NULL, first_seen REAL NOT NULL, last_seen REAL NOT NULL, observations INTEGER NOT NULL DEFAULT 1, payload TEXT NOT NULL)')
             db.execute('CREATE INDEX IF NOT EXISTS diagnostic_symbol_time ON diagnostic_events(symbol,first_seen)')
             db.execute('CREATE INDEX IF NOT EXISTS diagnostic_kind_code ON diagnostic_events(kind,code)')
+            db.execute('CREATE INDEX IF NOT EXISTS diagnostic_last_seen ON diagnostic_events(last_seen)')
 
     def connection(self):
         return sqlite3.connect(self.path,timeout=1)

@@ -56,7 +56,11 @@ No PAPER binário, o payout é hipotético; empate devolve a entrada. **PAPER Fo
 
 O plano combina ATR e suporte/resistência de velas fechadas. Descarta entradas sem retorno/risco mínimo após custos ou que se afastaram do sinal. A meta diária pausa novas entradas; o teto de lucro projetado por operação limita o tamanho, sem elevar exposição após perdas. Metas em BRL exigem conversão MT5 válida quando a conta usa outra moeda. Consulte o [manual Forex e meta diária](docs/FOREX_META_DIARIA.md).
 
-## Laboratório CSV
+## Diagnóstico e backtest Forex
+
+O Radar mostra os filtros, valores observados e limites sem alterar as decisões. O relatório comparativo conta candles distintos por par, validação, score, bloqueios e tentativas no escopo de conta e período selecionados. O novo laboratório Forex acompanha SL/TP por preço, spread, comissão, slippage, gaps e risco global, com modelos históricos separados e uma posição por vez. Captura dados reais em modo somente leitura ou importa bases JSON; executa em segundo plano e exporta resultados e rejeições. Veja [uso, hipóteses e limites do backtest Forex](docs/FOREX_DIAGNOSTICO_BACKTEST.md).
+
+## Laboratório CSV binário
 
 Abra “Laboratório de estratégia”, selecione um CSV e avalie a estratégia salva. Exemplo de formato, com todas as velas fechadas:
 
