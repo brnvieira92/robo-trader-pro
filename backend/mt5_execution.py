@@ -59,24 +59,44 @@ class MT5Executor:
             result.update(settled_at_raw=raw, settled_at=raw-offset)
         return result
 
-    def _discovery_deals(self, trade):
+    def _discovery_deals(self, trade, queries=None):
         """Identifiers first; bounded clock-independent discovery as fallback."""
         sdk = self.sdk
+        queries = queries if queries is not None else []
+        def query(method, *args, **kwargs):
+            try:
+                deals = sdk.history_deals_get(*args, **kwargs)
+            except Exception as exc:
+                queries.append(dict(method=method, error=str(exc)))
+                return None
+            if deals is None:
+                # Read immediately: another SDK call can overwrite last_error.
+                try:
+                    error = sdk.last_error()
+                except Exception:
+                    error = 'Código de erro MT5 indisponível'
+                queries.append(dict(method=method, error=error))
+            else:
+                queries.append(dict(method=method, count=len(deals)))
+            return deals
         if trade.get('position_id'):
-            return sdk.history_deals_get(position=int(trade['position_id']))
+            deals = query('position', position=int(trade['position_id']))
+            if deals:
+                return deals
         if trade.get('order_ticket'):
             # MetaTrader's ticket= argument filters DEAL_ORDER (order ticket),
             # not DEAL_TICKET. Keep both identifiers for ownership validation.
-            deals = sdk.history_deals_get(ticket=int(trade['order_ticket']))
-            if deals is None:
-                raise MT5ExecutionError('Consulta do negócio pelo ticket indisponível; intenção permanece pendente.')
+            deals = query('order_ticket', ticket=int(trade['order_ticket']))
             if deals:
                 return deals
         # Some accepted/ambiguous sends do not provide a deal ticket. Search
         # across possible broker clock offsets, still requiring exact ownership.
         begin = datetime.fromtimestamp(trade['created_at']-15*3600, timezone.utc)
         end = datetime.fromtimestamp(time.time()+15*3600, timezone.utc)
-        return sdk.history_deals_get(begin, end)
+        deals = query('time_window', begin, end)
+        if deals is None:
+            raise MT5ExecutionError(f'Histórico MT5 indisponível; intenção permanece pendente. Consultas: {queries}')
+        return deals
 
     def account(self, expected_login=None, expected_server=None, trading=False):
         sdk = self.sdk
@@ -328,10 +348,12 @@ class MT5Executor:
         orders=sdk.orders_get()
         if positions is None or orders is None:
             raise MT5ExecutionError('Posições/ordens não puderam ser consultadas; novas entradas bloqueadas.')
-        deals=self._discovery_deals(trade)
+        queries=[]
+        deals=self._discovery_deals(trade, queries)
+        trade['history_queries']=queries
         if deals is None:
             raise MT5ExecutionError('Histórico MT5 indisponível; nenhum resultado será estimado.')
-        own=[d for d in deals if int(getattr(d,'magic',0))==trade['magic'] and
+        own=[d for d in deals if getattr(d,'symbol',trade['symbol'])==trade['symbol'] and int(getattr(d,'magic',0))==trade['magic'] and
              (getattr(d,'comment','')==trade['client_tag'] or int(getattr(d,'order',0))==trade.get('order_ticket',-1)
               or int(getattr(d,'ticket',0))==trade.get('deal_ticket',-1)) and
              int(getattr(d,'type',-1)) in (sdk.DEAL_TYPE_BUY,sdk.DEAL_TYPE_SELL)]

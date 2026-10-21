@@ -709,6 +709,13 @@
                   Nenhuma operação registrada ainda hoje.
                 </div>
               </div>
+              <details>
+                <summary class="text-primary cursor-pointer">Histórico persistente — todos os dias</summary>
+                <p class="text-xs text-on-surface-variant">Registros do modo e conta selecionados. O PnL diário continua usando o dia UTC.</p>
+                <button type="button" onclick="loadTradeHistory()" class="text-primary underline">Consultar histórico</button>
+                <a href="/api/trades/history.json" class="text-primary underline" download>Exportar histórico JSON</a>
+                <pre id="persistentTrades" class="text-xs whitespace-pre-wrap overflow-y-auto max-h-[300px]">Consulte para carregar os registros salvos.</pre>
+              </details>
             </div>
 
             <!-- Diário de Execução do Robô (Terminal Logs IA) -->
@@ -881,6 +888,16 @@
       } else {
         document.exitFullscreen();
       }
+    }
+
+    async function loadTradeHistory() {
+      const output = document.getElementById('persistentTrades');
+      try {
+        const data = await (await apiFetch('/api/trades/history?limit=200')).json();
+        output.textContent = `${data.items.length} de ${data.total} registros. Exporte o JSON para obter todos.\n` + data.items.map(t =>
+          `${t.day} ${t.time || ''} • ${t.symbol} • ${t.status} • ${t.pnl ?? 0} ${t.currency || ''}${t.sync_error ? '\n'+t.sync_error : ''}`
+        ).join('\n');
+      } catch (error) { output.textContent = error.message; }
     }
 
     function escapeHtml(value) {

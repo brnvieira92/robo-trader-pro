@@ -99,6 +99,77 @@ def test_failed_ticket_query_never_unblocks_or_sends_again(live_bot):
     assert len(sdk.sent) == 1
 
 
+@pytest.mark.parametrize('failure', ['none', 'exception'])
+def test_failed_ticket_query_recovers_real_gain_from_window_and_survives_restart(live_bot, monkeypatch, failure):
+    b, sdk = live_bot
+    asyncio.run(b.execute_trade_from_signal(signal(), True))
+    trade = b.trade_history[0]
+    actual_entry = int(time.time()) - 600
+    trade.update(created_at=actual_entry, submission_confirmed_at=actual_entry+1)
+    sdk.deals[0].time = actual_entry + 10800
+    sdk.close_position()
+    sdk.deals[-1].time = actual_entry + 420 + 10800
+    original = sdk.history_deals_get
+    calls = []
+    def history(*args, **kwargs):
+        calls.append((args, kwargs))
+        if 'ticket' in kwargs:
+            if failure == 'exception':
+                raise RuntimeError('SDK ticket query failed')
+            return None
+        if args:
+            begin, end = args
+            return tuple(d for d in sdk.deals if begin.timestamp() <= d.time <= end.timestamp())
+        return original(*args, **kwargs)
+    sdk.history_deals_get = history
+    sdk.last_error = lambda: (-2, 'Invalid arguments')
+    sent = []
+    monkeypatch.setattr(b, '_notify', lambda *args: sent.append(args))
+    asyncio.run(b.reconcile_live())
+    assert trade['status'] == 'WIN' and trade['pnl'] == pytest.approx(2.45)
+    assert trade['settled_at'] == actual_entry+420
+    assert not b._has_open_trade and not trade.get('sync_error')
+    assert calls[0][1] == {'ticket': trade['order_ticket']}
+    assert any(args for args, _ in calls)
+    assert trade['history_queries'][0]['error']
+    assert trade['history_queries'][-1]['method'] == 'time_window'
+    assert len(sent) == 1 and len(sdk.sent) == 1
+    restored = BotManager()
+    saved = restored.journal.all_trades()[0]
+    assert saved['id'] == trade['id'] and saved['pnl'] == pytest.approx(2.45)
+    assert saved['status'] == 'WIN' and saved['history_queries'][0]['error']
+    assert restored.stats['daily_pnl'] == pytest.approx(2.45)
+    restored.mt5.connected = True
+    restored.mt5.simulation_mode = False
+    restored.live = MT5Executor(restored.mt5, sdk)
+    monkeypatch.setattr(restored, '_notify', lambda *args: sent.append(args))
+    asyncio.run(restored.reconcile_live())
+    assert len(sent) == 1 and len(sdk.sent) == 1
+
+
+def test_ticket_error_and_unrelated_window_cannot_settle_or_release_pending(live_bot):
+    b, sdk = live_bot
+    asyncio.run(b.execute_trade_from_signal(signal(), True))
+    own = sdk.deals[0]
+    foreign = NS(**{**vars(own), 'magic': 999, 'comment': 'foreign', 'order': 1, 'ticket': 2, 'position_id': 3})
+    wrong_symbol = NS(**{**vars(own), 'symbol': 'GBPUSD'})
+    sdk.history_deals_get = lambda *args, **kwargs: (foreign, wrong_symbol) if args else None
+    asyncio.run(b.reconcile_live())
+    assert b.trade_history[0]['status'] == 'PENDING' and b._has_open_trade
+    assert b.trade_history[0]['pnl'] == 0 and len(sdk.sent) == 1
+
+
+def test_history_sdk_error_code_is_preserved_when_all_queries_fail(live_bot):
+    b, sdk = live_bot
+    asyncio.run(b.execute_trade_from_signal(signal(), True))
+    sdk.history_deals_get = lambda *args, **kwargs: None
+    sdk.last_error = lambda: (-2, 'Invalid arguments')
+    asyncio.run(b.reconcile_live())
+    assert '-2' in b.trade_history[0]['sync_error']
+    assert 'time_window' in b.trade_history[0]['sync_error']
+    assert b._has_open_trade and len(sdk.sent) == 1
+
+
 def legacy_trade():
     return dict(id='legacy', mode='LIVE_MT5', status='LOSS', day='2026-10-20',
         created_at=1792497724.570737, retcode=10009, deal_ticket=2307222746,

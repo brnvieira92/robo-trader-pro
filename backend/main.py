@@ -156,6 +156,33 @@ async def forex_radar():
     return bot.get_market_snapshot()['forex_radar']
 
 
+def persisted_trade_history():
+    """All dates, scoped to the selected mode/account; never changes session risk."""
+    mode = bot.config['execution_mode']
+    try:
+        return [t for t in bot.journal.all_trades()
+                if t.get('mode', 'PAPER') == mode and
+                (mode != 'LIVE_MT5' or
+                 (t.get('account_login'), t.get('account_server')) ==
+                 (bot.config['mt5_account_login'], bot.config['mt5_account_server']))]
+    except sqlite3.Error as exc:
+        raise HTTPException(503, detail='Histórico temporariamente indisponível; registros não foram apagados.') from exc
+
+
+@app.get('/api/trades/history')
+async def trade_history(limit: int=Query(200, ge=1, le=500), offset: int=Query(0, ge=0)):
+    trades = persisted_trade_history()
+    return dict(items=trades[offset:offset+limit], total=len(trades), offset=offset,
+                mode=bot.config['execution_mode'], read_only=True)
+
+
+@app.get('/api/trades/history.json')
+async def trade_history_export():
+    return JSONResponse(dict(exported_at=datetime.now(timezone.utc).isoformat(),
+                             mode=bot.config['execution_mode'], trades=persisted_trade_history()),
+                        headers={'Content-Disposition':'attachment; filename="historico-operacoes.json"'})
+
+
 @app.get("/api/diagnostics/events")
 async def diagnostic_events(symbol: Optional[str]=None,kind: Optional[str]=None,
                             limit: int=Query(100,ge=1,le=500),before: Optional[int]=Query(None,ge=1)):
