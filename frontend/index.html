@@ -146,7 +146,8 @@
         </div>
 
         <section class="audit-workspace" aria-label="Radar Forex">
-          <div class="audit-heading"><div><span class="eyebrow">MONITORAMENTO MULTIPARES</span><h2>Radar Forex</h2><p>Leitura do motor automático. Uma posição ou intenção por vez na conta inteira.</p></div></div>
+          <div class="audit-heading"><div><span class="eyebrow">MONITORAMENTO MULTIPARES</span><h2>Radar Forex</h2><p>Leitura do motor automático. Até duas posições em símbolos diferentes, com orçamento global compartilhado. Exposição incerta bloqueia novas entradas.</p></div></div>
+          <p id="portfolioSummary"></p>
           <p id="radarGlobal" role="status">Modo individual preservado. Ative o motor nas configurações abaixo.</p>
           <div id="forexRadarRows" class="forex-radar-grid"></div>
           <details class="execution-controls" style="display:block;margin-top:16px">
@@ -192,7 +193,7 @@
             <p id="pairReportScope"></p><div id="pairReportTable" class="research-table-wrap"></div><output id="pairReportOutput">Selecione um período. Os registros antigos podem ter cobertura parcial dos filtros.</output>
           </details>
           <details id="forexResearch" class="research-panel"><summary>Backtest Forex — SL/TP e risco global</summary>
-            <p>Estudo histórico separado da execução. Pause e aguarde posições encerrarem. O teste mantém Random Forest, validação, score mínimo de 78% e uma posição global. Usa somente candles anteriores a cada entrada.</p>
+            <p>Estudo histórico separado da execução. Pause e aguarde posições encerrarem. Este laboratório ainda avalia uma posição global, não a carteira com duas posições. Bases configuradas para duas são recusadas explicitamente. Uma base de pesquisa com limite 1 pode ser importada sem alterar a configuração da execução. Mantém Random Forest, validação e score mínimo de 78%; usa somente candles anteriores a cada entrada.</p>
             <div class="research-controls"><button id="forexHistoryLoad" type="button" onclick="loadForexHistory()">Carregar histórico real do MT5</button><label>Ou importar base JSON<input id="forexResearchFile" type="file" accept=".json,application/json" onchange="importForexHistory()"></label><button id="forexDatasetDownload" disabled type="button" onclick="downloadForexDataset()">Baixar base JSON</button></div>
             <p id="forexDatasetSummary">Nenhuma base carregada. Cada símbolo exige spread por vela e especificação monetária própria. O carregamento MT5 utiliza até 1.000 velas fechadas por par.</p>
             <div class="research-controls">
@@ -519,7 +520,8 @@
               </div>
 
               <div class="risk-controls">
-                <label>Risco máximo por entrada (%)<input id="cfgRiskPct" type="number" value="1" min="0.1" max="2" step="0.1" onchange="saveConfig()"></label>
+                <label><span id="riskPctLabel">Risco máximo por entrada (%)</span><input id="cfgRiskPct" type="number" value="1" min="0.1" max="2" step="0.1" onchange="saveConfig()"></label>
+                <label>Limite simultâneo Forex multipares<select id="cfgPortfolioSlots" onchange="saveConfig()"><option value="1">1 posição</option><option value="2" selected>2 posições — risco compartilhado</option></select></label>
                 <label>Perdas seguidas (limite)<input id="cfgLossLimit" type="number" value="3" min="1" max="10" onchange="saveConfig()"></label>
                 <label>Entradas por sessão (UTC)<input id="cfgDailyLimit" type="number" value="20" min="1" max="200" onchange="saveConfig()"></label>
                 <label>Intervalo entre entradas (s)<input id="cfgCooldown" type="number" value="60" min="5" max="3600" onchange="saveConfig()"></label>
@@ -984,6 +986,11 @@
     }
     function renderForexRadar(state) {
       const radar=state.forex_radar;
+      const portfolio=radar?.portfolio;
+      document.getElementById('portfolioSummary').textContent=radar?.enabled
+        ? `Limite: ${radar.max_open_positions} posições. `+(portfolio
+          ? `Abertas: ${portfolio.open_positions} • risco reservado ${formatMoney(portfolio.reserved_risk,state.currency)} / ${formatMoney(portfolio.risk_limit,state.currency)} • disponível ${formatMoney(portfolio.remaining_risk,state.currency)}. Risco USD comprado/vendido: ${formatMoney(portfolio.usd_risk.LONG,state.currency)} / ${formatMoney(portfolio.usd_risk.SHORT,state.currency)}, sem compensação.`
+          : 'Exposição global aguardando confirmação; novas entradas dependem de verificação segura.') : '';
       const container=document.getElementById('forexRadarRows');
       const expanded = new Set([...container.querySelectorAll('details[open]')].map(d => d.dataset.pair));
       container.replaceChildren();
@@ -1024,6 +1031,7 @@
         execution_mode: document.getElementById('cfgExecutionMode').value,
         mt5_tick_time_offset_minutes: Number(document.getElementById('cfgMt5TickOffset').value),
         mt5_bar_time_offset_minutes: Number(document.getElementById('cfgMt5BarOffset').value),
+        forex_max_open_positions: Number(document.getElementById('cfgPortfolioSlots').value),
         mt5_deal_time_offset_minutes: document.getElementById('cfgMt5DealOffset').value === '' ? null : Number(document.getElementById('cfgMt5DealOffset').value),
         mt5_max_spread_points: Number(document.getElementById('cfgMt5Spread').value),
         mt5_deviation_points: Number(document.getElementById('cfgMt5Deviation').value),
@@ -1189,6 +1197,7 @@
           document.getElementById('cfgExecutionMode').value = state.config.execution_mode;
           for (const [id,key] of Object.entries({cfgMt5TickOffset:'mt5_tick_time_offset_minutes',cfgMt5BarOffset:'mt5_bar_time_offset_minutes',cfgMt5Spread:'mt5_max_spread_points',cfgMt5Deviation:'mt5_deviation_points',cfgMt5VolumeCap:'mt5_volume_cap',cfgMt5Buffer:'mt5_cost_buffer'})) document.getElementById(id).value = state.config[key];
           document.getElementById('cfgMt5DealOffset').value = state.config.mt5_deal_time_offset_minutes ?? '';
+          document.getElementById('cfgPortfolioSlots').value = state.config.forex_max_open_positions ?? 2;
           document.getElementById('cfgMarketType').value = state.config.market_type;
           if (state.config.safirion_sub_type) {
             document.getElementById('cfgSafirionSubType').value = state.config.safirion_sub_type;
@@ -1515,6 +1524,7 @@
       const live = state.execution_mode === 'LIVE_MT5';
       const priceBased = state.config.market_type !== 'SAFIRION_OB';
       const op=state.operational || {};
+      document.getElementById('riskPctLabel').textContent=state.config.forex_multi_enabled && state.config.forex_max_open_positions>1 ? 'Orçamento global simultâneo (%)' : 'Risco máximo por entrada (%)';
       const stateLabels={PAUSED:'Pausado pelo usuário',MONITORING:'Monitoramento solicitado',RECOVERING:'Falha ou espera de recuperação registrada'};
       const faults=Object.entries(op.faults || {}).map(([key,f]) => `${key} [${f.code}]: ${f.message}`).join(' • ');
       const pending=Object.entries(op.pending_revalidation || {}).map(([key,f]) => `${key} [${f.code}]: ${f.message}`).join(' • ');
@@ -1623,6 +1633,7 @@
       if (!Array.isArray(data.markets) || !data.markets.length) throw new Error('Base JSON precisa conter markets, specification e candles por símbolo. Baixe uma base do MT5 como referência.');
       forexDataset=data;
       document.getElementById('forexDatasetSummary').textContent=data.markets.map(m => `${m.symbol}: ${m.candles?.length || 0} velas • ${m.source} • ${m.specification_basis}`).join(' • ');
+      if(data.config)document.getElementById('forexDatasetSummary').textContent+=` • Configuração da base: ${data.config.timeframe}, score ${data.config.min_confidence}%, limite ${data.config.forex_max_open_positions ?? 1} posição(ões).`;
       for (const [id,key] of Object.entries({forexInitialBalance:'initial_balance',forexEvaluatedBars:'evaluated_bars',forexCommission:'commission_per_lot_side',forexSlippage:'adverse_slippage_points',forexSwap:'swap_cost_per_lot_utc_day',forexGoalRate:'goal_fx_account_per_brl'})) if (data[key]!=null) document.getElementById(id).value=data[key];
       document.getElementById('forexDatasetDownload').disabled=false;
       document.getElementById('forexAssumptions').checked=false;
@@ -1661,7 +1672,7 @@
         if(!forexDataset)throw new Error('Carregue ou importe uma base de histórico primeiro.');
         if(!document.getElementById('forexAssumptions').checked)throw new Error('Revise e confirme as hipóteses de custos e execução.');
         forexResearchBusy=true;
-        const payload={...forexDataset,config:latestState.config,assumptions_acknowledged:true,
+        const payload={...forexDataset,config:forexDataset.config || latestState.config,assumptions_acknowledged:true,
           initial_balance:Number(document.getElementById('forexInitialBalance').value),evaluated_bars:Number(document.getElementById('forexEvaluatedBars').value),commission_per_lot_side:Number(document.getElementById('forexCommission').value),adverse_slippage_points:Number(document.getElementById('forexSlippage').value),swap_cost_per_lot_utc_day:Number(document.getElementById('forexSwap').value),goal_fx_account_per_brl:document.getElementById('forexGoalRate').value ? Number(document.getElementById('forexGoalRate').value) : null};
         const res=await apiFetch('/api/research/forex/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
         const initial=await res.json();let job=initial;

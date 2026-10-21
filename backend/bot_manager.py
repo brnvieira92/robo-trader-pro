@@ -15,6 +15,7 @@ from backend.diagnostics import DiagnosticRecorder, RecoveryState, analysis_even
 from backend.journal import PaperJournal
 from backend.market_data import validate_candles
 from backend.mt5_execution import MT5Executor, MT5ExecutionError, ACTIVE_LIVE
+from backend.portfolio_risk import position_limit, active_trades, reserved_risk, global_budget, local_block, context
 from backend.telegram_bot import TelegramBot
 from backend.trade_plan import price_plan, goal_limited_budget, TradePlanError
 
@@ -156,6 +157,11 @@ class BotManager:
             details += f"\nRejeições anteriores aguardando revalidação: {pending_revalidation}. Nenhuma entrada autorizada por expiração da espera."
         if c.get('forex_multi_enabled'):
             rows = self._multi.rows if self._multi else {}
+            portfolio = self._multi.portfolio if self._multi else None
+            details += f"\nLimite simultâneo: {position_limit(c)} posições em símbolos diferentes."
+            if portfolio:
+                details += f"\nRisco reservado/global: {portfolio['reserved_risk']:.2f}/{portfolio['risk_limit']:.2f} {currency}"
+                details += f"\nRisco USD comprado/vendido até SL: {portfolio['usd_risk']['LONG']:.2f}/{portfolio['usd_risk']['SHORT']:.2f} {currency} (sem compensação)."
             for item in c.get('forex_pairs', []):
                 if item['enabled']:
                     updated = rows.get(item['pair'], {}).get('updated_at')
@@ -346,17 +352,29 @@ class BotManager:
         cap = min(balance * self.config['risk_per_trade_pct'] / 100,
                   max(0.0, self.config['stop_loss'] + self.stats['daily_pnl']))
         amount = balance * self.config['risk_per_trade_pct'] / 100 if self.config['bankroll_mode'] == 'PERCENT' else self.config['entry_amount']
+        if live and position_limit(self.config) > 1:
+            cap = global_budget(self.config, balance, max(0., self.config['stop_loss']+self.stats['daily_pnl']))
+            try:
+                used = sum(reserved_risk(t) for t in active_trades(self.trade_history))
+            except ValueError as exc:
+                return 0., str(exc)
+            amount = min(cap/position_limit(self.config), max(0., cap-used))
         amount = math.floor(min(amount, cap) * 100) / 100
         minimum = 5 if self.config['market_type'] == 'SAFIRION_OB' else .01
         if amount < minimum:
             return 0.0, "Bloqueado: mínimo excede o orçamento de risco."
         currency=self.mt5.account_info.get('currency','') if live else 'BRL virtual'
+        if live and position_limit(self.config)>1:
+            return amount, f"RISCO ATÉ SL {amount:.2f} {currency} • carteira até {cap:.2f} {currency} • orçamento compartilhado"
         return amount, f"{'RISCO ATÉ SL' if live else 'PAPER'} {amount:.2f} {currency} • limite {self.config['risk_per_trade_pct']}% • sem progressão"
 
     def _risk_block(self, signal=None, manual=False):
         if self._mt5_busy:
             return 'MT5 processando consulta/envio; aguarde a confirmação.'
-        if self._has_open_trade:
+        if position_limit(self.config) > 1:
+            block=local_block(self.config, self.trade_history, self.config['symbol'])
+            if block: return block
+        elif self._has_open_trade:
             return "Já existe uma operação em andamento."
         runtime_block=self._runtime_block()
         if runtime_block:
@@ -898,7 +916,8 @@ class BotManager:
         # Every side, including a discretionary SELL after a BUY signal, gets fresh directional stops.
         self._mt5_busy=True
         try:
-            prepared=await self._native_call(self.live.prepare,config,signal,max(0,config['stop_loss']+self.stats['daily_pnl']),client_tag,self.goal_status()['remaining_account'])
+            kwargs={'portfolio_trades':context(self.trade_history)} if position_limit(config)>1 else {}
+            prepared=await self._native_call(self.live.prepare,config,signal,max(0,config['stop_loss']+self.stats['daily_pnl']),client_tag,self.goal_status()['remaining_account'],**kwargs)
         except Exception as exc:
             note=str(exc) if isinstance(exc,MT5ExecutionError) else 'Falha na pré-validação do terminal MT5. Nenhuma ordem enviada.'
             code=self._preflight_code(note)
@@ -925,6 +944,11 @@ class BotManager:
                    currency=account['currency'],account_type=account['account_type'],request=prepared['request'],
                    strategy=config['strategy_id'],timeframe=config['timeframe'],confidence=signal['confidence'],
                    analysis_id=signal.get('analysis_id') or snapshot.get('analysis_id'),bar_time=signal.get('bar_time'),manual=manual)
+        if position_limit(config)>1:
+            trade.update(max_open_positions=position_limit(config),reserved_risk=prepared['estimated_risk'],
+                cost_buffer=config['mt5_cost_buffer'],portfolio=prepared['portfolio'],
+                portfolio_context=prepared['portfolio_context'],portfolio_config=config.copy(),
+                remaining_loss_budget=max(0,config['stop_loss']+self.stats['daily_pnl']))
         self._diagnostic_event('DECISION','PREFLIGHT_APPROVED',dict(attempt_id=client_tag,analysis_id=signal.get('analysis_id') or snapshot.get('analysis_id'),action=signal['action'],input_signal=signal,checks=[dict(code='NATIVE_PREFLIGHT',status='PASS')],plan=prepared['plan'],risk_budget=prepared['risk_budget'],volume=prepared['volume']),bar_time=signal.get('bar_time'), context=config)
         if not self.audit.healthy:
             return dict(success=False,message=self.audit.error)
@@ -960,7 +984,7 @@ class BotManager:
                 self._recover('preflight')
         self._save_trade(trade)
         self._diagnostic_event('EXECUTION',trade['status'],dict(attempt_id=trade.get('client_tag'),trade_id=trade['id'],analysis_id=trade.get('analysis_id'),retcode=trade.get('retcode'),reason=trade['sync_note']),bar_time=trade.get('bar_time'), context=config)
-        self._has_open_trade=trade['status'] in ACTIVE_LIVE
+        self._has_open_trade=any(t.get('mode')=='LIVE_MT5' and t['status'] in ACTIVE_LIVE for t in self.trade_history)
         if trade['status']=='REJECTED':
             self._fault(preflight_key,'BROKER_REJECTED',trade['sync_note'],context=config)
         self.add_log('TRADE' if result.get('success') else 'ALERT',result['message'])

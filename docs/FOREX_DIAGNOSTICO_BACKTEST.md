@@ -46,6 +46,8 @@ Os parâmetros opcionais `start` e `end` são segundos Unix. LIVE exige conta vi
 
 ## 3. Executar o backtest Forex
 
+Este laboratório avalia uma posição global. A execução multipares agora admite duas, mas uma base com `forex_max_open_positions=2` é recusada para não apresentar resultados de uma posição como validação de duas. É possível importar uma cópia de pesquisa com limite 1 sem alterar a execução; a validação financeira do portfólio paralelo ainda exige estudo próprio.
+
 1. Pause o robô e aguarde a resolução das posições/intentos. Mantenha sua configuração Forex, Random Forest, filtro ML e score mínimo de 78% ou superior.
 2. Abra **Backtest Forex — SL/TP e risco global**.
 3. Clique **Carregar histórico real do MT5** no computador com o terminal conectado. O aplicativo consulta até 1.000 candles por par selecionado, exclui a vela em formação e aplica o ajuste de timestamp das velas já configurado. Não cria preços substitutos se a consulta falhar.

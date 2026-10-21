@@ -30,6 +30,9 @@ with sync_playwright() as p:
             page.locator('#forexHistoryLoad').click()
         assert capture.value.ok,capture.value.text()
         page.wait_for_function("forexDataset?.markets?.length===4")
+        # Explicit single-position reference study, not a claim about the
+        # parallel live portfolio. This changes only the in-browser dataset.
+        page.evaluate('forexDataset.config.forex_max_open_positions=1')
         page.locator('#forexEvaluatedBars').fill('2')
         page.locator('#forexAssumptions').check()
         with page.expect_response('**/api/research/forex/jobs') as started:
@@ -37,6 +40,7 @@ with sync_playwright() as p:
         assert started.value.status==202,started.value.text()
         page.wait_for_function("document.querySelector('#forexResearchOutput').textContent.includes('Backtest Forex •')",timeout=60000)
         assert 'SEM OPERAÇÕES' in page.locator('#forexResearchOutput').inner_text()
+        assert page.evaluate('latestState.config.forex_max_open_positions')==2
         assert page.locator('#forexResearchExports a').count()==3
         with page.expect_download() as download:page.get_by_text('Baixar resultado completo JSON',exact=True).click()
         download.value.save_as(str(out/f'backtest-{width}.json'))

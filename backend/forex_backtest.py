@@ -66,9 +66,20 @@ class ForexBacktestRequest(BaseModel):
     captured_at: float | None = Field(None,ge=0)
     assumptions_acknowledged: Literal[True]
 
+    @model_validator(mode='before')
+    @classmethod
+    def legacy_single_position_dataset(cls, values):
+        # Bases captured before parallel execution described a one-position
+        # strategy. Preserve that meaning without changing live defaults.
+        if isinstance(values, dict) and isinstance(values.get('config'), dict) and 'forex_max_open_positions' not in values['config']:
+            values={**values,'config':{**values['config'],'forex_max_open_positions':1}}
+        return values
+
     @model_validator(mode='after')
     def consistency(self):
         c=self.config
+        if c.forex_multi_enabled and c.forex_max_open_positions>1:
+            raise ValueError('Este laboratório histórico avalia uma posição global. Não valida a carteira simultânea de duas posições. Use uma configuração de pesquisa com limite 1; a execução ativa não será alterada.')
         if c.market_type!='MT5_FOREX': raise ValueError('Este laboratório aceita somente Forex.')
         if c.strategy_id!='ml_random_forest' or c.min_confidence<78 or not c.strategy_params.use_ml_filter:
             raise ValueError('Mantenha Random Forest, score mínimo de 78% e filtro ML ativo.')

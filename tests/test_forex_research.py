@@ -13,7 +13,7 @@ def request_data(symbols=('EURUSD#',),evaluated=1):
     # The execution mode is irrelevant to the offline simulation. Multi config
     # retains actual native-shape validation, but never reaches a native SDK.
     if len(symbols)>1:
-        config.update(execution_mode='LIVE_MT5',mt5_account_login=123,mt5_account_server='Demo',forex_multi_enabled=True,
+        config.update(execution_mode='LIVE_MT5',mt5_account_login=123,mt5_account_server='Demo',forex_multi_enabled=True,forex_max_open_positions=1,
             forex_pairs=[dict(pair=s[:6],symbol=s,enabled=True) for s in symbols])
     candles=[dict(time=1700000040+i*60,open=1.1,high=1.1003,low=1.0997,close=1.1,volume=100,spread_points=20) for i in range(160)]
     spec=dict(point=.00001,tick_size=.00001,digits=5,tick_value_profit=1,tick_value_loss=1,

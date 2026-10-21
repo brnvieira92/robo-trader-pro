@@ -20,6 +20,7 @@ def enable(b, **updates):
         return metadata
     b.live.sdk.symbol_info = info
     b.update_config(dict(forex_multi_enabled=True, strategy_id='ml_random_forest',
+        forex_max_open_positions=updates.pop('forex_max_open_positions',1),
         forex_pairs=[dict(pair=p, symbol=p+'#', enabled=True) for p in ('EURUSD','USDJPY','GBPUSD','USDCHF')],
         symbol='EURUSD#', **updates))
     return ForexCoordinator(b)

@@ -21,6 +21,9 @@ with sync_playwright() as p:
         assert page.locator('#forexRadarRows article').count()==4
         assert 'EURUSD#' in page.locator('#forexRadarRows').inner_text()
         assert 'Confiança ML:' in page.locator('#forexRadarRows').inner_text()
+        assert 'Limite: 2 posições' in page.locator('#portfolioSummary').inner_text()
+        assert page.locator('#cfgPortfolioSlots').input_value()=='2'
+        assert 'Orçamento global simultâneo' in page.locator('#riskPctLabel').inner_text()
         assert page.locator('#btn-call').is_disabled() and page.locator('#btn-put').is_disabled()
         page.wait_for_timeout(2100)
         assert not writes,writes

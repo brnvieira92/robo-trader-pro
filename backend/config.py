@@ -56,6 +56,7 @@ class TradingConfig(BaseModel):
     safirion_sub_type: Literal['BINARY', 'DIGITAL', 'BLITZ'] = 'BINARY'
     symbol: str = Field('EURUSD', min_length=2, max_length=30, pattern=r'^[A-Za-z0-9_$./#-]+$')
     forex_multi_enabled: bool = False
+    forex_max_open_positions: int = Field(2, ge=1, le=2)
     forex_pairs: list[ForexPair] = Field(default_factory=list, max_length=4)
     timeframe: Literal['M1', 'M5', 'M15', 'M30', 'H1'] = 'M1'
     strategy_id: STRATEGIES = 'bollinger_rsi_reversal'

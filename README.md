@@ -44,6 +44,8 @@ A etapa 1 preservou o fluxo individual. As etapas seguintes acrescentam o **moto
 
 ## Radar e motor Forex multipares
 
+O motor permite até duas posições confirmadas em símbolos diferentes (`forex_max_open_positions=2`, opção de limite 1). O percentual de risco passa a ser o orçamento global simultâneo, compartilhado, com até metade para cada nova posição e soma bruta de riscos até SL, sem crédito por hedge USD. Intenções incertas, posições manuais/externas e proteções não confirmadas continuam bloqueando novas entradas. Cooldown, limites diários e score 78% permanecem globais. O Radar e `/status` mostram vagas e risco agregado. O laboratório histórico continua sendo de uma posição e recusa configurações com duas; seus resultados não comprovam rentabilidade do portfólio paralelo. Veja [regras e verificação em demo](docs/FOREX_MULTIPARES.md).
+
 Seleção independente de EURUSD, USDJPY, GBPUSD e USDCHF, com códigos exatos da corretora, modelos Random Forest separados e score mínimo de 78%. Um coordenador serializa consultas/execução, mantém uma única posição ou intenção na conta inteira e conserva o orçamento global. Falhas locais ficam isoladas; incerteza de exposição ou persistência bloqueia novas entradas sem desligar o monitoramento. O Radar é uma projeção em cache, sem decisões ou ordens disparadas por consultas da interface. Consulte [ativação em demo, estados, diagnóstico e limitações](docs/FOREX_MULTIPARES.md).
 
 ## Diário PAPER e limites

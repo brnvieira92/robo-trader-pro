@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_FLOOR
 from backend.trade_plan import price_plan, goal_limited_budget, TradePlanError
+from backend.portfolio_risk import inspect_portfolio, position_limit, context
 
 ACTIVE_LIVE = {'SUBMITTING', 'PENDING', 'OPEN', 'NEEDS_REVIEW'}
 
@@ -174,14 +175,21 @@ class MT5Executor:
             return 1/mid,symbol
         raise MT5ExecutionError('O símbolo de conversão não corresponde à moeda da conta/BRL.')
 
-    def prepare(self, config, signal, remaining_loss_budget, client_tag, remaining_goal_account=None):
+    def prepare(self, config, signal, remaining_loss_budget, client_tag, remaining_goal_account=None, portfolio_trades=None):
         sdk = self.sdk
         account = self.account(config['mt5_account_login'], config['mt5_account_server'], trading=True)
+        portfolio = None
         if config.get('forex_multi_enabled'):
             positions, orders = sdk.positions_get(), sdk.orders_get()
             if positions is None or orders is None:
                 raise MT5ExecutionError('Não foi possível confirmar exposição global da conta.')
-            if positions or orders:
+            if position_limit(config) > 1:
+                try:
+                    portfolio = inspect_portfolio(config, portfolio_trades or [], positions, orders, account,
+                        remaining_loss_budget, sdk.order_calc_profit, symbol=config['symbol'])
+                except ValueError as exc:
+                    raise MT5ExecutionError(str(exc)) from exc
+            elif positions or orders:
                 raise MT5ExecutionError('Já há posição ou ordem na conta; exposição global bloqueada.')
         symbol = config['symbol']
         if not sdk.symbol_select(symbol, True):
@@ -224,6 +232,8 @@ class MT5Executor:
         budget=min(float(remaining_loss_budget), max(0,account['equity'])*config['risk_per_trade_pct']/100)
         if config['bankroll_mode'] != 'PERCENT':
             budget=min(budget,config['entry_amount'])
+        if portfolio is not None:
+            budget=min(budget, portfolio['remaining_risk'], portfolio['per_position_cap'])
         try:
             budget=goal_limited_budget(config,budget,remaining_goal_account,plan['reward_risk'])
         except TradePlanError as exc:
@@ -272,19 +282,27 @@ class MT5Executor:
             code=getattr(checked,'retcode','sem resposta')
             raise MT5ExecutionError(f'Pré-validação MT5 recusou a ordem (código {code}).')
         return dict(request=request, account=account, risk_budget=budget, estimated_risk=abs(float(estimated))+buffer,
+                    portfolio=portfolio, portfolio_context=context(portfolio_trades or []),
                     volume=volume, price=price, stop_loss=sl, take_profit=tp, spread_points=round(spread,2),
                     plan={**plan,'estimated_profit':net_reward,'estimated_loss':total_risk,'net_reward_risk':net_reward/total_risk})
 
     def send(self, trade):
         """Called once, only after the SUBMITTING intent has been committed."""
         sdk=self.sdk
-        self.account(trade['account_login'],trade['account_server'],trading=True)
+        account=self.account(trade['account_login'],trade['account_server'],trading=True)
         if trade.get('forex_multi'):
             positions, orders = sdk.positions_get(), sdk.orders_get()
             if positions is None or orders is None:
                 return dict(status='REJECTED', success=False, pending=False,
                     message='Envio cancelado antes de order_send: exposição global não confirmada.')
-            if positions or orders:
+            if trade.get('max_open_positions', 1) > 1:
+                try:
+                    inspect_portfolio(trade['portfolio_config'], trade['portfolio_context'], positions, orders, account,
+                        trade['remaining_loss_budget'], sdk.order_calc_profit, symbol=trade['symbol'],
+                        proposed_risk=trade['reserved_risk'])
+                except ValueError as exc:
+                    return dict(status='REJECTED', success=False, pending=False, message='Envio cancelado antes de order_send: '+str(exc))
+            elif positions or orders:
                 return dict(status='REJECTED', success=False, pending=False,
                     message='Envio cancelado antes de order_send: surgiu posição ou ordem na conta.')
         try:

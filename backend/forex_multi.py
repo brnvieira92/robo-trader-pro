@@ -10,6 +10,7 @@ from backend.bot_manager import BotManager
 from backend.ml_engine import MLEngine
 from backend.diagnostics import RecoveryState, digest, supplemental_check
 from backend.mt5_execution import MT5ExecutionError
+from backend.portfolio_risk import position_limit, active_trades, local_block, inspect_portfolio
 
 PAIRS = ('EURUSD', 'USDJPY', 'GBPUSD', 'USDCHF')
 
@@ -39,7 +40,8 @@ class PairAnalysis(BotManager):
         self.is_running = o.is_running
         self.stats = dict(o.stats)
         self.trade_history = o.trade_history
-        self._has_open_trade = o._has_open_trade
+        self._has_open_trade = (any(t['symbol']==self.config['symbol'] for t in active_trades(o.trade_history))
+                                if position_limit(self.config)>1 else o._has_open_trade)
         self._last_trade_timestamp = o._last_trade_timestamp
         self._last_signal_bar = next((t.get('bar_time') for t in o.trade_history
                                      if t.get('symbol') == self.config['symbol']), None)
@@ -83,13 +85,23 @@ class ForexCoordinator:
         self.cursor = 0
         self.updated_at = None
         self.global_block = 'Aguardando primeira verificação global do MT5.'
+        self.portfolio = None
 
     def exposure_check(self):
         o = self.owner
-        o.live.account(o.config['mt5_account_login'], o.config['mt5_account_server'], trading=True)
+        self.portfolio = None
+        account=o.live.account(o.config['mt5_account_login'], o.config['mt5_account_server'], trading=True)
         positions, orders = o.live.sdk.positions_get(), o.live.sdk.orders_get()
         if positions is None or orders is None:
             raise MT5ExecutionError('Não foi possível confirmar exposição global da conta.')
+        if position_limit(o.config)>1:
+            try:
+                self.portfolio=inspect_portfolio(o.config, o.trade_history, positions, orders, account,
+                    max(0, o.config['stop_loss']+o.stats['daily_pnl']), o.live.sdk.order_calc_profit, require_slot=False)
+                return local_block(o.config, o.trade_history)
+            except ValueError as exc:
+                self.portfolio=None
+                return str(exc)
         if positions or orders:
             return 'Há posição ou ordem na conta MT5; limite global de uma posição/intenção.'
         return None
@@ -122,12 +134,19 @@ class ForexCoordinator:
             base['failed_checks']=copy.deepcopy(focus.get('failed_checks',[]))
         base['forex_radar'] = dict(enabled=True, updated_at=self.updated_at,
                                   global_block=self.global_block, rows=radar,
-                                  max_open_positions=1, read_only=True)
-        if o._has_open_trade:
+                                  max_open_positions=position_limit(o.config), portfolio=copy.deepcopy(self.portfolio), read_only=True)
+        current_block=local_block(o.config, o.trade_history) if position_limit(o.config)>1 else None
+        if current_block:
+            base['forex_radar']['global_block']=current_block
             for row in radar:
                 if row['enabled']:
-                    row['status'] = 'POSIÇÃO/INTENÇÃO' if any(t.get('symbol') == row['symbol'] and t['status'] in ('SUBMITTING','PENDING','OPEN','NEEDS_REVIEW') for t in o.trade_history) else 'BLOQUEADO'
-                    row['blocked_reason'] = 'Já existe uma posição/intenção global; monitoramento continua.'
+                    row.update(status='BLOQUEADO', blocked_reason=current_block)
+        if o._has_open_trade:
+            for row in radar:
+                occupied=any(t['symbol']==row['symbol'] for t in active_trades(o.trade_history))
+                if row['enabled'] and (occupied or position_limit(o.config)==1):
+                    row['status'] = 'POSIÇÃO/INTENÇÃO' if occupied else 'BLOQUEADO'
+                    row['blocked_reason'] = 'Posição/intenção neste símbolo; monitoramento continua.' if occupied else 'Já existe uma posição/intenção global; monitoramento continua.'
         if self.global_block:
             base['risk']['blocked_reason'] = self.global_block
         return base
@@ -163,7 +182,8 @@ class ForexCoordinator:
                     local = preflight['message']
                 block = self.global_block or local
                 checks = [*snap.get('entry_checks', []),
-                    supplemental_check('GLOBAL_EXPOSURE', not self.global_block, self.global_block or 'Sem exposição externa', 'Sem posição/ordem na conta'),
+                    supplemental_check('GLOBAL_EXPOSURE', not self.global_block, self.global_block or 'Carteira correlacionada e verificada',
+                        'Exposição conhecida, vagas e orçamento global disponíveis' if position_limit(o.config)>1 else 'Sem posição/ordem na conta'),
                     supplemental_check('PAIR_RETRY', not (preflight and time.time()<preflight['retry_at']), preflight['message'] if preflight else None, 'Sem espera de recuperação local')]
                 row = dict(checks=checks, failed_checks=[g for g in checks if g['status']=='FAIL' and not g.get('informational')], status='BLOQUEADO' if block else 'CANDIDATO', action=signal['action'],
                            confidence=ml.get('ml_confidence'), signal_score=signal['confidence'],
@@ -203,7 +223,7 @@ class ForexCoordinator:
                 continue
             view = self.views[pair]
             async with o._order_lock:
-                if not o.is_running or o._has_open_trade or o._runtime_block():
+                if not o.is_running or (o._has_open_trade and position_limit(o.config)==1) or o._runtime_block():
                     break
                 # Refresh all gates for this candidate after scanning the rest.
                 o._mt5_busy = True
@@ -234,7 +254,10 @@ class ForexCoordinator:
                         break
                     continue
                 result = await o._execute_mt5(snap['signal'], snap)
-                self.rows[pair].update(status='POSIÇÃO/INTENÇÃO' if o._has_open_trade else 'BLOQUEADO',
+                occupied=any(t['symbol']==view.config['symbol'] for t in active_trades(o.trade_history))
+                if any(t['status']!='OPEN' for t in active_trades(o.trade_history)):
+                    self.portfolio=None
+                self.rows[pair].update(status='POSIÇÃO/INTENÇÃO' if occupied else 'BLOQUEADO',
                                        blocked_reason=result['message'])
                 o.stats['status_reason'] = result['message']
                 self.cursor = (index + 1) % len(pairs)

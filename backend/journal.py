@@ -47,12 +47,20 @@ class PaperJournal:
 
     def reserve_live(self, trade):
         from backend.mt5_execution import ACTIVE_LIVE
+        from backend.portfolio_risk import local_block, reserved_risk
         with self.connection() as db:
             db.execute('BEGIN IMMEDIATE')
-            for row in db.execute('SELECT payload FROM trades'):
-                existing=json.loads(row[0])
-                if existing.get('mode')=='LIVE_MT5' and existing['status'] in ACTIVE_LIVE:
-                    raise ValueError('Há uma intenção/posição MT5 pendente no diário. Aguarde a reconciliação.')
+            active=[t for row in db.execute('SELECT payload FROM trades')
+                    if (t:=json.loads(row[0])).get('mode')=='LIVE_MT5' and t['status'] in ACTIVE_LIVE]
+            if trade.get('max_open_positions', 1) > 1:
+                block=local_block(trade['portfolio_config'], active, trade['symbol'])
+                if block: raise ValueError(block)
+                if any((t.get('account_login'),t.get('account_server')) != (trade['account_login'],trade['account_server']) for t in active):
+                    raise ValueError('Há exposição em outra conta; reserva global bloqueada.')
+                if sum(reserved_risk(t) for t in active)+reserved_risk(trade)>trade['portfolio']['risk_limit']+1e-8:
+                    raise ValueError('Reserva atômica ultrapassaria o orçamento global.')
+            elif active:
+                raise ValueError('Há uma intenção/posição MT5 pendente no diário. Aguarde a reconciliação.')
             db.execute('INSERT INTO trades VALUES (?, ?, ?)',(trade['id'],trade['day'],json.dumps(trade,allow_nan=False)))
 
     def acquire_runtime_lock(self):

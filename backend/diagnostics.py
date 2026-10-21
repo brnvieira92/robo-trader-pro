@@ -118,6 +118,8 @@ def explain_checks(checks, snapshot, last_bar, last_trade_timestamp):
         g={**check,'label':LABELS.get(check['code'],check['code'])}
         if check['code']=='DATA_SOURCE' and c['execution_mode']=='PAPER':
             g['label']='Fonte PAPER identificada'
+        if check['code']=='ONE_POSITION' and c.get('forex_multi_enabled') and c.get('forex_max_open_positions',2)>1:
+            g['label']='Símbolo sem posição/intenção; limite e risco da carteira avaliados separadamente'
         if check['code'] in values:
             g.update(zip(('observed','operator','required','unit'),values[check['code']]))
         if check['code'] in ('ML_ACCURACY','ML_BALANCED','ML_BRIER'):
@@ -209,6 +211,7 @@ class RecoveryState:
         'SPREAD_LIMIT', 'STRUCTURAL_STOP', 'REWARD_RISK', 'ENTRY_DRIFT',
         'STALE_QUOTE', 'QUOTE_UNAVAILABLE', 'MINIMUM_VOLUME', 'MARGIN',
         'SYMBOL_UNAVAILABLE',
+        'GLOBAL_RISK_BUDGET', 'PORTFOLIO_CAPACITY', 'SYMBOL_OCCUPIED',
     })
 
     def __init__(self):
@@ -255,7 +258,9 @@ class RecoveryState:
 
 
 def preflight_code(reason):
-    rules=[('Spread ','SPREAD_LIMIT'),('Símbolo indisponível','SYMBOL_UNAVAILABLE'),
+    rules=[('Orçamento global','GLOBAL_RISK_BUDGET'),('Limite global','PORTFOLIO_CAPACITY'),
+           ('Já existe posição/intenção neste símbolo','SYMBOL_OCCUPIED'),
+           ('Posição externa','EXTERNAL_EXPOSURE'),('Spread ','SPREAD_LIMIT'),('Símbolo indisponível','SYMBOL_UNAVAILABLE'),
            ('Símbolo não disponível','SYMBOL_UNAVAILABLE'),('lote mínimo','MINIMUM_VOLUME'),
            ('Margem','MARGIN'),('Já há posição','EXTERNAL_EXPOSURE'),('retorno/risco','REWARD_RISK'),
            ('Retorno/risco','REWARD_RISK'),('Stop estrutural','STRUCTURAL_STOP'),
