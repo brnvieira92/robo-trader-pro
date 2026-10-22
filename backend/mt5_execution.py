@@ -150,6 +150,9 @@ class MT5Executor:
         age = time.time()-timestamp
         return age if math.isfinite(age) else None
 
+    def _quote_timestamp(self, tick):
+        return self.connector.tick_timestamp(tick)
+
     def clock_diagnostics(self, symbol, timeframe):
         now = time.time()
         result = dict(computer_utc=datetime.fromtimestamp(now,timezone.utc).isoformat(),
@@ -244,7 +247,8 @@ class MT5Executor:
         price = float(tick.ask if buy else tick.bid)
         minimum = (max(0, int(info.trade_stops_level))+1)*point
         try:
-            plan=price_plan(config,signal,price,minimum+(tick.ask-tick.bid),minimum,size,int(info.digits))
+            plan=price_plan(config,signal,price,minimum+(tick.ask-tick.bid),minimum,size,int(info.digits),
+                            spread=float(tick.ask-tick.bid))
         except TradePlanError as exc:
             raise MT5ExecutionError(str(exc)) from exc
         sl=plan['stop_loss'];tp=plan['take_profit']
@@ -304,6 +308,16 @@ class MT5Executor:
         return dict(request=request, account=account, risk_budget=budget, estimated_risk=abs(float(estimated))+buffer,
                     portfolio=portfolio, portfolio_context=context(portfolio_trades or []),
                     volume=volume, price=price, stop_loss=sl, take_profit=tp, spread_points=round(spread,2),
+                    entry_diagnostics=dict(bid=float(tick.bid),ask=float(tick.ask),
+                        quote_utc=self._quote_timestamp(tick),point=point,tick_size=size,digits=int(info.digits),
+                        spread_points=float(spread),spread_price=float(tick.ask-tick.bid),
+                        trade_stops_level=int(info.trade_stops_level),volume_min=minimum_volume,volume_step=step,
+                        volume_max=float(info.volume_max),margin_required=float(margin),
+                        currency_profit=getattr(info,'currency_profit',None),
+                        contract_size=getattr(info,'trade_contract_size',None),
+                        tick_value_profit=getattr(info,'trade_tick_value_profit',None),
+                        tick_value_loss=getattr(info,'trade_tick_value_loss',None),
+                        cost_buffer=float(buffer),estimated_loss=total_risk,estimated_profit=net_reward),
                     plan={**plan,'estimated_profit':net_reward,'estimated_loss':total_risk,'net_reward_risk':net_reward/total_risk})
 
     def send(self, trade):
@@ -398,7 +412,11 @@ class MT5Executor:
             pnl=sum(float(getattr(d,key,0)) for key in ('profit','commission','swap','fee'))
             if not math.isfinite(pnl):
                 raise MT5ExecutionError('Resultado financeiro não finito no histórico MT5.')
-            serialized.append(dict(ticket=int(d.ticket),time=int(d.time),time_raw=int(d.time),pnl=pnl))
+            serialized.append(dict(ticket=int(d.ticket),time=int(d.time),time_raw=int(d.time),pnl=pnl,
+                profit=float(getattr(d,'profit',0)),commission=float(getattr(d,'commission',0)),
+                swap=float(getattr(d,'swap',0)),fee=float(getattr(d,'fee',0)),
+                price=float(getattr(d,'price',0)),volume=float(getattr(d,'volume',0)),
+                entry=getattr(d,'entry',None),reason=getattr(d,'reason',None)))
         entry_volume=sum(float(d.volume) for d in incoming)
         exit_volume=sum(float(d.volume) for d in outgoing)
         entry_price=sum(float(d.price)*float(d.volume) for d in incoming)/entry_volume
@@ -407,6 +425,14 @@ class MT5Executor:
                         (getattr(o,'magic',0)==trade['magic'] and getattr(o,'comment','')==trade['client_tag'])]
         common=dict(position_id=position_id,filled_volume=entry_volume,entry_price=entry_price,deals=serialized,
                     realized_pnl=sum(x['pnl'] for x in serialized))
+        direction=1 if trade['action']=='BUY' else -1
+        requested_entry=(trade.get('request') or {}).get('price')
+        common['execution_summary']=dict(
+            requested_entry=requested_entry,filled_entry=entry_price,
+            entry_slippage_price=(entry_price-float(requested_entry))*direction if requested_entry is not None else None,
+            actual_stop_distance=(entry_price-trade['stop_loss'])*direction,
+            actual_target_distance=(trade['take_profit']-entry_price)*direction,
+            costs={key:sum(d[key] for d in serialized) for key in ('commission','swap','fee')})
         clock_trade = {**trade, **common, 'deal_times_version': 0}
         if not clock_trade.get('deal_ticket'):
             # A lost send response may omit tickets; incoming ownership was

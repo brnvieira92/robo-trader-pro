@@ -35,7 +35,17 @@ O robô reduz o orçamento se o lucro projetado exceder o teto por entrada ou o 
 4. A ordem é descartada se o alvo estiver perto demais para o retorno/risco mínimo, o stop estrutural estiver distante demais, a cotação tiver se afastado do sinal ou os custos inviabilizarem a relação.
 5. No LIVE_MT5 o plano é revalidado pelo bid/ask, spread, especificação do contrato, distância mínima, lote, margem, permissões e `order_check`. SL/TP seguem junto da ordem ao servidor.
 
-A prévia BUY/SELL no painel mostra preços, perda/lucro estimados, retorno/risco e motivo de bloqueio. Ela é indicativa; os preços e o volume finais dependem da revalidação no envio. Nenhuma técnica ou modelo garante entradas precisas em todas as operações ou R$ 150 diariamente. Dias sem operação ou com perda são possíveis. O laboratório CSV atual é binário e **não valida saídas SL/TP Forex**.
+A prévia BUY/SELL no painel mostra preços, perda/lucro estimados, retorno/risco e motivo de bloqueio. Ela é indicativa, sem uma cotação Bid/Ask executável; os preços e o volume finais dependem da revalidação no envio. Nenhuma técnica ou modelo garante entradas precisas em todas as operações ou R$ 150 diariamente. Dias sem operação ou com perda são possíveis. O laboratório CSV atual é binário e **não valida saídas SL/TP Forex**.
+
+### Referência Bid/Ask e diagnóstico das entradas
+
+Os planos nativos novos usam `pricing_version=bid-ask-structure-v2`. As velas e os extremos de suporte/resistência são Bid. Compras entram no Ask e encerram no Bid; vendas entram no Bid e encerram no Ask. Nas vendas, o spread observado é somado às referências estruturais de resistência (SL) e suporte (TP), antes das margens de ATR e do arredondamento. Isso preserva a referência visual Bid; não duplica o spread no PnL. O spread futuro pode variar: o ajuste de entrada não garante que o stop só será acionado após a mesma resistência Bid no futuro.
+
+Após a conversão, o motor revalida espaço até o alvo, retorno/risco mínimo, distância máxima de quatro ATR (ou valor configurado), regras do símbolo, custo e lote monetário. Uma oportunidade pode ser rejeitada por deixar de atender aos critérios. Não foram afrouxados os filtros ML, score de 78%, limites globais ou número de posições. Não se alteram SL/TP de posições já enviadas nem resultados antigos.
+
+O diário e a exportação JSON das novas entradas incluem `entry_diagnostics` (Bid, Ask, spread, timestamp UTC normalizado da cotação, especificação e margem), `signal_snapshot` (indicadores e validação ML disponíveis) e `plan_parameters`. O plano guarda ATR, estrutura Bid, referência de saída, spread/stop, spread/ATR e distâncias em ATR. A reconciliação discrimina profit, commission, swap, fee, preço, volume e motivo bruto disponível por negócio; `execution_summary` registra preço solicitado/preenchido e desvio de entrada (positivo = desfavorável). Dados novos não são inventados para operações antigas. Isso não equivale a ticks históricos nem permite reconstruir MAE/MFE intravela a partir de apenas duas execuções.
+
+O backtest Forex SL/TP usa o mesmo cálculo corrigido e conserva a hipótese de Ask aproximado pelo spread da vela; permanece limitado a uma posição simultânea. Novas simulações podem diferir de relatórios produzidos pelo cálculo anterior. A correção de preços e os testes de software não comprovam vantagem financeira da estratégia nem calibram a estimativa RF para TP antes do SL.
 
 ## Acompanhamento e interrupções
 

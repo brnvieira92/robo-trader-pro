@@ -121,6 +121,9 @@ class HistoricalExecutor(MT5Executor):
     def _tick(self,symbol,config):
         return NS(bid=self.bar.open,ask=self.bar.open+self.bar.spread_points*self.spec.point)
 
+    def _quote_timestamp(self, tick):
+        return self.bar.time
+
     def profit(self,kind,symbol,volume,entry,exit):
         movement=(Decimal(str(exit))-Decimal(str(entry)))*(1 if kind==0 else -1)
         value=self.spec.tick_value_profit if movement>=0 else self.spec.tick_value_loss
@@ -251,7 +254,7 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
                 position=dict(symbol=symbol,action=signal['action'],volume=prepared['volume'],entry_price=entry,
                     quoted_entry=prepared['price'],entry_time=ts,entry_bar=ts,stop_loss=prepared['stop_loss'],take_profit=prepared['take_profit'],
                     entry_commission=fee,swap_cost=0,last_swap_time=ts,risk_budget=prepared['risk_budget'],
-                    estimated_risk=prepared['estimated_risk'],plan=prepared['plan'],status='OPEN',signal_bar=signal['bar_time'])
+                    estimated_risk=prepared['estimated_risk'],plan=prepared['plan'],entry_diagnostics=prepared['entry_diagnostics'],status='OPEN',signal_bar=signal['bar_time'])
                 post_cash(-fee,ts);daily_entries[day]+=1;last_trade=ts;last_used[symbol]=signal['bar_time']
                 record.update(action='ENTERED',plan=prepared['plan'],volume=prepared['volume'])
                 cursor=(order.index(symbol)+1)%len(order)

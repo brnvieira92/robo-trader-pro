@@ -9,6 +9,7 @@ import math
 import uuid
 import hashlib
 import time
+import copy
 import pandas as pd
 from backend.config import TradingConfig
 from backend.diagnostics import DiagnosticRecorder, RecoveryState, analysis_event, digest, preflight_code
@@ -939,6 +940,8 @@ class BotManager:
                    mode='LIVE_MT5',source='MT5_LIVE',status='SUBMITTING',pnl=0.,remaining_sec=0,
                    action=signal['action'],amount=prepared['estimated_risk'],risk_budget=prepared['risk_budget'],
                    exit_policy='SL_TP',plan=prepared['plan'],
+                   entry_diagnostics=prepared['entry_diagnostics'],signal_snapshot=copy.deepcopy(signal),
+                   plan_parameters=copy.deepcopy(config['strategy_params']),
                    requested_volume=prepared['volume'],entry_price=prepared['price'],stop_loss=prepared['stop_loss'],
                    take_profit=prepared['take_profit'],account_login=account['login'],account_server=account['server'],
                    currency=account['currency'],account_type=account['account_type'],request=prepared['request'],
@@ -949,7 +952,7 @@ class BotManager:
                 cost_buffer=config['mt5_cost_buffer'],portfolio=prepared['portfolio'],
                 portfolio_context=prepared['portfolio_context'],portfolio_config=config.copy(),
                 remaining_loss_budget=max(0,config['stop_loss']+self.stats['daily_pnl']))
-        self._diagnostic_event('DECISION','PREFLIGHT_APPROVED',dict(attempt_id=client_tag,analysis_id=signal.get('analysis_id') or snapshot.get('analysis_id'),action=signal['action'],input_signal=signal,checks=[dict(code='NATIVE_PREFLIGHT',status='PASS')],plan=prepared['plan'],risk_budget=prepared['risk_budget'],volume=prepared['volume']),bar_time=signal.get('bar_time'), context=config)
+        self._diagnostic_event('DECISION','PREFLIGHT_APPROVED',dict(attempt_id=client_tag,analysis_id=signal.get('analysis_id') or snapshot.get('analysis_id'),action=signal['action'],input_signal=signal,checks=[dict(code='NATIVE_PREFLIGHT',status='PASS')],plan=prepared['plan'],entry_diagnostics=prepared['entry_diagnostics'],risk_budget=prepared['risk_budget'],volume=prepared['volume']),bar_time=signal.get('bar_time'), context=config)
         if not self.audit.healthy:
             return dict(success=False,message=self.audit.error)
         try:

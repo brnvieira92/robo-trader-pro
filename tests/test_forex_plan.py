@@ -40,6 +40,97 @@ def test_entry_that_has_moved_too_far_is_not_chased():
         price_plan(TradingConfig().model_dump(),signal(),1.105)
 
 
+def test_sell_structural_barriers_are_translated_from_bid_to_ask():
+    c=TradingConfig().model_dump()
+    c['strategy_params'].update(sl_atr_mult=1.,tp_atr_mult=4.)
+    s=signal();s['action']='SELL'
+    s['indicators'].update(support=1.0965,resistance=1.1014)
+    baseline=price_plan(c,s,1.1,tick_size=.00001,digits=5)
+    adjusted=price_plan(c,s,1.1,tick_size=.00001,digits=5,spread=.0002)
+    assert adjusted['stop_loss']==pytest.approx(baseline['stop_loss']+.0002)
+    assert adjusted['take_profit']==pytest.approx(baseline['take_profit']+.0002)
+    # In Bid coordinates the same invalidation/obstacle buffers are preserved.
+    assert adjusted['stop_loss']-.0002>=1.1014+.001*.15-1e-10
+    assert adjusted['take_profit']-.0002>=1.0965+.001*.1-1e-10
+    assert adjusted['exit_quote']=='ASK' and adjusted['structure_quote']=='BID'
+    assert adjusted['reward_risk']>=1.5
+
+
+def test_buy_structure_is_not_shifted_or_charged_spread_twice():
+    c=TradingConfig().model_dump();s=signal()
+    s['indicators'].update(support=1.099,resistance=1.104)
+    baseline=price_plan(c,s,1.1,tick_size=.00001,digits=5)
+    adjusted=price_plan(c,s,1.1,tick_size=.00001,digits=5,spread=.0002)
+    assert adjusted['stop_loss']==baseline['stop_loss']
+    assert adjusted['take_profit']==baseline['take_profit']
+    assert adjusted['exit_quote']=='BID' and adjusted['structure_shift']==0
+
+
+def test_spread_adjustment_cannot_relax_minimum_reward_risk():
+    c=TradingConfig().model_dump();s=signal();s['action']='SELL'
+    s['indicators'].update(resistance=1.1015,support=1.095)
+    assert price_plan(c,s,1.1)['reward_risk']>=1.5
+    with pytest.raises(TradePlanError,match='retorno/risco'):
+        price_plan(c,s,1.1,spread=.0002)
+
+
+def test_sell_target_without_executable_space_is_rejected():
+    s=signal();s['action']='SELL';s['indicators'].update(support=1.0999)
+    with pytest.raises(TradePlanError,match='Sem espaço'):
+        price_plan(TradingConfig().model_dump(),s,1.1,spread=.0002)
+
+
+def test_spread_adjusted_structural_stop_still_obeys_four_atr_ceiling():
+    c=TradingConfig().model_dump();c['strategy_params']['tp_atr_mult']=8.
+    s=signal();s['action']='SELL';s['indicators'].update(resistance=1.1037,support=1.09)
+    assert price_plan(c,s,1.1)['stop_atr']<4
+    with pytest.raises(TradePlanError,match='Stop estrutural distante'):
+        price_plan(c,s,1.1,spread=.0002)
+
+
+def test_tick_rounding_cannot_widen_stop_past_configured_atr_limit():
+    c=TradingConfig().model_dump();c['strategy_params'].update(sl_atr_mult=1.,tp_atr_mult=8.)
+    s=signal();s['action']='SELL';s['indicators'].update(resistance=1.10386,support=1.09)
+    with pytest.raises(TradePlanError,match='após ajuste ao tick'):
+        price_plan(c,s,1.10002,tick_size=.0001,digits=4)
+
+
+@pytest.mark.parametrize('spread',[float('nan'),float('inf'),-.0001])
+def test_invalid_spread_cannot_produce_a_price_plan(spread):
+    with pytest.raises(TradePlanError,match='Spread inválido'):
+        price_plan(TradingConfig().model_dump(),signal(),1.1,spread=spread)
+
+
+def test_native_sell_adjustment_resizes_lot_and_persists_quote_and_ml(live_bot):
+    b,sdk=live_bot
+    b.config['strategy_params'].update(sl_atr_mult=1.,tp_atr_mult=4.)
+    s=signal();s['action']='SELL'
+    s['indicators'].update(support=1.0965,resistance=1.1014)
+    reference=price_plan(b.config,s,float(sdk.quote.bid),tick_size=.00001,digits=5)
+    # Positive execution costs and existing portfolio gates remain independently checked.
+    result=asyncio.run(b.execute_trade_from_signal(s,manual=True))
+    assert result['success']
+    trade=b.trade_history[0];p=trade['plan']
+    assert p['stop_loss']>reference['stop_loss']
+    assert sdk.order_calc_profit(sdk.ORDER_TYPE_SELL,b.config['symbol'],trade['requested_volume'],
+                                 trade['request']['price'],trade['stop_loss'])>=-trade['risk_budget']-1e-8
+    assert trade['amount']<=trade['risk_budget']
+    assert trade['entry_diagnostics']['spread_points']==pytest.approx(20)
+    assert trade['entry_diagnostics']['bid']==sdk.quote.bid
+    assert p['spread_to_stop']==pytest.approx(.0002/p['risk_distance'])
+    assert trade['signal_snapshot']['indicators']['ml_validation']['validated']
+    assert trade['signal_snapshot']['confidence']==85
+    s['indicators']['ml_validation']['validated']=False
+    assert trade['signal_snapshot']['indicators']['ml_validation']['validated']
+    restored=BotManager().journal.all_trades()[0]
+    assert restored['entry_diagnostics']==trade['entry_diagnostics']
+    asyncio.run(b.reconcile_live())
+    sdk.close_position();asyncio.run(b.reconcile_live())
+    assert 'commission' in trade['deals'][0] and 'reason' in trade['deals'][0]
+    assert trade['execution_summary']['costs']['commission']==pytest.approx(-.4)
+    assert len(sdk.sent)==1
+
+
 def test_goal_caps_risk_without_chasing_losses():
     c=TradingConfig().model_dump()
     assert goal_limited_budget(c,5,150,2)==5
