@@ -51,6 +51,7 @@ def analysis_event(snapshot, last_bar, last_trade_timestamp):
     payload=dict(analysis_id=analysis_id,bar_time_basis='UTC' if q['source']=='MT5_LIVE' else 'SOURCE_LOCAL',action=s['action'],score=s['confidence'],raw_signal=s.get('diagnostic',{}),validation=v,
         failed_checks=[g for g in checks if g['status']=='FAIL' and not g.get('informational')],reason=s['reason'],first_block=snapshot['risk']['blocked_reason'],checks=checks,
         data_quality=q,plans=snapshot.get('trade_plans',{}),risk=snapshot['risk'],goal=goal,
+        fibonacci=s.get('indicators',{}).get('fibonacci'),
         automation_requested=snapshot['is_running'],config=c,config_version=digest(c),
         model_version=v.get('model_version'),dataset_version=v.get('dataset_version'))
     # Gate transitions are recorded, repeated panel reads do not inflate counts.

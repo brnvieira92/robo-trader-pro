@@ -353,6 +353,10 @@
               <span>ATR: <span id="lblQuoteAtr" class="text-on-surface font-semibold">--</span></span>
               <span>Regime: <span id="quoteRegime" class="text-primary font-semibold">—</span></span>
             </div>
+            <details class="text-xs mt-2">
+              <summary class="text-primary cursor-pointer">Fibonacci — informativo</summary>
+              <pre id="fibonacciContext" class="whitespace-pre-wrap">Aguardando análise do par selecionado.</pre>
+            </details>
           </div>
 
         </section>
@@ -1029,7 +1033,12 @@
         const checks=document.createElement('div'); checks.className='forex-check-list';
         checks.textContent=(row?.checks || []).map(formatEntryCheck).join('\n\n') || 'Sem análise detalhada disponível.';
         details.append(summary,checks);
-        card.append(title,status,signal,valid,reason,details,link); container.append(card);
+        const fib=document.createElement('details');
+        fib.dataset.pair='fibonacci:'+pair;fib.open=expanded.has(fib.dataset.pair);
+        const fibTitle=document.createElement('summary');fibTitle.textContent='Fibonacci — informativo';
+        const fibText=document.createElement('pre');fibText.className='whitespace-pre-wrap text-xs';
+        fibText.textContent=formatFibonacci(row?.fibonacci);fib.append(fibTitle,fibText);
+        card.append(title,status,signal,valid,reason,details,fib,link); container.append(card);
       }
     }
 
@@ -1516,6 +1525,19 @@
       }
     }
 
+    function formatFibonacci(f) {
+      if (!f?.available) return f?.reason || 'Aguardando pivôs confirmados. Não interfere nas entradas.';
+      const lines=[`Movimento: ${f.direction === 'UP' ? 'alta' : 'baixa'} • estrutura Bid`,
+        `Início: ${formatPrice(f.start.price)} • ${f.start.time}`,
+        `Fim: ${formatPrice(f.end.price)} • ${f.end.time}`,
+        ...f.levels.map(l => `Retração ${(l.ratio*100).toFixed(1)}%: ${formatPrice(l.price)}`),
+        ...f.extensions.map(l => `Extensão ${(l.ratio*100).toFixed(1)}%: ${formatPrice(l.price)}`),
+        f.within_swing ? (f.in_382_618_zone ? 'Preço na região 38,2–61,8%.' : 'Preço dentro do movimento de referência.') : 'Preço fora do movimento de referência.',
+        'Últimos 60 candles fechados; pivôs confirmados por 2 candles de cada lado.',
+        'Referência informativa; não aprova sinais nem altera SL/TP.'];
+      return lines.join('\n');
+    }
+
     function formatPrice(value) { return Number.isFinite(Number(value)) ? Number(value).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:8}) : '—'; }
 
     function formatMoney(value,currency='BRL') {
@@ -1563,6 +1585,7 @@
       for (const el of document.querySelectorAll('[data-money-prefix]')) el.textContent = state.currency;
       document.getElementById('bridgeTelemetry').textContent = state.connections.safirion.connected ? 'conectada' : 'não conectada';
       document.getElementById('quoteRegime').textContent = state.signal?.indicators?.regime || '—';
+      document.getElementById('fibonacciContext').textContent = formatFibonacci(state.signal?.indicators?.fibonacci);
       document.getElementById('lblQuoteDelta').textContent = state.execution_mode;
       const q = state.data_quality;
       const v = state.signal?.indicators?.ml_validation || {};

@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 from backend.ml_engine import ml_engine
 from backend.market_data import validate_candles
+from backend.fibonacci import fibonacci_context
 
 
 @dataclass
@@ -143,6 +144,7 @@ class StrategyEngine:
         ml_pred = (model_engine or ml_engine).predict_next_candle(df, context=f"{model_context or market_type}:{symbol}:{timeframe}:{params.get('data_source', 'unknown')}")
 
         indicators_snapshot = {
+            "fibonacci": fibonacci_context(df, atr) if market_type == 'MT5_FOREX' else None,
             "support": float(df['low'].tail(params.get('structure_lookback',20)).min()),
             "resistance": float(df['high'].tail(params.get('structure_lookback',20)).max()),
             "price": round(price, 5),

@@ -188,6 +188,7 @@ class ForexCoordinator:
                 row = dict(checks=checks, failed_checks=[g for g in checks if g['status']=='FAIL' and not g.get('informational')], status='BLOQUEADO' if block else 'CANDIDATO', action=signal['action'],
                            confidence=ml.get('ml_confidence'), signal_score=signal['confidence'],
                            validated=ml.get('validated', False), validation=ml,
+                           fibonacci=signal.get('indicators',{}).get('fibonacci'),
                            blocked_reason=block, local_block=local, global_block=self.global_block,
                            signal_reason=signal.get('reason'), data_quality=snap['data_quality'],
                            symbol_spec=snap.get('symbol_spec'), analysis_id=snap.get('analysis_id'),

@@ -47,6 +47,16 @@ O diário e a exportação JSON das novas entradas incluem `entry_diagnostics` (
 
 O backtest Forex SL/TP usa o mesmo cálculo corrigido e conserva a hipótese de Ask aproximado pelo spread da vela; permanece limitado a uma posição simultânea. Novas simulações podem diferir de relatórios produzidos pelo cálculo anterior. A correção de preços e os testes de software não comprovam vantagem financeira da estratégia nem calibram a estimativa RF para TP antes do SL.
 
+## Fibonacci informativo
+
+Em MT5 Forex, cada análise calcula Fibonacci separadamente para o símbolo/timeframe atual. O cálculo usa até 60 velas Bid já fechadas, sem adicionar dados ao treinamento RF. Um pivô precisa ter máxima estritamente maior, ou mínima estritamente menor, que as duas velas de cada lado; só fica disponível após o fechamento das duas velas posteriores. Empates e velas que seriam simultaneamente pivô de máxima e mínima são descartados porque a ordem intravela é desconhecida. O movimento de referência liga o pivô confirmado mais recente ao último pivô oposto anterior. Ele não é uma classificação garantida de tendência nem uma escolha retrospectiva do movimento mais lucrativo.
+
+As retrações de 0%, 23,6%, 38,2%, 50%, 61,8%, 78,6% e 100% são medidas a partir do fim desse movimento. Extensões de 127,2% e 161,8% são medidas a partir da origem do movimento; são referências matemáticas, não previsões. Sem dois pivôs válidos, o painel informa indisponibilidade. Preço fora do intervalo é marcado explicitamente, e não descrito como retração ativa. Os pivôs podem mudar à medida que novos candles os confirmam; o contexto de cada análise permanece registrado para comparação posterior.
+
+Consulte **Fibonacci — informativo** no card de cotação do ativo principal ou em cada card do Radar. O objeto `indicators.fibonacci` também acompanha os diagnósticos ANALYSIS/RADAR e o `signal_snapshot` das novas operações no histórico JSON. Os horários dos pivôs seguem a base temporal das velas (UTC normalizado na fonte MT5), não necessariamente o fuso visual do terminal.
+
+Nesta etapa, Fibonacci não altera score, validação ML, seleção de pares, SL/TP, lote ou permissões de entrada; não há filtro obrigatório de retração nem promessa de mais operações. Operações antigas não recebem níveis retrospectivos inventados. A validação de eventual uso decisório deve comparar resultados líquidos fora da amostra antes de mudar a estratégia.
+
 ## Acompanhamento e interrupções
 
 - **PAPER Forex/B3:** a posição permanece aberta até preço no SL/TP ou “Encerrar PAPER”. O preenchimento usa o preço observado, incluindo gaps, e o custo fixo configurado. Não é uma execução da corretora; o saldo é virtual.
