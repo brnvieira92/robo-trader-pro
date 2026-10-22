@@ -402,8 +402,10 @@ class BotManager:
         if amount <= 0:
             return reason
         if not manual and signal:
-            if signal['action'] not in ('BUY', 'SELL') or signal['confidence'] < self.config['min_confidence']:
-                return "Sem confluência técnica suficiente."
+            if signal['action'] not in ('BUY', 'SELL'):
+                return signal.get('reason') or "Sem confluência técnica suficiente."
+            if signal['confidence'] < self.config['min_confidence']:
+                return f"Score final {signal['confidence']:.1f}% abaixo do mínimo {self.config['min_confidence']:.1f}%."
             if signal.get('bar_time') == self._last_signal_bar:
                 return "Este candle já originou uma operação."
             validation = signal.get('indicators', {}).get('ml_validation', {})
@@ -942,6 +944,7 @@ class BotManager:
                    exit_policy='SL_TP',plan=prepared['plan'],
                    entry_diagnostics=prepared['entry_diagnostics'],signal_snapshot=copy.deepcopy(signal),
                    plan_parameters=copy.deepcopy(config['strategy_params']),
+                   entry_policy_version=signal.get('indicators',{}).get('entry_policy_version','legacy'),
                    requested_volume=prepared['volume'],entry_price=prepared['price'],stop_loss=prepared['stop_loss'],
                    take_profit=prepared['take_profit'],account_login=account['login'],account_server=account['server'],
                    currency=account['currency'],account_type=account['account_type'],request=prepared['request'],

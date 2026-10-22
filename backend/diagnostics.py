@@ -37,6 +37,15 @@ def analysis_event(snapshot, last_bar, last_trade_timestamp):
         gate('SIGNAL_DIRECTION',s['action'] in ('BUY','SELL'),s['reason']),
         gate('MIN_CONFIDENCE',s['confidence']>=c['min_confidence']),
         gate('VOLATILITY',not d.get('extreme_volatility') if d else None)])
+    walk=v.get('walk_forward')
+    if v.get('validation_method')=='walk_forward_v2':
+        checks.append(dict(code='ML_WALK_FORWARD',status='PASS' if walk and walk['validated'] else 'FAIL',
+            reason='' if walk and walk['validated'] else 'Sem consistência direcional nas janelas walk-forward.',
+            observed=walk.get('passed_folds') if walk else None,operator='>=',required=2,unit='de 3 janelas; exige métricas agregadas aprovadas'))
+    confirmation=s.get('indicators',{}).get('entry_confirmation') or {}
+    checks.extend(dict(code=check['code'],status='PASS' if check['passed'] else 'FAIL',
+                       reason=check['reason'],observed=check['observed'],required=check['required'])
+                  for check in confirmation.get('checks',[]))
     goal=snapshot['goal']
     checks.extend([gate('ACCOUNT_PERMISSIONS',snapshot['diagnostics']['terminal_permissions'] if c['execution_mode']=='LIVE_MT5' else None),
         gate('ONE_POSITION',not snapshot['has_open_trade']),gate('DAILY_LOSS',stats['daily_pnl']>-c['stop_loss']),
@@ -52,6 +61,7 @@ def analysis_event(snapshot, last_bar, last_trade_timestamp):
         failed_checks=[g for g in checks if g['status']=='FAIL' and not g.get('informational')],reason=s['reason'],first_block=snapshot['risk']['blocked_reason'],checks=checks,
         data_quality=q,plans=snapshot.get('trade_plans',{}),risk=snapshot['risk'],goal=goal,
         fibonacci=s.get('indicators',{}).get('fibonacci'),
+        entry_confirmation=confirmation,entry_policy_version=s.get('indicators',{}).get('entry_policy_version','legacy'),
         automation_requested=snapshot['is_running'],config=c,config_version=digest(c),
         model_version=v.get('model_version'),dataset_version=v.get('dataset_version'))
     # Gate transitions are recorded, repeated panel reads do not inflate counts.
@@ -64,6 +74,10 @@ def analysis_event(snapshot, last_bar, last_trade_timestamp):
 
 
 LABELS = {
+    'ML_WALK_FORWARD':'Consistência ML em janelas cronológicas',
+    'FOREX_CONTEXT':'Contexto de tendência confirmado',
+    'PRICE_ACTION_CONFIRMATION':'Confirmação de price action',
+    'SPREAD_STOP_RATIO':'Spread proporcional ao stop',
     'ML_CLOSED_HISTORY':'Velas fechadas para ML', 'ML_TRAINING_SAMPLES':'Amostras de treinamento',
     'ML_TEST_SAMPLES':'Amostras de validação', 'ML_TRAIN_CLASSES':'Classes no treinamento', 'ML_TEST_CLASSES':'Classes na validação',
     'SPREAD_LIMIT':'Spread máximo', 'MINIMUM_VOLUME':'Lote mínimo e orçamento', 'MARGIN':'Margem livre suficiente',
@@ -144,6 +158,7 @@ def explain_checks(checks, snapshot, last_bar, last_trade_timestamp):
                                   observed=value,operator='>=',required=minimum,unit=''))
     if c['execution_mode']=='LIVE_MT5':
         native=[('SPREAD_LIMIT','Spread máximo',c['mt5_max_spread_points'],'pontos MT5'),
+            ('SPREAD_STOP_RATIO','Spread proporcional ao stop',c.get('mt5_max_spread_stop_ratio',.30),'fração da distância ao SL (Forex)'),
             ('REWARD_RISK','Retorno/risco líquido mínimo',c['strategy_params']['min_reward_risk'],''),
             ('STRUCTURAL_STOP','Distância máxima do stop',c['strategy_params']['max_stop_atr'],'× ATR'),
             ('ENTRY_DRIFT','Desvio máximo desde o sinal',c['strategy_params']['max_entry_drift_atr'],'× ATR'),
@@ -209,7 +224,7 @@ class RecoveryState:
     # These are opportunity rejections, not proof that an operational component
     # is unavailable. Expiry permits revalidation; it never approves an order.
     OPPORTUNITY_REJECTIONS = frozenset({
-        'SPREAD_LIMIT', 'STRUCTURAL_STOP', 'REWARD_RISK', 'ENTRY_DRIFT',
+        'SPREAD_LIMIT', 'SPREAD_STOP_RATIO', 'STRUCTURAL_STOP', 'REWARD_RISK', 'ENTRY_DRIFT',
         'STALE_QUOTE', 'QUOTE_UNAVAILABLE', 'MINIMUM_VOLUME', 'MARGIN',
         'SYMBOL_UNAVAILABLE',
         'GLOBAL_RISK_BUDGET', 'PORTFOLIO_CAPACITY', 'SYMBOL_OCCUPIED',
@@ -261,7 +276,7 @@ class RecoveryState:
 def preflight_code(reason):
     rules=[('Orçamento global','GLOBAL_RISK_BUDGET'),('Limite global','PORTFOLIO_CAPACITY'),
            ('Já existe posição/intenção neste símbolo','SYMBOL_OCCUPIED'),
-           ('Posição externa','EXTERNAL_EXPOSURE'),('Spread ','SPREAD_LIMIT'),('Símbolo indisponível','SYMBOL_UNAVAILABLE'),
+           ('Posição externa','EXTERNAL_EXPOSURE'),('Spread/stop','SPREAD_STOP_RATIO'),('Spread ','SPREAD_LIMIT'),('Símbolo indisponível','SYMBOL_UNAVAILABLE'),
            ('Símbolo não disponível','SYMBOL_UNAVAILABLE'),('lote mínimo','MINIMUM_VOLUME'),
            ('Margem','MARGIN'),('Já há posição','EXTERNAL_EXPOSURE'),('retorno/risco','REWARD_RISK'),
            ('Retorno/risco','REWARD_RISK'),('Stop estrutural','STRUCTURAL_STOP'),

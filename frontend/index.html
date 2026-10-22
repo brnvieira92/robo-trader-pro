@@ -558,6 +558,7 @@
                   <label>Ajuste de timestamp das velas (minutos)<input id="cfgMt5BarOffset" type="number" min="-840" max="840" step="1" value="0" onchange="saveConfig()"></label>
                   <label>Ajuste de timestamp dos negócios (minutos)<input id="cfgMt5DealOffset" type="number" min="-840" max="840" step="1" placeholder="Automático" onchange="saveDealClock()"></label>
                   <label>Spread máximo (pontos MT5)<input id="cfgMt5Spread" type="number" value="30" min="1" onchange="saveConfig()"></label>
+                  <label>Spread máximo / distância ao SL — Forex (%)<input id="cfgMt5SpreadStopRatio" type="number" value="30" min="1" max="100" step="1" onchange="saveConfig()"></label>
                   <label>Desvio de preço (pontos)<input id="cfgMt5Deviation" type="number" value="20" min="0" onchange="saveConfig()"></label>
                   <label>Teto de volume (lotes/contratos)<input id="cfgMt5VolumeCap" type="number" value="1" min="0.001" step="0.001" onchange="saveConfig()"></label>
                   <label>Reserva para custos (moeda da conta)<input id="cfgMt5Buffer" type="number" value="0" min="0" step="0.01" onchange="saveConfig()"></label>
@@ -899,7 +900,7 @@
       try {
         const data = await (await apiFetch('/api/trades/history?limit=200')).json();
         output.textContent = `${data.items.length} de ${data.total} registros. Exporte o JSON para obter todos.\n` + data.items.map(t =>
-          `${t.day} ${t.time || ''} • ${t.symbol} • ${t.status} • ${t.pnl ?? 0} ${t.currency || ''}${t.sync_error ? '\n'+t.sync_error : ''}`
+          `${t.day} ${t.time || ''} • ${t.symbol} • ${t.status} • ${t.pnl ?? 0} ${t.currency || ''} • ${t.entry_policy_version || 'legado'}${t.sync_error ? '\n'+t.sync_error : ''}`
         ).join('\n');
       } catch (error) { output.textContent = error.message; }
     }
@@ -1025,6 +1026,8 @@
         const status=document.createElement('p'); status.textContent=row?.status || 'DESATIVADO';
         const signal=document.createElement('p'); signal.textContent='Sinal: '+(row?.action || '—')+' • Confiança ML: '+(row?.confidence == null ? '—' : row.confidence.toFixed(1)+'%');
         const valid=document.createElement('p'); valid.textContent='Validação: '+(row?.validated == null ? '—' : row.validated ? 'aprovada' : 'sem vantagem demonstrada');
+        if(row?.validation?.walk_forward) valid.textContent+=` • walk-forward ${row.validation.walk_forward.passed_folds}/3 janelas`;
+        if(row?.entry_confirmation) valid.textContent+=` • contexto ${row.entry_confirmation.context_timeframe}: ${row.entry_confirmation.trend}`;
         const reason=document.createElement('p'); reason.textContent=row?.blocked_reason || row?.signal_reason || 'Par não selecionado.';
         const link=document.createElement('a'); link.textContent='Exportar diagnóstico deste símbolo';
         link.href='/api/diagnostics/export.csv?'+new URLSearchParams({symbol:row?.symbol || pair});
@@ -1060,6 +1063,7 @@
         forex_max_open_positions: Number(document.getElementById('cfgPortfolioSlots').value),
         mt5_deal_time_offset_minutes: document.getElementById('cfgMt5DealOffset').value === '' ? null : Number(document.getElementById('cfgMt5DealOffset').value),
         mt5_max_spread_points: Number(document.getElementById('cfgMt5Spread').value),
+        mt5_max_spread_stop_ratio: Number(document.getElementById('cfgMt5SpreadStopRatio').value)/100,
         mt5_deviation_points: Number(document.getElementById('cfgMt5Deviation').value),
         mt5_volume_cap: Number(document.getElementById('cfgMt5VolumeCap').value),
         mt5_cost_buffer: Number(document.getElementById('cfgMt5Buffer').value),
@@ -1222,6 +1226,7 @@
           initializeForexSettings(state.config);
           document.getElementById('cfgExecutionMode').value = state.config.execution_mode;
           for (const [id,key] of Object.entries({cfgMt5TickOffset:'mt5_tick_time_offset_minutes',cfgMt5BarOffset:'mt5_bar_time_offset_minutes',cfgMt5Spread:'mt5_max_spread_points',cfgMt5Deviation:'mt5_deviation_points',cfgMt5VolumeCap:'mt5_volume_cap',cfgMt5Buffer:'mt5_cost_buffer'})) document.getElementById(id).value = state.config[key];
+          document.getElementById('cfgMt5SpreadStopRatio').value = (state.config.mt5_max_spread_stop_ratio ?? .30)*100;
           document.getElementById('cfgMt5DealOffset').value = state.config.mt5_deal_time_offset_minutes ?? '';
           document.getElementById('cfgPortfolioSlots').value = state.config.forex_max_open_positions ?? 2;
           document.getElementById('cfgMarketType').value = state.config.market_type;
@@ -1594,6 +1599,7 @@
       document.getElementById('dataDetail').textContent = `${q.closed_candles} velas fechadas • vela em formação excluída${q.history_error ? ' • '+q.history_error : ''}`+(q.tick_age_seconds != null ? ` • último tick há ${q.tick_age_seconds}s` : '');
       document.getElementById('validationScore').textContent = v.enabled ? `${v.accuracy}% fora do treino` : 'Amostra insuficiente';
       document.getElementById('validationDetail').textContent = v.enabled ? `Referência ${v.baseline_accuracy}% • ${v.validation_samples} amostras • Brier ${v.brier_score}. ${v.validated ? 'Filtro temporal aprovado neste período.' : 'Sem vantagem demonstrada.'}` : (v.reason || 'Aguardando histórico real suficiente.');
+      if(v.validation_method==='walk_forward_v2') document.getElementById('validationDetail').textContent+=` RF Forex v3 • walk-forward ${v.walk_forward?.passed_folds ?? 0}/3 janelas (mínimo 2 e métricas agregadas).`;
       document.getElementById('riskBudget').textContent = `${state.risk.max_risk_pct}% por entrada`;
       document.getElementById('riskDetail').textContent = `Orçamento da próxima ordem ${formatMoney(state.risk.next_amount,state.currency)} • perda restante ${formatMoney(state.risk.remaining_loss_budget,state.currency)}`;
       document.getElementById('decisionGate').textContent = state.risk.blocked_reason ? 'AGUARDAR' : 'SETUP DISPONÍVEL';

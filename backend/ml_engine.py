@@ -109,21 +109,23 @@ class MLEngine:
         # Do not contaminate one-bar training labels with trade PnL.
         return
 
-    def predict_next_candle(self, df: pd.DataFrame, context: str = "default") -> Dict[str, Any]:
+    def predict_next_candle(self, df: pd.DataFrame, context: str = "default", validation_mode="single_split") -> Dict[str, Any]:
+        if validation_mode not in ('single_split','walk_forward_v2'):
+            raise ValueError('Modo de validação ML desconhecido.')
         result = dict(enabled=False, validated=False, prob_up=50.0, prob_down=50.0,
                       ml_action="NEUTRAL", ml_confidence=50.0, accuracy=0.0,
                       samples=0, validation_samples=0, baseline_accuracy=0.0,
                       balanced_accuracy=0.0, brier_score=None, current_features=[],
                       experience_count=0, reason="Histórico insuficiente: mínimo 100 velas fechadas.",
-                      probability_kind="uncalibrated_model_estimate")
+                      probability_kind="uncalibrated_model_estimate",validation_method=validation_mode)
         if not SKLEARN_AVAILABLE:
             result["reason"] = "scikit-learn indisponível."
             return result
         if len(df) < 100:
             return result
         signature = hashlib.sha256(pd.util.hash_pandas_object(df, index=True).values.tobytes()).hexdigest()
-        result.update(dataset_version=signature,model_version=hashlib.sha256((context+signature+'RF80-depth4-leaf6-seed42-v1').encode()).hexdigest())
-        key = (context, signature)
+        result.update(dataset_version=signature,model_version=hashlib.sha256((context+signature+'RF80-depth4-leaf6-seed42-v1'+validation_mode).encode()).hexdigest())
+        key = (context, signature, validation_mode)
         with self._cache_lock:
             if key in self._cache:
                 self._cache.move_to_end(key)
@@ -151,6 +153,10 @@ class MLEngine:
             balanced = float(balanced_accuracy_score(y_test, predictions))
             brier = float(brier_score_loss(y_test, probabilities))
             validated = accuracy > baseline and balanced >= .55 and brier < .25
+            if validation_mode == 'walk_forward_v2':
+                walk = self.walk_forward(X,y,model)
+                result['walk_forward']=walk
+                validated = validated and walk['validated']
             fitted = model().fit(X, y)
             probs = fitted.predict_proba([features])[0]
             up = float(probs[list(fitted.classes_).index(1)]) * 100
@@ -159,12 +165,14 @@ class MLEngine:
             action = ("BUY" if up > down else "SELL") if validated and confidence >= 60 else "NEUTRAL"
             self.samples_trained = len(X)
             self.last_accuracy = round(accuracy * 100, 1)
-            result.update(validation_checks=dict(accuracy=accuracy>baseline,balanced=balanced>=.55,brier=brier<.25),enabled=True, validated=validated, prob_up=round(up, 1), prob_down=round(down, 1),
+            result.update(validation_checks=dict(accuracy=accuracy>baseline,balanced=balanced>=.55,brier=brier<.25,
+                          **({'walk_forward':walk['validated']} if validation_mode=='walk_forward_v2' else {})),enabled=True, validated=validated, prob_up=round(up, 1), prob_down=round(down, 1),
                           ml_action=action, ml_confidence=round(confidence, 1), accuracy=self.last_accuracy,
                           baseline_accuracy=round(baseline*100, 1), balanced_accuracy=round(balanced*100, 1),
                           brier_score=round(brier, 4),
                           reason="Validação temporal favorável; estimativas não calibradas." if validated else
-                          "Sem vantagem demonstrada sobre a referência no período de validação.")
+                          ("Validação walk-forward reprovada: consistência insuficiente entre janelas." if validation_mode=='walk_forward_v2' and not walk['validated'] else
+                           "Sem vantagem demonstrada sobre a referência no período de validação."))
             with self._cache_lock:
                 self._cache[key] = dict(result)
                 while len(self._cache) > 16:
@@ -173,5 +181,40 @@ class MLEngine:
             logger.exception("Falha no modelo direcional")
             result["reason"] = "Modelo indisponível: dados inconsistentes."
         return result
+
+    @staticmethod
+    def walk_forward(X,y,factory):
+        """Three disjoint test blocks, expanding training, one purged label.
+
+        These are directional tests, not evidence of profitable SL/TP execution.
+        """
+        bounds=[int(len(X)*r) for r in (.4,.6,.8,1.)]
+        folds=[];truth=[];predicted=[];probabilities=[];baseline_hits=[]
+        for start,end in zip(bounds,bounds[1:]):
+            train_end=start-1
+            fold=dict(train_end_exclusive=train_end,test_start=start,test_end_exclusive=end,
+                      training_samples=train_end,validation_samples=end-start,passed=False)
+            if train_end<40 or end-start<20 or len(np.unique(y[:train_end]))<2 or len(np.unique(y[start:end]))<2:
+                fold['reason']='Amostras/classes insuficientes nesta janela.'
+                folds.append(fold);continue
+            fitted=factory().fit(X[:train_end],y[:train_end])
+            target=y[start:end];prediction=fitted.predict(X[start:end])
+            probability=fitted.predict_proba(X[start:end])[:,list(fitted.classes_).index(1)]
+            base=(target==int(np.mean(y[:train_end])>=.5))
+            acc=float(np.mean(prediction==target));ref=float(np.mean(base))
+            bal=float(balanced_accuracy_score(target,prediction));brier=float(brier_score_loss(target,probability))
+            fold.update(accuracy=acc*100,baseline_accuracy=ref*100,balanced_accuracy=bal*100,brier_score=brier,
+                        passed=acc>ref and bal>=.55 and brier<.25)
+            folds.append(fold);truth.extend(target);predicted.extend(prediction);probabilities.extend(probability);baseline_hits.extend(base)
+        passed=sum(f['passed'] for f in folds)
+        complete=len(truth)==bounds[-1]-bounds[0]
+        accuracy=float(np.mean(np.array(predicted)==truth)) if truth else 0.
+        baseline=float(np.mean(baseline_hits)) if truth else 0.
+        balanced=float(balanced_accuracy_score(truth,predicted)) if truth and len(set(truth))==2 else 0.
+        brier=float(brier_score_loss(truth,probabilities)) if truth else None
+        valid=complete and passed>=2 and accuracy>baseline and balanced>=.55 and brier is not None and brier<.25
+        return dict(validated=bool(valid),folds=folds,passed_folds=passed,required_folds=2,
+                    complete=complete,validation_samples=len(truth),accuracy=accuracy*100,
+                    baseline_accuracy=baseline*100,balanced_accuracy=balanced*100,brier_score=brier)
 
 ml_engine = MLEngine()

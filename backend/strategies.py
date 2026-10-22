@@ -14,6 +14,7 @@ import pandas as pd
 from backend.ml_engine import ml_engine
 from backend.market_data import validate_candles
 from backend.fibonacci import fibonacci_context
+from backend.forex_quality import entry_confirmation, POLICY_VERSION
 
 
 @dataclass
@@ -141,7 +142,9 @@ class StrategyEngine:
         atr = float(curr["atr"]) if float(curr["atr"]) > 0 else price * 0.0015
 
         # Executa o motor de Machine Learning (Random Forest scikit-learn) nas velas enriquecidas
-        ml_pred = (model_engine or ml_engine).predict_next_candle(df, context=f"{model_context or market_type}:{symbol}:{timeframe}:{params.get('data_source', 'unknown')}")
+        quality_enabled=market_type=='MT5_FOREX' and strategy_id=='ml_random_forest'
+        ml_pred = (model_engine or ml_engine).predict_next_candle(df, context=f"{model_context or market_type}:{symbol}:{timeframe}:{params.get('data_source', 'unknown')}",
+            validation_mode='walk_forward_v2' if quality_enabled else 'single_split')
 
         indicators_snapshot = {
             "fibonacci": fibonacci_context(df, atr) if market_type == 'MT5_FOREX' else None,
@@ -426,6 +429,14 @@ class StrategyEngine:
         indicators_snapshot["atr_pct"] = round(atr / max(price, 1e-9) * 100, 4)
         if float(curr["high"])-float(curr["low"]) > atr * 3:
             action, confidence, reason = "NEUTRAL", 0.0, "Volatilidade extrema: candle acima de 3 ATR."
+
+        if quality_enabled:
+            confirmation=entry_confirmation(df,timeframe,raw_action,atr)
+            indicators_snapshot['entry_confirmation']=confirmation
+            indicators_snapshot['entry_policy_version']=POLICY_VERSION
+            if action in ('BUY','SELL') and confirmation['passed'] is False:
+                action,confidence='NEUTRAL',0.
+                reason='Filtro Forex: '+' '.join(c['reason'] for c in confirmation['checks'] if not c['passed'])
 
         # Cálculo de Stop Loss, Take Profit (para MT5) ou Expiração (para Safirion OB)
         stop_loss = None

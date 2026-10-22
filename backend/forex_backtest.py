@@ -220,6 +220,9 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
             if not bar:blocks.append('BAR_MISSING')
             if len(history)<100:blocks.append('ML_HISTORY')
             if not ml.get('validated'):blocks.append('ML_VALIDATED')
+            if ml.get('validation_method')=='walk_forward_v2' and not (ml.get('walk_forward') or {}).get('validated'):
+                blocks.append('ML_WALK_FORWARD')
+            blocks.extend(c['code'] for c in (signal.get('indicators',{}).get('entry_confirmation') or {}).get('checks',[]) if not c['passed'])
             if signal['action'] not in ('BUY','SELL'):blocks.append('SIGNAL_DIRECTION')
             if signal['confidence']<config['min_confidence']:blocks.append('MIN_CONFIDENCE')
             if (signal.get('diagnostic') or {}).get('extreme_volatility'):blocks.append('VOLATILITY')
@@ -232,6 +235,8 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
             bar_time=str(history.iloc[-1]['time']) if len(history) else None
             if bar_time and last_used.get(symbol)==bar_time:blocks.append('UNUSED_BAR')
             record=dict(symbol=symbol,time=ts,signal=signal['action'],score=signal['confidence'],
+                entry_confirmation=signal.get('indicators',{}).get('entry_confirmation'),
+                entry_policy_version=signal.get('indicators',{}).get('entry_policy_version','legacy'),
                 ml_confidence=ml.get('ml_confidence'),validation=ml,bar_time=bar_time,blocks=blocks,
                 action='REJECTED' if blocks else 'CANDIDATE',unavailable_checks=['HISTORICAL_TICK_AGE','HISTORICAL_ACCOUNT_PERMISSIONS','BROKER_ORDER_CHECK'])
             analyses.append(record)

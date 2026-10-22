@@ -189,6 +189,8 @@ class ForexCoordinator:
                            confidence=ml.get('ml_confidence'), signal_score=signal['confidence'],
                            validated=ml.get('validated', False), validation=ml,
                            fibonacci=signal.get('indicators',{}).get('fibonacci'),
+                           entry_confirmation=signal.get('indicators',{}).get('entry_confirmation'),
+                           entry_policy_version=signal.get('indicators',{}).get('entry_policy_version','legacy'),
                            blocked_reason=block, local_block=local, global_block=self.global_block,
                            signal_reason=signal.get('reason'), data_quality=snap['data_quality'],
                            symbol_spec=snap.get('symbol_spec'), analysis_id=snap.get('analysis_id'),

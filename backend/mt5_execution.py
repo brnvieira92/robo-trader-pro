@@ -252,6 +252,8 @@ class MT5Executor:
         except TradePlanError as exc:
             raise MT5ExecutionError(str(exc)) from exc
         sl=plan['stop_loss'];tp=plan['take_profit']
+        if config['market_type']=='MT5_FOREX' and plan['spread_to_stop']>config.get('mt5_max_spread_stop_ratio',.30):
+            raise MT5ExecutionError(f"Spread/stop {plan['spread_to_stop']:.1%} acima do limite {config.get('mt5_max_spread_stop_ratio',.30):.1%}; entrada descartada.")
         order_type=sdk.ORDER_TYPE_BUY if buy else sdk.ORDER_TYPE_SELL
         budget=min(float(remaining_loss_budget), max(0,account['equity'])*config['risk_per_trade_pct']/100)
         if config['bankroll_mode'] != 'PERCENT':
