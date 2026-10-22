@@ -11,6 +11,7 @@ from backend.ml_engine import MLEngine
 from backend.diagnostics import RecoveryState, digest, supplemental_check
 from backend.mt5_execution import MT5ExecutionError
 from backend.portfolio_risk import position_limit, active_trades, local_block, inspect_portfolio
+from backend.config import strategy_requires_ml
 
 PAIRS = ('EURUSD', 'USDJPY', 'GBPUSD', 'USDCHF')
 
@@ -187,7 +188,8 @@ class ForexCoordinator:
                     supplemental_check('PAIR_RETRY', not (preflight and time.time()<preflight['retry_at']), preflight['message'] if preflight else None, 'Sem espera de recuperação local')]
                 row = dict(checks=checks, failed_checks=[g for g in checks if g['status']=='FAIL' and not g.get('informational')], status='BLOQUEADO' if block else 'CANDIDATO', action=signal['action'],
                            confidence=ml.get('ml_confidence'), signal_score=signal['confidence'],
-                           validated=ml.get('validated', False), validation=ml,
+                           validated=ml.get('validated', False) if strategy_requires_ml(view.config['strategy_id'],view.config['strategy_params']) else None,
+                           uses_ml=strategy_requires_ml(view.config['strategy_id'],view.config['strategy_params']),validation=ml,
                            fibonacci=signal.get('indicators',{}).get('fibonacci'),
                            entry_confirmation=signal.get('indicators',{}).get('entry_confirmation'),
                            entry_policy_version=signal.get('indicators',{}).get('entry_policy_version','legacy'),

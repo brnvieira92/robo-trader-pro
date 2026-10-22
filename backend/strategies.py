@@ -15,6 +15,8 @@ from backend.ml_engine import ml_engine
 from backend.market_data import validate_candles
 from backend.fibonacci import fibonacci_context
 from backend.forex_quality import entry_confirmation, POLICY_VERSION
+from backend.forex_trend import continuation_signal
+from backend.config import strategy_requires_ml
 
 
 @dataclass
@@ -143,8 +145,13 @@ class StrategyEngine:
 
         # Executa o motor de Machine Learning (Random Forest scikit-learn) nas velas enriquecidas
         quality_enabled=market_type=='MT5_FOREX' and strategy_id=='ml_random_forest'
-        ml_pred = (model_engine or ml_engine).predict_next_candle(df, context=f"{model_context or market_type}:{symbol}:{timeframe}:{params.get('data_source', 'unknown')}",
-            validation_mode='walk_forward_v2' if quality_enabled else 'single_split')
+        if strategy_id=='forex_trend_continuation':
+            ml_pred=dict(enabled=False,validated=False,prob_up=50.,prob_down=50.,ml_action='NEUTRAL',
+                         ml_confidence=0.,accuracy=0.,samples=0,current_features=[],
+                         reason='Estratégia técnica independente; RF não utilizado.',not_applicable=True)
+        else:
+            ml_pred = (model_engine or ml_engine).predict_next_candle(df, context=f"{model_context or market_type}:{symbol}:{timeframe}:{params.get('data_source', 'unknown')}",
+                validation_mode='walk_forward_v2' if quality_enabled else 'single_split')
 
         indicators_snapshot = {
             "fibonacci": fibonacci_context(df, atr) if market_type == 'MT5_FOREX' else None,
@@ -390,6 +397,16 @@ class StrategyEngine:
         # -------------------------------------------------------------------------
         # ESTRATÉGIA 5: Inteligência Artificial Pura (Machine Learning Random Forest)
         # -------------------------------------------------------------------------
+        elif strategy_id=='forex_trend_continuation':
+            if market_type!='MT5_FOREX' or timeframe!='M1':
+                reason='Continuidade Forex exige MT5 Forex e timeframe M1.'
+            else:
+                trend_signal=continuation_signal(df,params,atr)
+                action,confidence,reason=trend_signal['action'],trend_signal['score'],trend_signal['reason']
+                indicators_snapshot.update(trend_signal['structure'])
+                indicators_snapshot['entry_confirmation']=trend_signal['confirmation']
+                indicators_snapshot['entry_policy_version']='forex-trend-v1'
+                indicators_snapshot['score_kind']='technical_rules_not_win_probability'
         elif strategy_id == "ml_random_forest":
             p_up = ml_pred["prob_up"]
             p_down = ml_pred["prob_down"]
@@ -418,13 +435,13 @@ class StrategyEngine:
         # Refuse automated signals without independent chronological evidence.
         raw_action, raw_confidence = action, confidence
         directional_estimate = ml_pred['prob_up'] if action=='BUY' else (ml_pred['prob_down'] if action=='SELL' else ml_pred.get('ml_confidence',50.))
-        if action in ("BUY", "SELL") and bool(params.get("use_ml_filter", True)):
+        if action in ("BUY", "SELL") and strategy_requires_ml(strategy_id,params):
             directional = ml_pred["prob_up"] if action == "BUY" else ml_pred["prob_down"]
             if not ml_pred.get("validated") or directional < 60.0:
                 action, confidence = "NEUTRAL", 0.0
                 reason = "Filtro temporal: " + (ml_pred["reason"] if not ml_pred.get('validated') else f'Estimativa direcional {directional:.1f}% abaixo de 60%.')
 
-        indicators_snapshot["score_kind"] = "technical_confluence_not_win_probability"
+        indicators_snapshot.setdefault("score_kind", "technical_confluence_not_win_probability")
         indicators_snapshot["regime"] = ("TENDÊNCIA" if abs(float(curr["ema_fast"])-float(curr["ema_slow"])) / atr > .7 else "LATERAL")
         indicators_snapshot["atr_pct"] = round(atr / max(price, 1e-9) * 100, 4)
         if float(curr["high"])-float(curr["low"]) > atr * 3:

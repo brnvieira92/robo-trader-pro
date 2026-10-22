@@ -45,6 +45,17 @@ def test_operational_block_never_becomes_a_candidate_when_signal_gates_pass(tmp_
     assert row['signal_qualified_candles']==1 and row['candidate_candles']==0
 
 
+def test_independent_trend_signal_is_not_disqualified_by_inapplicable_ml(tmp_path):
+    j=PaperJournal(tmp_path/'trend.db')
+    checks=[dict(code=k,status='PASS') for k in ('MIN_CONFIDENCE','SIGNAL_DIRECTION','VOLATILITY','AUTOMATION_REQUESTED')]
+    checks.append(dict(code='ML_VALIDATED',status='NOT_EVALUATED'))
+    record(j,'trend','ANALYSIS','a',10,dict(config={'market_type':'MT5_FOREX'},
+           entry_policy_version='forex-trend-v1',checks=checks),code='CANDIDATE')
+    row=pair_report(j,0,20,'LIVE_MT5',123,'Demo')['rows'][0]
+    assert row['ml_validated_candles']==0 and row['signal_qualified_candles']==1
+    assert row['candidate_candles']==1 and not row['blocks']
+
+
 def test_report_reader_does_not_block_audit_writes(tmp_path):
     j=PaperJournal(tmp_path/'report.db')
     p=dict(config={'market_type':'MT5_FOREX'},checks=[])

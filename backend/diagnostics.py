@@ -8,6 +8,7 @@ import math
 import time
 import threading
 from collections import OrderedDict
+from backend.config import strategy_requires_ml
 
 
 def digest(value):
@@ -27,7 +28,7 @@ def analysis_event(snapshot, last_bar, last_trade_timestamp):
     age=q.get('tick_age_seconds')
     checks.append(gate('TICK_FRESH',age is not None and -5<=age<=c['max_tick_age_seconds'] if q['source']=='MT5_LIVE' else None))
     validation_checks=v.get('validation_checks',{})
-    ml_required=c['strategy_id']=='ml_random_forest' or c['strategy_params']['use_ml_filter']
+    ml_required=strategy_requires_ml(c['strategy_id'],c['strategy_params'])
     checks.extend([gate('ML_AVAILABLE',v.get('enabled',False) if ml_required else None,v.get('reason','')),
         gate('ML_ACCURACY',validation_checks.get('accuracy',v['accuracy']>v['baseline_accuracy']) if v.get('enabled') and ml_required else None),
         gate('ML_BALANCED',validation_checks.get('balanced',v['balanced_accuracy']>=55) if v.get('enabled') and ml_required else None),
@@ -78,6 +79,9 @@ LABELS = {
     'FOREX_CONTEXT':'Contexto de tendência confirmado',
     'PRICE_ACTION_CONFIRMATION':'Confirmação de price action',
     'SPREAD_STOP_RATIO':'Spread proporcional ao stop',
+    'TREND_CONTEXT':'Tendência M5 confirmada','TREND_LOCAL':'Alinhamento M1/M5',
+    'TREND_TRIGGER':'Rompimento ou retomada de pullback','TREND_CANDLE':'Vela de confirmação',
+    'TREND_EXTENSION':'Distância máxima à EMA rápida',
     'ML_CLOSED_HISTORY':'Velas fechadas para ML', 'ML_TRAINING_SAMPLES':'Amostras de treinamento',
     'ML_TEST_SAMPLES':'Amostras de validação', 'ML_TRAIN_CLASSES':'Classes no treinamento', 'ML_TEST_CLASSES':'Classes na validação',
     'SPREAD_LIMIT':'Spread máximo', 'MINIMUM_VOLUME':'Lote mínimo e orçamento', 'MARGIN':'Margem livre suficiente',
@@ -147,7 +151,7 @@ def explain_checks(checks, snapshot, last_bar, last_trade_timestamp):
             status='PASS' if v.get('ml_confidence',0)>=c['min_confidence'] else 'FAIL',
             observed=v.get('ml_confidence'),operator='>=',required=c['min_confidence'],unit='%',
             informational=True,reason='Estimativa do modelo; não substitui o score final nem aprova entrada.'))
-    if c['strategy_id']=='ml_random_forest' or c['strategy_params']['use_ml_filter']:
+    if strategy_requires_ml(c['strategy_id'],c['strategy_params']):
         details=[('ML_CLOSED_HISTORY','Velas fechadas para ML',q.get('closed_candles'),100),
             ('ML_TRAINING_SAMPLES','Amostras de treinamento',v.get('training_samples'),40),
             ('ML_TEST_SAMPLES','Amostras de validação',v.get('validation_samples'),20),

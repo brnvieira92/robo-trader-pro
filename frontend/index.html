@@ -152,7 +152,7 @@
           <div id="forexRadarRows" class="forex-radar-grid"></div>
           <details class="execution-controls" style="display:block;margin-top:16px">
             <summary>Configurar pares monitorados</summary>
-            <p>Pause o robô e aguarde as posições encerrarem. Use o símbolo exato com permissão de negociação no MT5 (por exemplo, EURUSD#). Mantenha Random Forest, filtro ML e score mínimo de 78%. O timeframe é o selecionado no Setup.</p>
+            <p>Pause o robô e aguarde as posições encerrarem. Use o símbolo exato com permissão de negociação no MT5 (por exemplo, EURUSD#). Escolha RF com filtro ML ou Continuidade Forex M1, com score mínimo de 78. O timeframe é o selecionado no Setup.</p>
             <label><input id="cfgForexMulti" type="checkbox"> Ativar motor multipares automático (MT5 Forex)</label>
             <div id="forexPairSettings" class="forex-radar-grid"></div>
             <button id="cfgSaveForexPairs" type="button" onclick="saveForexPairs()">Salvar seleção de pares</button>
@@ -180,7 +180,7 @@
           </details>
           <div class="audit-grid">
             <article class="audit-card"><span class="eyebrow">01 / ORIGEM DOS DADOS</span><strong id="dataSource">Aguardando servidor</strong><p id="dataDetail">Sem histórico validado.</p></article>
-            <article class="audit-card"><span class="eyebrow">02 / VALIDAÇÃO TEMPORAL</span><strong id="validationScore">Sem evidência</strong><p id="validationDetail">Acurácia fora do treino, comparada à referência.</p></article>
+            <article class="audit-card"><span class="eyebrow" id="validationLabel">02 / VALIDAÇÃO TEMPORAL</span><strong id="validationScore">Sem evidência</strong><p id="validationDetail">Acurácia fora do treino, comparada à referência.</p></article>
             <article class="audit-card"><span class="eyebrow">03 / ORÇAMENTO DE RISCO</span><strong id="riskBudget">—</strong><p id="riskDetail">Limites valem para ordens automáticas e manuais.</p></article>
             <article class="audit-card"><span class="eyebrow">04 / DECISÃO ATUAL</span><strong id="decisionGate">Aguardando análise</strong><p id="decisionDetail">O score técnico não é uma probabilidade de acerto.</p></article>
           </div>
@@ -429,7 +429,7 @@
               <!-- Estratégia de IA -->
               <div class="flex flex-col gap-space-xs">
                 <label class="font-label-caps text-[11px] uppercase text-on-surface-variant flex items-center justify-between">
-                  <span>Estratégia de Sinais IA</span>
+                  <span>Estratégia de entradas</span>
                   <span class="text-primary cursor-pointer hover:underline text-[10px]">Parâmetros</span>
                 </label>
                 <div class="relative">
@@ -439,6 +439,7 @@
                     <option value="price_action_breakout">3. Price Action Rompimento + Volume Spike</option>
                     <option value="multi_confluence">4. Confluência Multi-Indicadores (EMA+RSI+MACD)</option>
                     <option value="ml_random_forest">5. 🧠 IA Pura — Machine Learning (Random Forest)</option>
+                    <option value="forex_trend_continuation">6. Continuidade Forex — M1/M5, rompimento e pullback</option>
                   </select>
                   <span class="material-symbols-outlined absolute right-2.5 top-2.5 text-on-surface-variant pointer-events-none text-[18px]">expand_more</span>
                 </div>
@@ -450,7 +451,7 @@
                   <span class="font-label-caps text-[10px] uppercase text-on-surface-variant">Score mín. (0–100)</span>
                   <div class="flex items-center bg-surface-container-lowest rounded-lg px-space-sm py-1.5 border border-surface-container-high/40">
                     <input id="cfgMinConfidence" aria-label="Score técnico mínimo" type="number" step="1" min="50" max="99" value="78" onchange="saveConfig()" class="w-full bg-transparent text-on-surface font-code-log text-code-log focus:outline-none" />
-                    <span class="font-code-log text-[11px] text-on-surface-variant">%</span>
+                    <span class="font-code-log text-[11px] text-on-surface-variant" id="scoreUnit">%</span>
                   </div>
                 </div>
                 <div class="flex flex-col gap-space-xs">
@@ -1024,8 +1025,9 @@
         const card=document.createElement('article'); card.className='forex-radar-card';
         const title=document.createElement('h3'); title.textContent=pair+(row && row.symbol!==pair ? ' • '+row.symbol : '');
         const status=document.createElement('p'); status.textContent=row?.status || 'DESATIVADO';
-        const signal=document.createElement('p'); signal.textContent='Sinal: '+(row?.action || '—')+' • Confiança ML: '+(row?.confidence == null ? '—' : row.confidence.toFixed(1)+'%');
+        const signal=document.createElement('p'); signal.textContent='Sinal: '+(row?.action || '—')+(row?.uses_ml===false ? ' • Score técnico: '+(row.signal_score ?? '—')+'/100' : ' • Confiança ML: '+(row?.confidence == null ? '—' : row.confidence.toFixed(1)+'%'));
         const valid=document.createElement('p'); valid.textContent='Validação: '+(row?.validated == null ? '—' : row.validated ? 'aprovada' : 'sem vantagem demonstrada');
+        if(row?.uses_ml===false) valid.textContent='Regras técnicas: '+(row.entry_confirmation?.passed ? 'atendidas' : 'aguardando')+' • RF não utilizado';
         if(row?.validation?.walk_forward) valid.textContent+=` • walk-forward ${row.validation.walk_forward.passed_folds}/3 janelas`;
         if(row?.entry_confirmation) valid.textContent+=` • contexto ${row.entry_confirmation.context_timeframe}: ${row.entry_confirmation.trend}`;
         const reason=document.createElement('p'); reason.textContent=row?.blocked_reason || row?.signal_reason || 'Par não selecionado.';
@@ -1383,7 +1385,7 @@
           const ind = state.signal.indicators || {};
           document.getElementById('subIndRsi').textContent = ind.rsi !== undefined ? `${ind.rsi}` : '--';
           document.getElementById('subIndBb').textContent = (ind.bb_upper && ind.bb_lower) ? 'Válido' : '--';
-          document.getElementById('subIndEma').textContent = (ind.ml_prob_up !== undefined) ? `▲ ${ind.ml_prob_up}%` : (ind.ema_fast ? 'Sinc' : '--');
+          document.getElementById('subIndEma').textContent = state.config.strategy_id==='forex_trend_continuation' ? 'EMA 9/21' : (ind.ml_prob_up !== undefined) ? `▲ ${ind.ml_prob_up}%` : (ind.ema_fast ? 'Sinc' : '--');
 
           // Atualiza fita do RSI (14)
           if (ind.rsi !== undefined) {
@@ -1600,6 +1602,15 @@
       document.getElementById('validationScore').textContent = v.enabled ? `${v.accuracy}% fora do treino` : 'Amostra insuficiente';
       document.getElementById('validationDetail').textContent = v.enabled ? `Referência ${v.baseline_accuracy}% • ${v.validation_samples} amostras • Brier ${v.brier_score}. ${v.validated ? 'Filtro temporal aprovado neste período.' : 'Sem vantagem demonstrada.'}` : (v.reason || 'Aguardando histórico real suficiente.');
       if(v.validation_method==='walk_forward_v2') document.getElementById('validationDetail').textContent+=` RF Forex v3 • walk-forward ${v.walk_forward?.passed_folds ?? 0}/3 janelas (mínimo 2 e métricas agregadas).`;
+      const technical=state.config.strategy_id==='forex_trend_continuation';
+      document.getElementById('scoreUnit').textContent=technical ? '/100' : '%';
+      document.getElementById('validationLabel').textContent=technical ? '02 / VALIDAÇÃO TÉCNICA' : '02 / VALIDAÇÃO TEMPORAL';
+      document.getElementById('barSentBuyers').closest('.bg-surface-container-lowest').style.display=technical ? 'none' : '';
+      if(technical) {
+        const context=state.signal?.indicators?.entry_confirmation;
+        document.getElementById('validationScore').textContent=context?.passed ? 'Regras atendidas' : 'Aguardando confirmação';
+        document.getElementById('validationDetail').textContent=`Continuidade Forex v1 • M5: ${context?.trend || 'aguardando dados'} • gatilho: ${context?.trigger || 'nenhum'}. Score de regras; rentabilidade ainda não demonstrada. RF não utilizado.`;
+      }
       document.getElementById('riskBudget').textContent = `${state.risk.max_risk_pct}% por entrada`;
       document.getElementById('riskDetail').textContent = `Orçamento da próxima ordem ${formatMoney(state.risk.next_amount,state.currency)} • perda restante ${formatMoney(state.risk.remaining_loss_budget,state.currency)}`;
       document.getElementById('decisionGate').textContent = state.risk.blocked_reason ? 'AGUARDAR' : 'SETUP DISPONÍVEL';
@@ -1699,7 +1710,7 @@
     function downloadForexDataset() {if(forexDataset)downloadJSON(forexDataset,'base-forex.json');}
     function showForexResult(job) {
       const r=job.result,output=document.getElementById('forexResearchOutput');
-      output.textContent=`Backtest Forex • ${r.currency} • ${r.evaluated_bars} velas avaliadas\nPeríodo: ${new Date(r.start*1000).toLocaleString('pt-BR')} a ${new Date(r.end*1000).toLocaleString('pt-BR')} (horário do navegador) • ${r.config.timeframe} • score mínimo ${r.config.min_confidence}%\nCustos assumidos: comissão ${r.assumptions.commission_per_lot_side} por lote/lado; slippage ${r.assumptions.adverse_slippage_points} pontos/preenchimento; swap ${r.assumptions.swap_cost_per_lot_utc_day} por lote/dia UTC.\nOperações encerradas: ${r.closed_trades} • Ganhos: ${r.wins} • Perdas: ${r.losses}\nPnL realizado: ${r.realized_pnl.toFixed(2)} • Equity final: ${r.ending_equity.toFixed(2)} • Drawdown amostrado: ${r.max_drawdown.toFixed(2)}\nProfit factor: ${r.profit_factor ?? (r.closed_trades ? 'indefinido (sem perdas)' : 'sem amostra')} • Expectativa por trade encerrado: ${r.expectancy ?? 'sem amostra'}\nVelas ambíguas (stop primeiro): ${r.ambiguous_bars} • Posição aberta no fim: ${r.open_position ? r.open_position.symbol : 'nenhuma'}\n${r.per_pair.map(p=>p.symbol+': '+p.analyses+' análises, '+p.validated+' validações, '+p.entries+' entradas; bloqueios '+JSON.stringify(p.blocks)).join('\n')}\n${r.closed_trades ? 'Resultado exploratório; não comprova rentabilidade futura.' : 'SEM OPERAÇÕES: não há evidência de rentabilidade.'}\n${r.limitations.join('\n')}`+(job.persistence_warning ? '\n'+job.persistence_warning : '');
+      output.textContent=`Backtest Forex • ${r.currency} • ${r.evaluated_bars} velas avaliadas\nPeríodo: ${new Date(r.start*1000).toLocaleString('pt-BR')} a ${new Date(r.end*1000).toLocaleString('pt-BR')} (horário do navegador) • ${r.config.timeframe} • score mínimo ${r.config.min_confidence}${r.config.strategy_id==='forex_trend_continuation' ? ' pontos' : '%'}\nCustos assumidos: comissão ${r.assumptions.commission_per_lot_side} por lote/lado; slippage ${r.assumptions.adverse_slippage_points} pontos/preenchimento; swap ${r.assumptions.swap_cost_per_lot_utc_day} por lote/dia UTC.\nOperações encerradas: ${r.closed_trades} • Ganhos: ${r.wins} • Perdas: ${r.losses}\nPnL realizado: ${r.realized_pnl.toFixed(2)} • Equity final: ${r.ending_equity.toFixed(2)} • Drawdown amostrado: ${r.max_drawdown.toFixed(2)}\nProfit factor: ${r.profit_factor ?? (r.closed_trades ? 'indefinido (sem perdas)' : 'sem amostra')} • Expectativa por trade encerrado: ${r.expectancy ?? 'sem amostra'}\nVelas ambíguas (stop primeiro): ${r.ambiguous_bars} • Posição aberta no fim: ${r.open_position ? r.open_position.symbol : 'nenhuma'}\n${r.per_pair.map(p=>p.symbol+': '+p.analyses+' análises, '+(p.validation_kind==='TECHNICAL_RULES' ? p.technical_qualified+' sinais técnicos, ' : p.validated+' validações ML, ')+p.entries+' entradas; bloqueios '+JSON.stringify(p.blocks)).join('\n')}\n${r.closed_trades ? 'Resultado exploratório; não comprova rentabilidade futura.' : 'SEM OPERAÇÕES: não há evidência de rentabilidade.'}\n${r.limitations.join('\n')}`+(job.persistence_warning ? '\n'+job.persistence_warning : '');
       const exports=document.getElementById('forexResearchExports');exports.replaceChildren();
       for(const [kind,label] of [['json','Baixar resultado completo JSON'],['trades','Baixar operações CSV'],['analyses','Baixar análises e rejeições CSV']]) {const link=document.createElement('a');link.textContent=label;link.href='/api/research/forex/jobs/'+job.id+'/export?kind='+kind;exports.append(link);}
       const container=document.getElementById('forexEquityChart');

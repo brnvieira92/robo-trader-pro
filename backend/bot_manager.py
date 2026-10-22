@@ -11,7 +11,7 @@ import hashlib
 import time
 import copy
 import pandas as pd
-from backend.config import TradingConfig
+from backend.config import TradingConfig, strategy_requires_ml
 from backend.diagnostics import DiagnosticRecorder, RecoveryState, analysis_event, digest, preflight_code
 from backend.journal import PaperJournal
 from backend.market_data import validate_candles
@@ -323,6 +323,8 @@ class BotManager:
         previous_mode=self.config['execution_mode']
         self.journal.save_config(validated)
         self.config = validated
+        if not strategy_requires_ml(validated['strategy_id'],validated['strategy_params']):
+            self._recover('model')
         self._multi = None
         self._last_snapshot = None
         self.mt5.configure_time(self.config)
@@ -409,7 +411,7 @@ class BotManager:
             if signal.get('bar_time') == self._last_signal_bar:
                 return "Este candle já originou uma operação."
             validation = signal.get('indicators', {}).get('ml_validation', {})
-            if self.config['strategy_params']['use_ml_filter'] and not validation.get('validated'):
+            if strategy_requires_ml(self.config['strategy_id'],self.config['strategy_params']) and not validation.get('validated'):
                 return "IA sem vantagem demonstrada na validação temporal."
         return None
 
@@ -607,9 +609,9 @@ class BotManager:
         self.last_signal = signal.to_dict()
         validation=self.last_signal.get('indicators',{}).get('ml_validation',{})
         model_reason=validation.get('reason','')
-        if model_reason.startswith(('Modelo indisponível','scikit-learn indisponível')) and (self.config['strategy_id']=='ml_random_forest' or self.config['strategy_params']['use_ml_filter']):
+        if model_reason.startswith(('Modelo indisponível','scikit-learn indisponível')) and strategy_requires_ml(self.config['strategy_id'],self.config['strategy_params']):
             self._fault('model','MODEL_UNAVAILABLE',model_reason)
-        elif validation.get('enabled'):
+        elif validation.get('enabled') or not strategy_requires_ml(self.config['strategy_id'],self.config['strategy_params']):
             self._recover('model')
         if history_error:
             self.last_signal.update(action='NEUTRAL',confidence=0,reason=history_error)

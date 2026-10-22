@@ -32,7 +32,10 @@ def price_plan(config, signal, entry, min_stop_distance=0., min_target_distance=
         raise TradePlanError('Estrutura de preços inválida.')
     stop_distance=max(atr*p['sl_atr_mult'],float(min_stop_distance))
     stop_basis='ATR e distância mínima'
-    level=support if buy else resistance
+    level=ind.get('stop_support',support) if buy else ind.get('stop_resistance',resistance)
+    level=float(level) if level is not None else None
+    if level is not None and (not math.isfinite(level) or level<=0):
+        raise TradePlanError('Estrutura de stop inválida.')
     # Candles/structure are Bid. SELL exits trigger on Ask: translate BOTH
     # structural barriers, before adding buffers and checking available space.
     structure_shift=0. if buy else spread
@@ -43,8 +46,18 @@ def price_plan(config, signal, entry, min_stop_distance=0., min_target_distance=
         raise TradePlanError('Stop estrutural distante demais para a volatilidade atual; entrada descartada.')
     target_distance=max(atr*p['tp_atr_mult'],float(min_target_distance))
     target_basis='projeção ATR (não é resistência/suporte confirmado)'
-    obstacle=resistance if buy else support
-    if p['use_structure_targets'] and obstacle is not None and (obstacle-entry)*direction>0:
+    if config.get('strategy_id')=='forex_trend_continuation':
+        target_r=float(p.get('trend_target_r',2.))
+        target_distance=max(target_distance,stop_distance*target_r)
+        target_basis=f'projeção ATR / {target_r:g}R (não é alvo confirmado)'
+    obstacle=ind.get('target_resistance',resistance) if buy else ind.get('target_support',support)
+    obstacle=float(obstacle) if obstacle is not None else None
+    if obstacle is not None and (not math.isfinite(obstacle) or obstacle<=0):
+        raise TradePlanError('Estrutura de alvo inválida.')
+    # A BUY pays Ask, but its opposing resistance is observed in Bid. A barrier
+    # between Bid and Ask is still ahead of the market: it leaves no target room.
+    reference_bid=entry-spread if buy else entry
+    if p['use_structure_targets'] and obstacle is not None and (obstacle-reference_bid)*direction>0:
         space=(obstacle+structure_shift-entry)*direction-atr*p['target_buffer_atr']
         target_distance=min(target_distance,space)
         target_basis='antes da resistência observada' if buy else 'antes do suporte observado'
@@ -72,6 +85,7 @@ def price_plan(config, signal, entry, min_stop_distance=0., min_target_distance=
                 reward_risk=round(rr,6),stop_basis=stop_basis,target_basis=target_basis,
                 pricing_version='bid-ask-structure-v2',structure_quote='BID',exit_quote='BID' if buy else 'ASK',
                 structure_shift=structure_shift,atr=atr,support_bid=support,resistance_bid=resistance,
+                structural_stop_bid=level,structural_target_bid=obstacle,
                 spread_price=spread,spread_to_stop=spread/risk,spread_to_atr=spread/atr,
                 stop_atr=risk/atr,target_atr=reward/atr,
                 exit_policy='SL_TP',expiration_time=None,ready=True)

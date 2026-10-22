@@ -12,7 +12,7 @@ from typing import Literal
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from backend.backtest import Candle
-from backend.config import TradingConfig
+from backend.config import TradingConfig, strategy_requires_ml
 from backend.diagnostics import digest, preflight_code
 from backend.ml_engine import MLEngine
 from backend.mt5_execution import MT5Executor, MT5ExecutionError
@@ -81,8 +81,8 @@ class ForexBacktestRequest(BaseModel):
         if c.forex_multi_enabled and c.forex_max_open_positions>1:
             raise ValueError('Este laboratório histórico avalia uma posição global. Não valida a carteira simultânea de duas posições. Use uma configuração de pesquisa com limite 1; a execução ativa não será alterada.')
         if c.market_type!='MT5_FOREX': raise ValueError('Este laboratório aceita somente Forex.')
-        if c.strategy_id!='ml_random_forest' or c.min_confidence<78 or not c.strategy_params.use_ml_filter:
-            raise ValueError('Mantenha Random Forest, score mínimo de 78% e filtro ML ativo.')
+        if c.strategy_id not in ('ml_random_forest','forex_trend_continuation') or c.min_confidence<78 or (c.strategy_id=='ml_random_forest' and not c.strategy_params.use_ml_filter):
+            raise ValueError('Use RF com filtro ML, ou Continuidade Forex, e score mínimo de 78.')
         symbols=[m.symbol for m in self.markets]
         if len(set(symbols))!=len(symbols): raise ValueError('Símbolos duplicados no histórico.')
         selected=[p.symbol for p in c.forex_pairs if p.enabled] if c.forex_multi_enabled else [c.symbol]
@@ -218,8 +218,10 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
             ml=signal.get('indicators',{}).get('ml_validation',{})
             blocks=[]
             if not bar:blocks.append('BAR_MISSING')
-            if len(history)<100:blocks.append('ML_HISTORY')
-            if not ml.get('validated'):blocks.append('ML_VALIDATED')
+            if len(history)<50:blocks.append('HISTORY')
+            if strategy_requires_ml(config['strategy_id'],config['strategy_params']):
+                if len(history)<100:blocks.append('ML_HISTORY')
+                if not ml.get('validated'):blocks.append('ML_VALIDATED')
             if ml.get('validation_method')=='walk_forward_v2' and not (ml.get('walk_forward') or {}).get('validated'):
                 blocks.append('ML_WALK_FORWARD')
             blocks.extend(c['code'] for c in (signal.get('indicators',{}).get('entry_confirmation') or {}).get('checks',[]) if not c['passed'])
@@ -288,6 +290,8 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
     for symbol in order:
         observations=[a for a in analyses if a['symbol']==symbol];closed=[t for t in trades if t['symbol']==symbol]
         per_pair.append(dict(symbol=symbol,analyses=len(observations),validated=sum(a['validation'].get('validated',False) for a in observations),
+            validation_kind='TECHNICAL_RULES' if config['strategy_id']=='forex_trend_continuation' else 'ML',
+            technical_qualified=sum(a['signal'] in ('BUY','SELL') and a['score']>=config['min_confidence'] for a in observations),
             entries=sum(a['action']=='ENTERED' for a in observations),closed_trades=len(closed),net_pnl=sum(t['net_pnl'] for t in closed),
             blocks=dict(Counter(code for a in observations for code in a['blocks']))))
     return dict(kind='FOREX_SL_TP',version=1,request_hash=digest(request.model_dump()),currency=request.account_currency,

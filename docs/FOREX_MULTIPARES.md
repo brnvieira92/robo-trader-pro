@@ -2,11 +2,13 @@
 
 O modo multipares é opcional. Configurações existentes continuam no modo individual até a ativação explícita. O motor monitora EURUSD, USDJPY, GBPUSD e USDCHF, cada um com seu símbolo exato e seleção independente. Não exige quatro pares ativos.
 
+Também está disponível a [Continuidade Forex M1/M5](FOREX_CONTINUIDADE.md), independente do RF. Escolha a opção 6 no Setup, pausado e sem posições; a seleção não inicia a automação. Score mínimo 78/100 e toda a gestão global permanecem. As referências a validação ML abaixo se aplicam ao modo RF; no modo Continuidade, o Radar apresenta as regras técnicas e o contexto M5.
+
 ## Ativar na sua conta demo
 
 1. Pause o robô. Aguarde qualquer posição, ordem ou intenção pendente ser reconciliada. Pausar impede entradas, mas não fecha posições.
 2. No MT5, confira a especificação de cada símbolo. Negociação precisa permitir a direção desejada. Receber cotações não significa poder negociar. Na sua conta, o EURUSD sem sufixo estava desativado; EURUSD# tinha acesso completo. Confira os demais separadamente, sem presumir que usam o mesmo sufixo.
-3. No aplicativo, mantenha MT5 Forex, modo MT5, conta/servidor corretos, estratégia **IA Pura — Machine Learning**, filtro ML ativo e **78%** ou mais. O timeframe do Setup é compartilhado pelos pares; para manter a configuração atual, deixe **M1**. O timeframe do gráfico aberto no terminal não controla a API do robô.
+3. No aplicativo, mantenha MT5 Forex, modo MT5 e conta/servidor corretos. Escolha **IA Pura — Machine Learning** com filtro ML ativo, ou **Continuidade Forex** independente do RF, com score mínimo **78/100**. O timeframe do Setup é compartilhado pelos pares; a nova Continuidade exige **M1** e deriva seu contexto M5 de candles fechados. O timeframe do gráfico aberto no terminal não controla a API do robô.
 4. Abra **Radar Forex → Configurar pares monitorados**. Marque apenas os pares desejados e informe os códigos exatos da corretora, por exemplo `EURUSD#`. Marque **Ativar motor multipares automático** e clique **Salvar seleção de pares**. Essa operação não inicia o robô nem diminui filtros. O símbolo do gráfico precisa estar na seleção; ao removê-lo, o formulário passa o foco ao primeiro selecionado.
 5. Confirme no Radar os dados, permissões, validação ML e motivos de bloqueio. Clique **Iniciar MT5** para solicitar a execução automática. Não há confirmação individual por operação.
 
