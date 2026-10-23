@@ -46,28 +46,28 @@ Os parâmetros opcionais `start` e `end` são segundos Unix. LIVE exige conta vi
 
 ## 3. Executar o backtest Forex
 
-Este laboratório avalia uma posição global. A execução multipares agora admite duas, mas uma base com `forex_max_open_positions=2` é recusada para não apresentar resultados de uma posição como validação de duas. É possível importar uma cópia de pesquisa com limite 1 sem alterar a execução; a validação financeira do portfólio paralelo ainda exige estudo próprio.
+Este laboratório aceita até duas posições em símbolos distintos, conforme a configuração da base, com orçamento e margem compartilhados e cooldown global. Bases antigas sem limite explícito continuam significando uma posição. A avaliação continua exploratória, com hipóteses históricas explícitas.
 
-1. Pause o robô e aguarde a resolução das posições/intentos. Mantenha sua configuração Forex, Random Forest, filtro ML e score mínimo de 78% ou superior.
+1. Pause o robô e aguarde a resolução das posições/intentos. Mantenha sua configuração Forex e score mínimo de 78 ou superior. São aceitos Random Forest com filtro ML ou Continuidade M1/M5 independente.
 2. Abra **Backtest Forex — SL/TP e risco global**.
-3. Clique **Carregar histórico real do MT5** no computador com o terminal conectado. O aplicativo consulta até 1.000 candles por par selecionado, exclui a vela em formação e aplica o ajuste de timestamp das velas já configurado. Não cria preços substitutos se a consulta falhar.
+3. Clique **Carregar histórico real do MT5** no computador com o terminal conectado. Escolha de 150 a 10.000 velas por par (padrão 1.000). O aplicativo consulta o número solicitado por par selecionado, exclui a vela em formação e aplica o ajuste de timestamp das velas já configurado. Não cria preços substitutos se a consulta falhar.
 4. Confira as hipóteses: saldo inicial, comissão por lote **por lado**, slippage adverso em pontos MT5 **por preenchimento**, custo de swap por lote por dia UTC e, se a meta for em reais com conta em outra moeda, taxa assumida na moeda da conta por BRL. Por exemplo, 0,20 USD por BRL converte uma meta de R$ 150 em US$ 30.
 5. Revise e confirme a caixa das hipóteses. Valores de custo zero significam custo assumido zero, não tarifa consultada na corretora.
-6. Escolha até 200 candles de avaliação; o padrão é 100. O histórico anterior é usado para treinamento, respeitando a janela de até **239 candles fechados**, como o fluxo atual que recebe 240 e exclui a vela em formação.
+6. Escolha até 2.000 candles de avaliação; o padrão é 100. O histórico anterior é usado para treinamento, respeitando a janela de até **239 candles fechados**, como o fluxo atual que recebe 240 e exclui a vela em formação.
 7. Clique **Executar backtest Forex** e acompanhe o progresso. Iniciar o robô, mudar sua configuração ou enviar ordens manuais fica bloqueado durante o laboratório. O motor permanece pausado; não retoma a execução automaticamente ao concluir.
 8. Exporte resultado JSON, operações CSV e análises/rejeições CSV. Baixe também a **base JSON** para preservar os candles usados. O último resultado concluído fica salvo no SQLite e pode ser recuperado após reiniciar a aplicação. Se a consulta do navegador falhar, o estudo no servidor pode continuar; aguarde e recupere o último resultado quando concluir.
 
 A captura pelo MT5 consulta as especificações próprias de cada símbolo, incluindo valores de tick de ganho/perda em moeda da conta, tamanho do tick, point, dígitos, volumes, stops, permissão e margem estimada por lote. Não presume equivalência monetária entre EURUSD e USDJPY. Falta de histórico, spread, valor de tick ou margem válidos impede o carregamento.
 
-Também é possível importar uma base JSON com 150 a 2.000 candles por símbolo, usando uma base baixada como referência. São aceitos de um a quatro símbolos, correspondendo exatamente aos selecionados na configuração. Cada candle precisa de `time` Unix UTC, OHLC Bid, `volume` e `spread_points`. Cada mercado precisa de `specification`, `source` e `specification_basis`. Só são aceitas velas fechadas em ordem, sem duplicatas ou timestamps futuros. Lacunas são diagnosticadas, e o treinamento descarta o prefixo anterior à última lacuna. Se faltar uma vela de um par com posição aberta enquanto a linha do tempo dos outros pares continua, a avaliação falha com mensagem explícita: não inventa o caminho de SL/TP através desse trecho ausente. A origem declarada de um arquivo importado não é autenticação da sua procedência.
+Também é possível importar uma base JSON com 150 a 10.000 candles por símbolo, usando uma base baixada como referência. São aceitos de um a quatro símbolos, correspondendo exatamente aos selecionados na configuração. Cada candle precisa de `time` Unix UTC, OHLC Bid, `volume` e `spread_points`. Cada mercado precisa de `specification`, `source` e `specification_basis`. Só são aceitas velas fechadas em ordem, sem duplicatas ou timestamps futuros. Lacunas são diagnosticadas, e o treinamento descarta o prefixo anterior à última lacuna. Se faltar uma vela de um par com posição aberta enquanto a linha do tempo dos outros pares continua, a avaliação falha com mensagem explícita: não inventa o caminho de SL/TP através desse trecho ausente. A origem declarada de um arquivo importado não é autenticação da sua procedência.
 
 ## O que o simulador calcula
 
 Cada par recebe uma instância própria do modelo. A cada abertura histórica, somente candles anteriores são fornecidos ao modelo. O Random Forest continua prevendo a direção de uma vela; seu alvo de treinamento não foi trocado por lucro de trade. A diferença é que o resultado da operação passa a ser acompanhado por SL/TP e custos, em vez de usar a cor do candle como resultado financeiro.
 
-O simulador reutiliza o planejamento/dimensionamento de produção por um adaptador histórico sem SDK nativo. Considera orçamento de entrada, risco percentual, perda e meta diárias, sequência de perdas, máximo de entradas, cooldown, uma posição global, permissão direcional, spread, volume/passo/teto, margem e retorno/risco planejado. Os pares elegíveis são considerados em rodízio, com o mesmo princípio do coordenador. Uma rejeição local de plano/especificação permite tentar outro par; uma posição aberta impede todos os demais.
+O simulador reutiliza o planejamento/dimensionamento de produção por um adaptador histórico sem SDK nativo. Considera orçamento de entrada, risco percentual, perda e meta diárias, sequência de perdas, máximo de entradas, cooldown global, até duas posições em símbolos distintos, permissão direcional, spread, volume/passo/teto, margem e retorno/risco planejado. Os pares elegíveis são considerados em rodízio, com o mesmo princípio do coordenador. Uma rejeição local de plano/especificação permite tentar outro par; uma posição aberta no símbolo impede outra no mesmo símbolo; vagas e orçamento global limitam as demais.
 
-A preparação considera a reserva de custos configurada em `mt5_cost_buffer`. Os custos históricos informados são depois cobrados nos preenchimentos; não são usados para alterar silenciosamente essa reserva. Assim, custos e slippage efetivos podem tornar uma operação pior que o risco/retorno estimado, como também pode ocorrer no ambiente real.
+A preparação considera `mt5_cost_buffer`. A simulação também verifica se o risco até SL, incluindo slippage assumido nas duas pontas e comissão de ida/volta, cabe na reserva autorizada; caso contrário, rejeita a entrada. O retorno/risco líquido também precisa atender ao mínimo após essas hipóteses de custos. Gaps e swaps futuros ainda podem exceder essa estimativa. O cálculo de volume continua sendo o de produção, sem redimensionamento posterior para forçar aprovação.
 
 Regras conservadoras de execução:
 
@@ -80,7 +80,7 @@ Regras conservadoras de execução:
 
 O resultado inclui PnL realizado, PnL líquido de operações encerradas, saldo/equity final, drawdown amostrado em fechamento de candle, profit factor, expectativa, curva de equity, operações, ambiguidades, estado da posição aberta e comparação por par. O realizado pode ser negativo com posição ainda aberta por causa da comissão de entrada/swap já debitados. Métricas de operações encerradas são calculadas com seus custos completos.
 
-Um teste sem trades retorna **NO_TRADES / SEM OPERAÇÕES**, sem profit factor ou expectativa inventados. A meta pode ficar sem ser alcançada exatamente: lote mínimo, arredondamento do volume e teto de risco podem impedir uma nova entrada quando resta um valor pequeno.
+Um teste sem entradas retorna **NO_TRADES / SEM OPERAÇÕES**; com posições abertas e nenhuma encerrada retorna **NO_CLOSED_TRADES**, sem profit factor ou expectativa inventados. A meta pode ficar sem ser alcançada exatamente: lote mínimo, arredondamento do volume e teto de risco podem impedir uma nova entrada quando resta um valor pequeno.
 
 ## Limites de interpretação
 
@@ -112,3 +112,19 @@ PYTHONPATH=. TRADER_TEST_PORT=8021 .venv/bin/python tests/multi_browser_server.p
 ```
 
 Os testes de execução usam SDK simulado ou o adaptador histórico, nunca uma ordem na XM. A confirmação de carregamento com o SDK nativo continua dependendo do terminal Windows.
+
+
+## Diagnósticos financeiros da versão 2
+
+Até 2.000 aberturas históricas são avaliadas por execução, com histórico de até 10.000 velas por símbolo. A janela de entrada de 239 velas continua igual à execução: aumentar o histórico do laboratório amplia o período avaliado, não muda silenciosamente o treinamento.
+
+O JSON inclui `open_positions` (lista), `max_open_positions`, reserva de risco na curva e `financial_breakdown`: contagem, PnL líquido, expectativa, profit factor, intervalo de Wilson para taxa de acerto e excursões por símbolo, hora UTC de entrada, gatilho e versão da política. Grupos são descritivos; não são amostras independentes nem aprovação automática. O intervalo de acerto pressupõe independência e não estima expectativa financeira.
+
+Cada operação simulada guarda `sampled_mae_r` e `sampled_mfe_r`, em unidades da distância inicial ao stop. Em velas sem saída usam-se extremos Bid/Ask aproximados; na vela de saída apenas abertura e preenchimento, pois os extremos podem ocorrer depois da saída. São limites inferiores observados, não MAE/MFE completos. Não se deve concluir que alargar SL melhora a estratégia apenas por esses dados. A posição única antiga permanece em `open_position` quando exatamente uma está aberta; consumidores novos devem usar a lista.
+
+Na execução MT5, `sampled_excursions` passa a registrar cotações de encerramento observadas na reconciliação (`price_current`) e o preço confirmado de saída. Esse registro acompanha o histórico persistente, preserva máximos nas atualizações e não modifica SL/TP, lote, critérios, alertas ou decisões. Posições antigas não têm seu caminho de preços reconstruído; o início da cobertura consta em `first_observed_at`.
+
+
+A interface permite escolher **Estratégia somente da pesquisa** e **Posições somente da pesquisa**. Uma cópia da configuração é enviada ao laboratório; a base original e a configuração de execução ficam preservadas. Compare os mesmos períodos e custos, baixe cada resultado e reserve outra base para confirmação. Escolher a pesquisa Continuidade não inicia nem seleciona essa estratégia no robô.
+
+Na reavaliação exploratória de 23/10/2026 da base de 20/10 previamente enviada (quatro pares, últimos 100 minutos, duas vagas, comissão e swap hipoteticamente zero), a Continuidade apresentou 16 sinais técnicos qualificados. Sem slippage assumido, três entradas, duas perdas encerradas com PnL realizado de -15,04 USD e uma posição aberta. Com dois pontos adversos por preenchimento, três candidatos foram recusados na reserva de risco após custos; os demais sinais já falhavam em outras pré-validações, resultando em zero entradas. O RF apresentou zero entradas nesse recorte. Essa amostra curta e a forte sensibilidade às hipóteses não demonstram vantagem financeira. O veto por custos assumidos pertence ao laboratório e não altera os filtros da execução MT5.

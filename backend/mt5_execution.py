@@ -453,7 +453,14 @@ class MT5Executor:
                                            float(getattr(position,'volume',entry_volume)),float(getattr(position,'price_open',entry_price)),sl) if sl>0 else None
                 within_budget=loss is not None and math.isfinite(float(loss)) and max(0,-float(loss))<=trade['risk_budget']+1e-8
                 protected=protected and sl>0 and stop_not_widened and target_direction and within_budget
+            quote=getattr(open_positions[0],'price_current',None) if len(open_positions)==1 else None
+            try:
+                quote=float(quote)
+                if not math.isfinite(quote) or quote<=0:quote=None
+            except (TypeError,ValueError):
+                quote=None
             return dict(**common,status='OPEN',floating_pnl=sum(float(getattr(p,'profit',0))+float(getattr(p,'swap',0)) for p in open_positions),
+                        observed_exit_quote=quote,
                         protected=protected,sync_note='Posição confirmada no terminal.' if protected else 'Proteções não confirmadas: novas entradas bloqueadas; monitoramento ativo. Verifique SL/TP no terminal.')
         if exit_volume+1e-8 < entry_volume:
             return dict(**common,status='PENDING',sync_note='Posição ausente, mas fechamento ainda incompleto no histórico. Aguardando sincronização.')

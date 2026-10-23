@@ -45,7 +45,7 @@ Após a conversão, o motor revalida espaço até o alvo, retorno/risco mínimo,
 
 O diário e a exportação JSON das novas entradas incluem `entry_diagnostics` (Bid, Ask, spread, timestamp UTC normalizado da cotação, especificação e margem), `signal_snapshot` (indicadores e validação ML disponíveis) e `plan_parameters`. O plano guarda ATR, estrutura Bid, referência de saída, spread/stop, spread/ATR e distâncias em ATR. A reconciliação discrimina profit, commission, swap, fee, preço, volume e motivo bruto disponível por negócio; `execution_summary` registra preço solicitado/preenchido e desvio de entrada (positivo = desfavorável). Dados novos não são inventados para operações antigas. Isso não equivale a ticks históricos nem permite reconstruir MAE/MFE intravela a partir de apenas duas execuções.
 
-O backtest Forex SL/TP usa o mesmo cálculo corrigido e conserva a hipótese de Ask aproximado pelo spread da vela; permanece limitado a uma posição simultânea. Novas simulações podem diferir de relatórios produzidos pelo cálculo anterior. A correção de preços e os testes de software não comprovam vantagem financeira da estratégia nem calibram a estimativa RF para TP antes do SL.
+O backtest Forex SL/TP usa o mesmo cálculo corrigido e conserva a hipótese de Ask aproximado pelo spread da vela; aceita até duas posições simultâneas em símbolos distintos, conforme a base, compartilhando orçamento e margem. Novas simulações podem diferir de relatórios produzidos pelo cálculo anterior. A correção de preços e os testes de software não comprovam vantagem financeira da estratégia nem calibram a estimativa RF para TP antes do SL.
 
 ## Validação de entrada RF Forex v3
 

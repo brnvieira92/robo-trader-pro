@@ -215,11 +215,10 @@ def test_competing_reservations_cannot_consume_both_slots_while_unconfirmed(tmp_
     assert sum(results)==1 and len(journal.all_trades())==1
 
 
-def test_single_position_backtest_cannot_claim_to_validate_parallel_portfolio():
+def test_backtest_accepts_parallel_portfolio_and_preserves_legacy_base():
     request=request_data(symbols=('EURUSD#','GBPUSD#'))
     request['config']['forex_max_open_positions']=2
-    with pytest.raises(ValueError, match='Não valida a carteira simultânea'):
-        ForexBacktestRequest.model_validate(request)
+    assert ForexBacktestRequest.model_validate(request).config.forex_max_open_positions==2
     request['config'].pop('forex_max_open_positions')
     assert ForexBacktestRequest.model_validate(request).config.forex_max_open_positions==1
 

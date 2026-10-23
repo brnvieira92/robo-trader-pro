@@ -1,4 +1,4 @@
-"""Causal, bid/ask OHLC Forex research with one global position and no SDK IO.
+"""Causal, bid/ask OHLC Forex portfolio research with no SDK IO.
 
 Uses the production signal and price/risk preparation code through a closed
 historical adapter. No send/reconcile methods are called by this simulator.
@@ -17,6 +17,8 @@ from backend.diagnostics import digest, preflight_code
 from backend.ml_engine import MLEngine
 from backend.mt5_execution import MT5Executor, MT5ExecutionError
 from backend.strategies import StrategyEngine
+from backend.portfolio_risk import position_limit
+from backend.forex_statistics import financial_breakdown
 
 
 class HistoricalBar(Candle):
@@ -47,7 +49,7 @@ class HistoricalMarket(BaseModel):
     model_config=ConfigDict(extra='forbid',allow_inf_nan=False)
     symbol: str = Field(min_length=2,max_length=30,pattern=r'^[A-Za-z0-9_$./#-]+$')
     specification: SymbolSpecification
-    candles: list[HistoricalBar] = Field(min_length=150,max_length=2000)
+    candles: list[HistoricalBar] = Field(min_length=150,max_length=10000)
     source: Literal['MT5','UPLOADED']
     specification_basis: str = Field(min_length=3,max_length=300)
 
@@ -58,7 +60,7 @@ class ForexBacktestRequest(BaseModel):
     markets: list[HistoricalMarket] = Field(min_length=1,max_length=4)
     account_currency: str = Field(min_length=3,max_length=8,pattern=r'^[A-Z]+$')
     initial_balance: float = Field(10000,gt=0,le=10000000)
-    evaluated_bars: int = Field(100,ge=1,le=200)
+    evaluated_bars: int = Field(100,ge=1,le=2000)
     commission_per_lot_side: float = Field(0,ge=0,le=10000)
     adverse_slippage_points: float = Field(0,ge=0,le=10000)
     swap_cost_per_lot_utc_day: float = Field(0,ge=0,le=10000)
@@ -78,8 +80,6 @@ class ForexBacktestRequest(BaseModel):
     @model_validator(mode='after')
     def consistency(self):
         c=self.config
-        if c.forex_multi_enabled and c.forex_max_open_positions>1:
-            raise ValueError('Este laboratório histórico avalia uma posição global. Não valida a carteira simultânea de duas posições. Use uma configuração de pesquisa com limite 1; a execução ativa não será alterada.')
         if c.market_type!='MT5_FOREX': raise ValueError('Este laboratório aceita somente Forex.')
         if c.strategy_id not in ('ml_random_forest','forex_trend_continuation') or c.min_confidence<78 or (c.strategy_id=='ml_random_forest' and not c.strategy_params.use_ml_filter):
             raise ValueError('Use RF com filtro ML, ou Continuidade Forex, e score mínimo de 78.')
@@ -100,9 +100,15 @@ class ForexBacktestRequest(BaseModel):
 
 class HistoricalExecutor(MT5Executor):
     """Only prepare() is used. Frozen symbol money values are explicit assumptions."""
-    def __init__(self, config, market, bar, balance, currency):
+    def __init__(self, config, market, bar, balance, currency, portfolio=(), markets=None, equity=None):
         self.spec=market.specification
         self.bar=bar;self.config=config;self.balance=balance;self.currency=currency
+        self.markets=markets or {market.symbol:market}
+        self.equity=balance if equity is None else equity
+        self.margin=sum(t['volume']*self.markets[t['symbol']].specification.margin_per_lot for t in portfolio)
+        positions=[NS(identifier=t['position_id'],ticket=t['position_id'],symbol=t['symbol'],
+            type=0 if t['action']=='BUY' else 1,sl=t['stop_loss'],tp=t['take_profit'],
+            volume=t['volume'],price_open=t['entry_price']) for t in portfolio]
         spec=self.spec
         info=NS(point=spec.point,trade_tick_size=spec.tick_size,digits=spec.digits,
                 trade_stops_level=spec.stops_level,volume_min=spec.volume_min,volume_step=spec.volume_step,
@@ -110,13 +116,14 @@ class HistoricalExecutor(MT5Executor):
         self.sdk=NS(SYMBOL_TRADE_MODE_FULL=4,SYMBOL_TRADE_MODE_LONGONLY=1,SYMBOL_TRADE_MODE_SHORTONLY=2,
             ORDER_TYPE_BUY=0,ORDER_TYPE_SELL=1,SYMBOL_FILLING_FOK=1,SYMBOL_FILLING_IOC=2,
             ORDER_FILLING_FOK=0,ORDER_FILLING_IOC=1,TRADE_ACTION_DEAL=1,ORDER_TIME_GTC=0,
-            symbol_select=lambda *a:True,symbol_info=lambda *a:info,positions_get=lambda **k:(),orders_get=lambda **k:(),
+            symbol_select=lambda *a:True,symbol_info=lambda *a:info,
+            positions_get=lambda **k:tuple(p for p in positions if not k.get('symbol') or p.symbol==k['symbol']),orders_get=lambda **k:(),
             order_calc_profit=self.profit,order_calc_margin=lambda kind,symbol,volume,price:volume*spec.margin_per_lot,
             order_check=lambda request:NS(retcode=0))
 
     def account(self,*args,**kwargs):
         return dict(login=self.config.get('mt5_account_login') or 1,server=self.config.get('mt5_account_server') or 'HISTORICAL',
-                    equity=self.balance,balance=self.balance,margin_free=max(0,self.balance),currency=self.currency,account_type='RESEARCH')
+                    equity=self.equity,balance=self.balance,margin_free=max(0,self.equity-self.margin),currency=self.currency,account_type='RESEARCH')
 
     def _tick(self,symbol,config):
         return NS(bid=self.bar.open,ask=self.bar.open+self.bar.spread_points*self.spec.point)
@@ -126,8 +133,9 @@ class HistoricalExecutor(MT5Executor):
 
     def profit(self,kind,symbol,volume,entry,exit):
         movement=(Decimal(str(exit))-Decimal(str(entry)))*(1 if kind==0 else -1)
-        value=self.spec.tick_value_profit if movement>=0 else self.spec.tick_value_loss
-        result=float(movement/Decimal(str(self.spec.tick_size))*Decimal(str(value))*Decimal(str(volume)))
+        spec=self.markets[symbol].specification
+        value=spec.tick_value_profit if movement>=0 else spec.tick_value_loss
+        result=float(movement/Decimal(str(spec.tick_size))*Decimal(str(value))*Decimal(str(volume)))
         if not math.isfinite(result):raise MT5ExecutionError('Resultado monetário não finito; confira especificação e preços históricos.')
         return result
 
@@ -157,11 +165,13 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
     frames={s:pd.DataFrame([b.model_dump() for b in m.candles]) for s,m in markets.items()}
     for frame in frames.values():frame['time']=pd.to_datetime(frame['time'],unit='s')
     engines={s:MLEngine() for s in markets}
+    model_context='HISTORICAL:'+digest(config)
     start=max(m.candles[0].time for m in request.markets)
     finish=min(m.candles[-1].time for m in request.markets)
     timeline=sorted({b.time for m in request.markets for b in m.candles if start<=b.time<=finish})[-request.evaluated_bars:]
     if not timeline:raise ValueError('Os períodos dos pares não se sobrepõem.')
-    balance=request.initial_balance;position=None;trades=[];analyses=[];curve=[]
+    balance=request.initial_balance;positions=[];trades=[];analyses=[];curve=[]
+    slots=position_limit(config);sequence=0
     daily=Counter();daily_entries=Counter();loss_streak=0;session=None;last_trade=-math.inf;cursor=0
     ambiguities=0;last_used={};peak=balance;drawdown=0;drawdown_pct=0
     goal=config['stop_gain']*(request.goal_fx_account_per_brl if config['goal_currency']=='BRL' and request.account_currency!='BRL' else 1)
@@ -172,9 +182,20 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
         balance=round(balance+amount,8)
         key=day_key(ts);daily[key]=round(daily[key]+amount,8)
 
-    def settle(exit_price,reason,ambiguous,ts):
-        nonlocal balance,position,loss_streak,last_trade,ambiguities
-        trade=position
+    def observe(trade, prices):
+        # Only full bars known to have remained open are used. On exit bars,
+        # extremes could occur AFTER exit, so record only open/fill prices.
+        direction=1 if trade['action']=='BUY' else -1
+        moves=[direction*(price-trade['entry_price']) for price in prices]
+        trade['sampled_mfe_price']=max(trade['sampled_mfe_price'],max(moves))
+        trade['sampled_mae_price']=max(trade['sampled_mae_price'],-min(moves))
+        risk=abs(trade['entry_price']-trade['stop_loss'])
+        trade['sampled_mfe_r']=trade['sampled_mfe_price']/risk
+        trade['sampled_mae_r']=trade['sampled_mae_price']/risk
+
+    def settle(trade,exit_price,reason,ambiguous,ts):
+        nonlocal balance,loss_streak,last_trade,ambiguities
+        observe(trade,[exit_price])
         model=HistoricalExecutor(config,markets[trade['symbol']],bars[trade['symbol']][trade['entry_bar']],balance,request.account_currency)
         gross=model.profit(0 if trade['action']=='BUY' else 1,trade['symbol'],trade['volume'],trade['entry_price'],exit_price)
         commission=request.commission_per_lot_side*trade['volume']
@@ -184,7 +205,16 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
         trade.update(exit_price=exit_price,exit_time=ts,exit_reason=reason,ambiguous=ambiguous,
                      gross_pnl=gross,exit_commission=commission,net_pnl=net,status='WIN' if net>1e-8 else 'LOSS' if net< -1e-8 else 'DRAW')
         loss_streak=loss_streak+1 if net< -1e-8 else 0
-        trades.append(trade);ambiguities+=int(ambiguous);last_trade=ts;position=None
+        trades.append(trade);ambiguities+=int(ambiguous);last_trade=ts;positions.remove(trade)
+
+    def equity_at_open(ts):
+        floating=0
+        for trade in positions:
+            symbol=trade['symbol'];bar=bars[symbol][ts]
+            mark=bar.open+(bar.spread_points*markets[symbol].specification.point if trade['action']=='SELL' else 0)
+            model=HistoricalExecutor(config,markets[symbol],bar,balance,request.account_currency)
+            floating+=model.profit(0 if trade['action']=='BUY' else 1,symbol,trade['volume'],trade['entry_price'],mark)
+        return balance+floating
 
     for index,ts in enumerate(timeline):
         day=day_key(ts)
@@ -195,7 +225,7 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
             for trade in reversed(trades):
                 if day_key(trade['exit_time'])!=day or trade['status']!='LOSS':break
                 loss_streak+=1
-        if position:
+        for position in list(positions):
             current=bars[position['symbol']].get(ts)
             if current is None:
                 raise ValueError('Lacuna no histórico de '+position['symbol']+' com posição aberta; não é possível reconstruir SL/TP. Revise a base antes de concluir rentabilidade.')
@@ -203,8 +233,10 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
                 elapsed_days=(ts//86400)-(position['last_swap_time']//86400)
                 cost=max(0,elapsed_days)*request.swap_cost_per_lot_utc_day*position['volume']
                 position['swap_cost']+=cost;post_cash(-cost,ts);position['last_swap_time']=ts
+                mark=current.open+(current.spread_points*markets[position['symbol']].specification.point if position['action']=='SELL' else 0)
+                observe(position,[mark])
                 result=exit_on_bar(position,current,markets[position['symbol']].specification,request.adverse_slippage_points)
-                if result and result[1].startswith('GAP_'):settle(*result,ts)
+                if result and result[1].startswith('GAP_'):settle(position,*result,ts)
         candidates=[]
         for symbol in order:
             bar=bars[symbol].get(ts)
@@ -214,7 +246,7 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
             if gaps.any():history=history.iloc[int(gaps.to_numpy().nonzero()[0][-1])+1:].copy()
             signal=StrategyEngine.analyze(history,symbol,'MT5_FOREX',config['timeframe'],config['strategy_id'],
                 {**config['strategy_params'],'data_source':'HISTORICAL_FOREX'},model_engine=engines[symbol],
-                model_context='HISTORICAL:'+digest(config)).to_dict()
+                model_context=model_context).to_dict()
             ml=signal.get('indicators',{}).get('ml_validation',{})
             blocks=[]
             if not bar:blocks.append('BAR_MISSING')
@@ -228,7 +260,8 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
             if signal['action'] not in ('BUY','SELL'):blocks.append('SIGNAL_DIRECTION')
             if signal['confidence']<config['min_confidence']:blocks.append('MIN_CONFIDENCE')
             if (signal.get('diagnostic') or {}).get('extreme_volatility'):blocks.append('VOLATILITY')
-            if position:blocks.append('ONE_POSITION')
+            if len(positions)>=slots:blocks.append('ONE_POSITION' if slots==1 else 'POSITION_LIMIT')
+            if any(t['symbol']==symbol for t in positions):blocks.append('SYMBOL_POSITION')
             if daily[day]<=-config['stop_loss']:blocks.append('DAILY_LOSS')
             if daily[day]>=goal:blocks.append('DAILY_GOAL')
             if daily_entries[day]>=config['max_daily_trades']:blocks.append('DAILY_ENTRIES')
@@ -245,44 +278,78 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
             if not blocks:
                 prepared_signal={**signal,'bar_time':bar_time}
                 candidates.append((symbol,bar,prepared_signal,record))
-        if not position:
+        if len(positions)<slots:
             rank={symbol:(order.index(symbol)-cursor)%len(order) for symbol in order}
             for symbol,bar,signal,record in sorted(candidates,key=lambda item:rank[item[0]]):
+                # Recheck after each reservation: candidates share limits and
+                # cooldown, even when their initial projections were eligible.
+                if len(positions)>=slots or any(t['symbol']==symbol for t in positions):
+                    record.update(action='REJECTED');record['blocks'].append('ONE_POSITION' if slots==1 else 'POSITION_LIMIT')
+                    continue
+                if ts-last_trade<config['cooldown_seconds']:
+                    record.update(action='REJECTED');record['blocks'].append('COOLDOWN');continue
+                if daily_entries[day]>=config['max_daily_trades']:
+                    record.update(action='REJECTED');record['blocks'].append('DAILY_ENTRIES');continue
                 cfg={**config,'symbol':symbol}
-                adapter=HistoricalExecutor(cfg,markets[symbol],bar,balance,request.account_currency)
+                adapter=HistoricalExecutor(cfg,markets[symbol],bar,balance,request.account_currency,
+                    portfolio=positions,markets=markets,equity=equity_at_open(ts))
                 try:
-                    prepared=adapter.prepare(cfg,signal,max(0,config['stop_loss']+daily[day]),'HISTORICAL',max(0,goal-daily[day]))
+                    prepared=adapter.prepare(cfg,signal,max(0,config['stop_loss']+daily[day]),'HISTORICAL',max(0,goal-daily[day]),portfolio_trades=positions)
                 except MT5ExecutionError as exc:
                     record.update(action='REJECTED',preflight_reason=str(exc));record['blocks'].append(preflight_code(str(exc)))
                     continue
                 spec=markets[symbol].specification;buy=signal['action']=='BUY'
                 entry=prepared['price']+(1 if buy else -1)*request.adverse_slippage_points*spec.point
                 fee=request.commission_per_lot_side*prepared['volume']
+                # Slippage/cost assumptions must not silently invalidate the
+                # same per-position and global reservations used in production.
+                stop_fill=prepared['stop_loss']-(1 if buy else -1)*request.adverse_slippage_points*spec.point
+                risk=max(prepared['estimated_risk'],-adapter.profit(0 if buy else 1,symbol,prepared['volume'],entry,stop_fill)+config['mt5_cost_buffer']+2*fee)
+                record['cost_preflight']=dict(assumed_risk=risk,risk_budget=prepared['risk_budget'],
+                    round_trip_commission=2*fee,slippage_points_per_fill=request.adverse_slippage_points)
+                if risk>prepared['risk_budget']+1e-8 or not (prepared['stop_loss']<entry<prepared['take_profit'] if buy else prepared['take_profit']<entry<prepared['stop_loss']):
+                    record.update(action='REJECTED',preflight_reason='Slippage/custos excedem a reserva de risco ou o plano de preços.');record['blocks'].append('RISK_BUDGET');continue
+                target_fill=prepared['take_profit']-(1 if buy else -1)*request.adverse_slippage_points*spec.point
+                reward=adapter.profit(0 if buy else 1,symbol,prepared['volume'],entry,target_fill)-config['mt5_cost_buffer']-2*fee
+                record['cost_preflight'].update(assumed_reward=reward,net_reward_risk=reward/risk,
+                    required_reward_risk=config['strategy_params']['min_reward_risk'])
+                if reward/risk+1e-8<config['strategy_params']['min_reward_risk']:
+                    record.update(action='REJECTED',preflight_reason='Retorno/risco líquido insuficiente após custos e slippage assumidos.');record['blocks'].append('REWARD_RISK');continue
+                sequence+=1
                 position=dict(symbol=symbol,action=signal['action'],volume=prepared['volume'],entry_price=entry,
+                    id='HISTORICAL-'+str(sequence),source='HISTORICAL_FOREX',simulated=True,
+                    mode='LIVE_MT5',protected=True,position_id=sequence,
+                    account_login=prepared['account']['login'],account_server=prepared['account']['server'],
+                    filled_volume=prepared['volume'],reserved_risk=risk,cost_buffer=config['mt5_cost_buffer']+2*fee,
                     quoted_entry=prepared['price'],entry_time=ts,entry_bar=ts,stop_loss=prepared['stop_loss'],take_profit=prepared['take_profit'],
                     entry_commission=fee,swap_cost=0,last_swap_time=ts,risk_budget=prepared['risk_budget'],
-                    estimated_risk=prepared['estimated_risk'],plan=prepared['plan'],entry_diagnostics=prepared['entry_diagnostics'],status='OPEN',signal_bar=signal['bar_time'])
+                    estimated_risk=risk,plan=prepared['plan'],entry_diagnostics=prepared['entry_diagnostics'],status='OPEN',signal_bar=signal['bar_time'],
+                    entry_policy_version=record['entry_policy_version'],entry_confirmation=record['entry_confirmation'],
+                    signal_score=signal['confidence'],sampled_mfe_price=0.,sampled_mae_price=0.,sampled_mfe_r=0.,sampled_mae_r=0.,
+                    assumed_net_reward_risk=reward/risk,
+                    excursion_basis='LOWER_BOUND_CLOSED_OHLC; exit bars use open/fill only, not unknown extrema')
+                positions.append(position)
                 post_cash(-fee,ts);daily_entries[day]+=1;last_trade=ts;last_used[symbol]=signal['bar_time']
                 record.update(action='ENTERED',plan=prepared['plan'],volume=prepared['volume'])
                 cursor=(order.index(symbol)+1)%len(order)
-                for other_symbol,_,_,other in candidates:
-                    if other is not record and other['action']=='CANDIDATE':
-                        other.update(action='REJECTED');other['blocks'].append('ONE_POSITION')
-                break
         floating=0
-        if position:
+        for position in list(positions):
             symbol=position['symbol'];bar=bars[symbol].get(ts)
             if bar:
                 result=exit_on_bar(position,bar,markets[symbol].specification,request.adverse_slippage_points)
-                if result:settle(*result,ts+step)
+                if result:settle(position,*result,ts+step)
                 else:
+                    shift=bar.spread_points*markets[symbol].specification.point if position['action']=='SELL' else 0
+                    observe(position,[bar.high+shift,bar.low+shift])
                     mark=bar.close+(bar.spread_points*markets[symbol].specification.point if position['action']=='SELL' else 0)
                     model=HistoricalExecutor(config,markets[symbol],bar,balance,request.account_currency)
-                    floating=model.profit(0 if position['action']=='BUY' else 1,symbol,position['volume'],position['entry_price'],mark)
-                    position['mark_price']=mark;position['floating_pnl']=floating
-            else:floating=position.get('floating_pnl',0)
+                    pnl=model.profit(0 if position['action']=='BUY' else 1,symbol,position['volume'],position['entry_price'],mark)
+                    floating+=pnl
+                    position['mark_price']=mark;position['floating_pnl']=pnl
+            else:floating+=position.get('floating_pnl',0)
         equity=balance+floating;peak=max(peak,equity);drawdown=max(drawdown,peak-equity);drawdown_pct=max(drawdown_pct,(peak-equity)/peak*100)
-        curve.append(dict(time=ts+step,balance=round(balance,8),equity=round(equity,8),open_positions=int(position is not None)))
+        curve.append(dict(time=ts+step,balance=round(balance,8),equity=round(equity,8),open_positions=len(positions),
+            reserved_risk=sum(t['reserved_risk'] for t in positions)))
         if progress:progress(index+1,len(timeline))
     positives=sum(t['net_pnl'] for t in trades if t['net_pnl']>0)
     negatives=-sum(t['net_pnl'] for t in trades if t['net_pnl']<0)
@@ -294,7 +361,12 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
             technical_qualified=sum(a['signal'] in ('BUY','SELL') and a['score']>=config['min_confidence'] for a in observations),
             entries=sum(a['action']=='ENTERED' for a in observations),closed_trades=len(closed),net_pnl=sum(t['net_pnl'] for t in closed),
             blocks=dict(Counter(code for a in observations for code in a['blocks']))))
-    return dict(kind='FOREX_SL_TP',version=1,request_hash=digest(request.model_dump()),currency=request.account_currency,
+    # Production-shaped identifiers exist only inside the historical adapter.
+    # Exports must not label simulated positions as terminal fills/protections.
+    for trade in [*trades,*positions]:
+        for key in ('mode','protected','position_id','account_login','account_server'):
+            trade.pop(key,None)
+    return dict(kind='FOREX_SL_TP',version=2,request_hash=digest(request.model_dump()),currency=request.account_currency,
         config=config,assumptions=request.model_dump(exclude={'markets'}),
         datasets=[dict(symbol=m.symbol,source=m.source,first_time=m.candles[0].time,last_time=m.candles[-1].time,
             candles=len(m.candles),hash=digest(m.model_dump()),specification=m.specification.model_dump(),specification_basis=m.specification_basis) for m in request.markets],
@@ -305,13 +377,16 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
         win_rate=round(sum(t['status']=='WIN' for t in trades)/len(trades)*100,4) if trades else None,
         profit_factor=round(positives/negatives,6) if negatives else None,
         expectancy=round(sum(t['net_pnl'] for t in trades)/len(trades),8) if trades else None,
-        ambiguous_bars=ambiguities,open_position=position,trades=trades,analyses=analyses,equity_curve=curve,per_pair=per_pair,
-        evidence='NO_TRADES' if not trades else 'EXPLORATORY_ONLY',
+        ambiguous_bars=ambiguities,open_position=positions[0] if len(positions)==1 else None,open_positions=positions,
+        max_open_positions=slots,financial_breakdown=financial_breakdown(trades),
+        trades=trades,analyses=analyses,equity_curve=curve,per_pair=per_pair,
+        evidence='EXPLORATORY_ONLY' if trades else 'NO_CLOSED_TRADES' if positions else 'NO_TRADES',
         limitations=[
             'OHLC Bid; Ask aproximado pelo spread de cada vela. Sem sequência intravela nem ticks históricos.',
             'SL e TP na mesma vela: stop primeiro. Gaps no stop executam na abertura adversa; gaps favoráveis no TP limitados ao alvo.',
             'Sem expiração. Posição aberta no fim permanece aberta; não vira lucro realizado.',
-            'Uma posição global; saída intravela registrada no fechamento da vela, sem reentrada na mesma vela.',
+            f'Até {slots} posições em símbolos distintos, risco/margem compartilhados e cooldown global; saídas intravela registradas no fechamento da vela.',
+            'Excursões favoráveis/adversas são limites inferiores observados; extremos da vela de saída são excluídos porque podem ocorrer após o fechamento.',
             'Valores de tick, margem por lote e permissões são constantes assumidas; não reproduzem câmbio/margem históricos ou order_check da corretora.',
             'Comissão por lado, slippage adverso por preenchimento e swap por dia UTC são hipóteses; swap não reproduz rollover triplo/calendário da XM.',
             'Curva e drawdown são amostrados em fechamento de vela; não capturam toda excursão intravela.',

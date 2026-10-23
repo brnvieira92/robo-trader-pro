@@ -19,6 +19,7 @@ from backend.mt5_execution import MT5Executor, MT5ExecutionError, ACTIVE_LIVE
 from backend.portfolio_risk import position_limit, active_trades, reserved_risk, global_budget, local_block, context
 from backend.telegram_bot import TelegramBot
 from backend.trade_plan import price_plan, goal_limited_budget, TradePlanError
+from backend.trade_diagnostics import observe_exit_quote
 
 from backend.strategies import StrategyEngine, SignalResult
 from backend.mt5_connector import MT5Connector
@@ -1011,8 +1012,11 @@ class BotManager:
                 update=await self._native_call(self.live.reconcile,trade)
                 trade.update(update)
                 trade['last_reconciled_at'] = time.time()
+                if trade['status']=='OPEN':
+                    observe_exit_quote(trade,update.get('observed_exit_quote'),trade['last_reconciled_at'],'MT5_POSITION_POLL')
                 if trade['status'] in ('WIN','LOSS','DRAW') and trade['status'] != old_status:
                     trade['closure_confirmed_at'] = trade['last_reconciled_at']
+                    observe_exit_quote(trade,update.get('exit_price'),trade['last_reconciled_at'],'MT5_CONFIRMED_EXIT')
                 trade.pop('sync_error',None)
                 if trade['status']=='OPEN' and not trade.get('protected',False):
                     self._fault('position:'+trade['id'],'UNPROTECTED_POSITION',trade['sync_note'])

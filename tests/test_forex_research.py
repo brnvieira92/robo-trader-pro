@@ -68,7 +68,7 @@ def test_take_profit_and_open_at_end_has_no_timer_expiry(monkeypatch):
     data=request_data(evaluated=3)
     r=run_forex_backtest(ForexBacktestRequest.model_validate(data))
     assert not r['trades'] and r['open_position']['status']=='OPEN'
-    assert r['evidence']=='NO_TRADES' and r['ending_equity']<10000 # Spread mark-to-market.
+    assert r['evidence']=='NO_CLOSED_TRADES' and r['ending_equity']<10000 # Spread mark-to-market.
     assert all(p['open_positions']==1 for p in r['equity_curve'])
 
 

@@ -15,10 +15,10 @@ with sync_playwright() as p:
         page.goto(base,wait_until='networkidle')
         page.wait_for_function("latestState?.forex_radar?.rows?.some(r=>r.checks?.length)")
         card=page.locator('#forexRadarRows article').first
-        card.locator('summary').click()
+        card.locator('summary').first.click()
         assert 'Exigido:' in card.inner_text() and 'Brier' in card.inner_text()
         page.wait_for_timeout(1800)
-        assert card.locator('details').get_attribute('open') is not None
+        assert card.locator('details').first.get_attribute('open') is not None
         page.locator('#pairComparison summary').click()
         page.get_by_role('button',name='Comparar pares',exact=True).click()
         page.wait_for_function("document.querySelector('#pairReportTable td')!==null")
@@ -30,9 +30,9 @@ with sync_playwright() as p:
             page.locator('#forexHistoryLoad').click()
         assert capture.value.ok,capture.value.text()
         page.wait_for_function("forexDataset?.markets?.length===4")
-        # Explicit single-position reference study, not a claim about the
-        # parallel live portfolio. This changes only the in-browser dataset.
-        page.evaluate('forexDataset.config.forex_max_open_positions=1')
+        assert page.evaluate('forexDataset.config.forex_max_open_positions')==2
+        page.locator('#forexResearchStrategy').select_option('forex_trend_continuation')
+        page.locator('#forexResearchSlots').select_option('2')
         page.locator('#forexEvaluatedBars').fill('2')
         page.locator('#forexAssumptions').check()
         with page.expect_response('**/api/research/forex/jobs') as started:
@@ -40,7 +40,11 @@ with sync_playwright() as p:
         assert started.value.status==202,started.value.text()
         page.wait_for_function("document.querySelector('#forexResearchOutput').textContent.includes('Backtest Forex •')",timeout=60000)
         assert 'SEM OPERAÇÕES' in page.locator('#forexResearchOutput').inner_text()
+        assert 'Limite global: 2' in page.locator('#forexResearchOutput').inner_text()
+        assert 'Diagnóstico financeiro por grupo' in page.locator('#forexResearchOutput').inner_text()
         assert page.evaluate('latestState.config.forex_max_open_positions')==2
+        assert page.evaluate('latestState.config.strategy_id')=='ml_random_forest'
+        assert page.evaluate('forexDataset.config.strategy_id')=='ml_random_forest'
         assert page.locator('#forexResearchExports a').count()==3
         with page.expect_download() as download:page.get_by_text('Baixar resultado completo JSON',exact=True).click()
         download.value.save_as(str(out/f'backtest-{width}.json'))

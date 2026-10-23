@@ -60,7 +60,7 @@ Testes automatizados usam SDK falso e diários temporários. Eles cobrem isolame
 
 Na demo, confira no MT5 símbolo, volume, SL/TP, correspondência com o diário e risco agregado das duas posições. Todos os pares continuam sendo analisados mesmo com as vagas ocupadas. Uma terceira entrada, repetição de símbolo, exposição desconhecida ou soma de riscos acima do teto deve ser bloqueada. Se houver falha após envio, aguarde reconciliação; não repita manualmente a ordem. Isso não garante uma frequência mínima de negócios: score 78%, validação ML e demais filtros foram preservados.
 
-O laboratório histórico atual é uma referência de **uma posição** e recusa bases com limite 2: seus resultados não validam o novo portfólio paralelo. A captura da base e os relatórios continuam disponíveis; é possível importar uma cópia de pesquisa com limite 1 sem mudar a execução. A validação financeira da carteira com duas posições exige avaliação própria, além dos testes operacionais automatizados.
+O laboratório histórico aceita **até duas posições** em símbolos distintos com risco/margem compartilhados e cooldown global. Bases antigas sem limite explícito mantêm uma posição. A simulação OHLC não reproduz toda a execução MT5 e continua exploratória; a validação financeira exige períodos independentes e acompanhamento em demo.
 
 Para voltar ao modo individual, pause, aguarde a resolução de posições/intentos, desmarque o motor multipares e salve. Conta, parâmetros e diário são preservados.
 

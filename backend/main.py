@@ -408,7 +408,7 @@ async def _wait_forex_research_ready():
 
 
 @app.post('/api/research/forex/history')
-async def forex_history(count: int=Query(1000,ge=150,le=2000)):
+async def forex_history(count: int=Query(1000,ge=150,le=10000)):
     await _wait_forex_research_ready()
     async with research_lock:
         bot._mt5_busy=True
