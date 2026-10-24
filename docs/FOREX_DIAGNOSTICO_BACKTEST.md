@@ -67,7 +67,7 @@ Cada par recebe uma instância própria do modelo. A cada abertura histórica, s
 
 O simulador reutiliza o planejamento/dimensionamento de produção por um adaptador histórico sem SDK nativo. Considera orçamento de entrada, risco percentual, perda e meta diárias, sequência de perdas, máximo de entradas, cooldown global, até duas posições em símbolos distintos, permissão direcional, spread, volume/passo/teto, margem e retorno/risco planejado. Os pares elegíveis são considerados em rodízio, com o mesmo princípio do coordenador. Uma rejeição local de plano/especificação permite tentar outro par; uma posição aberta no símbolo impede outra no mesmo símbolo; vagas e orçamento global limitam as demais.
 
-A preparação considera `mt5_cost_buffer`. A simulação também verifica se o risco até SL, incluindo slippage assumido nas duas pontas e comissão de ida/volta, cabe na reserva autorizada; caso contrário, rejeita a entrada. O retorno/risco líquido também precisa atender ao mínimo após essas hipóteses de custos. Gaps e swaps futuros ainda podem exceder essa estimativa. O cálculo de volume continua sendo o de produção, sem redimensionamento posterior para forçar aprovação.
+A preparação considera `mt5_cost_buffer`. A simulação também verifica se o risco até SL, incluindo slippage assumido nas duas pontas e comissão de ida/volta, cabe na reserva autorizada; caso contrário, rejeita a entrada. O retorno/risco líquido também precisa atender ao mínimo após essas hipóteses de custos. Gaps e swaps futuros ainda podem exceder essa estimativa. Na versão 4, o adaptador já considera as fricções assumidas antes do cálculo de volume; o dimensionamento compartilhado reduz o lote e mantém limites e retorno/risco. A liquidação cobra cada custo uma única vez.
 
 Regras conservadoras de execução:
 
@@ -133,3 +133,8 @@ Na reavaliação exploratória de 23/10/2026 da base de 20/10 previamente enviad
 ## Pesquisa de retomada e proteção dinâmica
 
 O laboratório aceita também `forex_pullback_retest` e um campo `exit_management` fora da configuração ativa. As saídas disponíveis são FIXED, BREAK_EVEN, ATR_TRAILING e BREAK_EVEN_ATR. O padrão FIXED preserva as bases antigas. Os ajustes usam fechamento conhecido, passam a valer na próxima vela e mantêm o risco inicial reservado. Não há modificação de stops no terminal por essa pesquisa. Veja [regras completas e limites](FOREX_RETOMADA_SAIDAS.md).
+
+
+## Triplo ATR e dimensionamento com fricções
+
+O laboratório também aceita `forex_triple_atr`. A versão 4 corrige o dimensionamento para considerar os custos conhecidos antes do lote, mantendo os mesmos tetos de risco; os resultados antigos com custos positivos não são diretamente equivalentes. O Triplo ATR está disponível para execução experimental em demo, com conta real bloqueada. Veja [regras, simulações das entradas anteriores e comparação completa](FOREX_TRIPLO_ATR.md).

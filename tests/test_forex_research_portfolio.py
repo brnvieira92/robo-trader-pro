@@ -98,7 +98,7 @@ def test_adverse_slippage_cannot_overreserve_or_enter_beyond_stop(monkeypatch):
     data=parallel_data();data['adverse_slippage_points']=500
     r=run(data)
     assert not r['open_positions'] and not r['trades']
-    assert any('RISK_BUDGET' in a['blocks'] for a in r['analyses'])
+    assert any('MINIMUM_VOLUME' in a['blocks'] or 'REWARD_RISK' in a['blocks'] for a in r['analyses'])
 
 
 def test_parallel_simulation_is_causal_at_entry(monkeypatch):
@@ -121,8 +121,7 @@ def test_liquid_reward_risk_after_costs_is_not_just_quote_ratio(monkeypatch):
     analysis=r['analyses'][0]
     assert not r['open_positions']
     assert 'REWARD_RISK' in analysis['blocks']
-    assert analysis['cost_preflight']['net_reward_risk']<1.5
-    assert analysis['cost_preflight']['assumed_risk']<=10
+    assert 'Retorno/risco' in analysis['preflight_reason'] # Rejected by shared preparation before reserving.
 
 
 def test_larger_evaluation_keeps_warmup_and_closed_bar_causality(monkeypatch):
@@ -135,3 +134,18 @@ def test_larger_evaluation_keeps_warmup_and_closed_bar_causality(monkeypatch):
     assert r['evaluated_bars']==250 and len(calls)==250
     assert all(len(times)==239 for _,times,_ in calls)
     assert all(max(t.timestamp() for t in times)<a['time'] for (_,times,_),a in zip(calls,r['analyses']))
+
+
+def test_known_friction_reduces_lot_before_reserving_instead_of_rejecting_every_trade(monkeypatch):
+    fixed_signal(monkeypatch)
+    data=parallel_data();data['config']['strategy_params']['tp_atr_mult']=4
+    clean=run(data)
+    data.update(adverse_slippage_points=10,commission_per_lot_side=2)
+    stressed=run(data)
+    assert len(clean['open_positions'])==len(stressed['open_positions'])==2
+    assert sum(t['reserved_risk'] for t in stressed['open_positions'])<=100
+    for clean_trade,t in zip(clean['open_positions'],stressed['open_positions']):
+        assert t['volume']<clean_trade['volume']
+        assert t['reserved_risk']<=t['risk_budget']
+        assert t['assumed_net_reward_risk']>=1.5
+        assert t['plan']['estimated_loss']==pytest.approx(t['reserved_risk'])

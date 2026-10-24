@@ -79,3 +79,6 @@ A fixture de navegador inicia pausada, cria e remove seu próprio diário tempor
 
 
 O laboratório permite pesquisar `forex_pullback_retest` com risco multipares, mas essa estratégia experimental não pode ser selecionada para executar ordens. Consulte [Retomada e saídas de pesquisa](FOREX_RETOMADA_SAIDAS.md).
+
+
+`forex_triple_atr` também está integrado ao motor multipares como experimento de conta demo, com o mesmo limite de duas posições e orçamento global. A conta é verificada antes da seleção e de cada nova preparação; monitoramento/reconciliação continuam ativos se houver bloqueio. Consulte [Triplo ATR](FOREX_TRIPLO_ATR.md).

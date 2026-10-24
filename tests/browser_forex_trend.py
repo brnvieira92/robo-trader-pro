@@ -4,6 +4,7 @@ import sys
 from playwright.sync_api import sync_playwright
 
 base=sys.argv[1] if len(sys.argv)>1 else 'http://127.0.0.1:8011'
+strategy=os.environ.get('TRADER_BROWSER_STRATEGY','forex_trend_continuation')
 
 
 def select_strategy(page,value):
@@ -29,9 +30,10 @@ with sync_playwright() as p:
         page.on('request',lambda r:orders.append(r.url) if r.method=='POST' and '/api/order/' in r.url else None)
         page.goto(base,wait_until='networkidle')
         page.wait_for_function('latestState?.config?.forex_multi_enabled')
-        if page.evaluate('latestState.config.strategy_id')!='forex_trend_continuation':
-            select_strategy(page,'forex_trend_continuation')
+        if page.evaluate('latestState.config.strategy_id')!=strategy:
+            select_strategy(page,strategy)
         page.wait_for_function("document.querySelector('#validationLabel').textContent.includes('TÉCNICA')")
+        if strategy=='forex_triple_atr':assert 'Triplo ATR' in page.locator('#validationDetail').text_content()
         assert 'RF não utilizado' in page.locator('#validationDetail').text_content()
         assert page.locator('#scoreUnit').text_content()=='/100'
         assert page.locator('#barSentBuyers').is_hidden()

@@ -7,6 +7,18 @@ from backend.forex_quality import entry_confirmation
 POLICY_VERSION='forex-trend-v1'
 
 
+def confirmed_targets(df,price):
+    """Nearest opposing confirmed pivots; no current/future unconfirmed wick."""
+    w=df.tail(60);highs=w['high'].tolist();lows=w['low'].tolist();supports=[];resistances=[]
+    for i in range(2,len(w)-2):
+        hi=highs[i]>max(highs[i-2:i]+highs[i+1:i+3])
+        lo=lows[i]<min(lows[i-2:i]+lows[i+1:i+3])
+        if hi and not lo and highs[i]>price:resistances.append(float(highs[i]))
+        if lo and not hi and lows[i]<price:supports.append(float(lows[i]))
+    return dict(target_support=max(supports) if supports else None,
+                target_resistance=min(resistances) if resistances else None)
+
+
 def continuation_signal(df,params,atr,pullback_only=False):
     context=entry_confirmation(df,'M1','NEUTRAL',atr)
     trend=context['trend'];side='BUY' if trend=='UP' else 'SELL' if trend=='DOWN' else 'NEUTRAL'
@@ -60,15 +72,8 @@ def continuation_signal(df,params,atr,pullback_only=False):
     stops=df.tail(params.get('trend_stop_lookback',3))
     # Only confirmed pivots strictly ahead can cap an ATR/R target. The latest
     # unconfirmed wick is not automatically treated as an opposing barrier.
-    w=df.tail(60);highs=w['high'].tolist();lows=w['low'].tolist();supports=[];resistances=[]
-    for i in range(2,len(w)-2):
-        hi=highs[i]>max(highs[i-2:i]+highs[i+1:i+3])
-        lo=lows[i]<min(lows[i-2:i]+lows[i+1:i+3])
-        if hi and not lo and highs[i]>price:resistances.append(float(highs[i]))
-        if lo and not hi and lows[i]<price:supports.append(float(lows[i]))
     structure=dict(stop_support=float(stops['low'].min()),stop_resistance=float(stops['high'].max()),
-                   target_support=max(supports) if supports else None,
-                   target_resistance=min(resistances) if resistances else None,
+                   **confirmed_targets(df,price),
                    target_rr_projection=params.get('trend_target_r',2.))
     trigger=('PULLBACK_RETEST' if retrace else None) if pullback_only else ('BREAKOUT' if breakout else 'PULLBACK' if retrace else None)
     return dict(action=side if passed else 'NEUTRAL',score=float(score),structure=structure,

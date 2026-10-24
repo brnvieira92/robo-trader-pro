@@ -16,6 +16,7 @@ from backend.market_data import validate_candles
 from backend.fibonacci import fibonacci_context
 from backend.forex_quality import entry_confirmation, POLICY_VERSION
 from backend.forex_trend import continuation_signal
+from backend.forex_triple_atr import triple_atr_signal
 from backend.config import strategy_requires_ml, FOREX_TECHNICAL_STRATEGIES
 
 
@@ -401,12 +402,16 @@ class StrategyEngine:
             if market_type!='MT5_FOREX' or timeframe!='M1':
                 reason='Continuidade Forex exige MT5 Forex e timeframe M1.'
             else:
-                trend_signal=continuation_signal(df,params,atr,pullback_only=strategy_id=='forex_pullback_retest')
+                trend_signal=(triple_atr_signal(df,params,atr) if strategy_id=='forex_triple_atr' else
+                              continuation_signal(df,params,atr,pullback_only=strategy_id=='forex_pullback_retest'))
                 action,confidence,reason=trend_signal['action'],trend_signal['score'],trend_signal['reason']
                 indicators_snapshot.update(trend_signal['structure'])
                 indicators_snapshot['entry_confirmation']=trend_signal['confirmation']
                 indicators_snapshot['entry_policy_version']=trend_signal['confirmation']['version']
                 indicators_snapshot['score_kind']='technical_rules_not_win_probability'
+                if strategy_id=='forex_triple_atr':
+                    indicators_snapshot['regime']='TENDÊNCIA ATR' if trend_signal['confirmation']['trend'] in ('UP','DOWN') else 'MISTO ATR'
+                    indicators_snapshot['regime_basis']='TRIPLE_ATR_M1_CONSENSUS'
         elif strategy_id == "ml_random_forest":
             p_up = ml_pred["prob_up"]
             p_down = ml_pred["prob_down"]
@@ -442,7 +447,7 @@ class StrategyEngine:
                 reason = "Filtro temporal: " + (ml_pred["reason"] if not ml_pred.get('validated') else f'Estimativa direcional {directional:.1f}% abaixo de 60%.')
 
         indicators_snapshot.setdefault("score_kind", "technical_confluence_not_win_probability")
-        indicators_snapshot["regime"] = ("TENDÊNCIA" if abs(float(curr["ema_fast"])-float(curr["ema_slow"])) / atr > .7 else "LATERAL")
+        indicators_snapshot.setdefault("regime", "TENDÊNCIA" if abs(float(curr["ema_fast"])-float(curr["ema_slow"])) / atr > .7 else "LATERAL")
         indicators_snapshot["atr_pct"] = round(atr / max(price, 1e-9) * 100, 4)
         if float(curr["high"])-float(curr["low"]) > atr * 3:
             action, confidence, reason = "NEUTRAL", 0.0, "Volatilidade extrema: candle acima de 3 ATR."

@@ -82,6 +82,8 @@ LABELS = {
     'TREND_CONTEXT':'Tendência M5 confirmada','TREND_LOCAL':'Alinhamento M1/M5',
     'TREND_TRIGGER':'Rompimento ou retomada de pullback','TREND_CANDLE':'Vela de confirmação',
     'PULLBACK_RETEST':'Correção recente na EMA e retomada confirmada',
+    'ATR_CONSENSUS':'Três stops ATR alinhados','ATR_FRESH_ALIGNMENT':'Novo alinhamento dos stops ATR',
+    'ATR_PRICE_SIDE':'Preço no lado das três linhas ATR','ATR_CANDLE':'Confirmação da vela do alinhamento ATR',
     'TREND_EXTENSION':'Distância máxima à EMA rápida',
     'ML_CLOSED_HISTORY':'Velas fechadas para ML', 'ML_TRAINING_SAMPLES':'Amostras de treinamento',
     'ML_TEST_SAMPLES':'Amostras de validação', 'ML_TRAIN_CLASSES':'Classes no treinamento', 'ML_TEST_CLASSES':'Classes na validação',

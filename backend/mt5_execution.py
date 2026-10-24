@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, ROUND_FLOOR
 from backend.trade_plan import price_plan, goal_limited_budget, TradePlanError
 from backend.portfolio_risk import inspect_portfolio, position_limit, context
-from backend.config import RESEARCH_ONLY_STRATEGIES
+from backend.config import RESEARCH_ONLY_STRATEGIES, DEMO_ONLY_STRATEGIES
 
 ACTIVE_LIVE = {'SUBMITTING', 'PENDING', 'OPEN', 'NEEDS_REVIEW'}
 
@@ -18,6 +18,13 @@ class MT5ExecutionError(ValueError):
 
 class MT5Executor:
     historical_research=False
+    def require_strategy_account(self, config):
+        if config.get('strategy_id') not in DEMO_ONLY_STRATEGIES or self.historical_research:return
+        info=self.sdk.account_info() if self.sdk is not None else None
+        mode=getattr(info,'trade_mode',None)
+        if mode!=getattr(self.sdk,'ACCOUNT_TRADE_MODE_DEMO',0):
+            raise MT5ExecutionError('Triplo ATR experimental exige conta DEMO confirmada pelo MT5; conta real ou tipo desconhecido não pode enviar ordens nessa estratégia.')
+
     def __init__(self, connector, sdk=None):
         if sdk is None:
             from backend.mt5_connector import mt5
@@ -205,6 +212,7 @@ class MT5Executor:
             raise MT5ExecutionError('Estratégia experimental disponível somente no laboratório Forex; nenhuma ordem preparada.')
         sdk = self.sdk
         account = self.account(config['mt5_account_login'], config['mt5_account_server'], trading=True)
+        self.require_strategy_account(config)
         portfolio = None
         if config.get('forex_multi_enabled'):
             positions, orders = sdk.positions_get(), sdk.orders_get()
@@ -330,6 +338,11 @@ class MT5Executor:
         """Called once, only after the SUBMITTING intent has been committed."""
         sdk=self.sdk
         account=self.account(trade['account_login'],trade['account_server'],trading=True)
+        try:
+            self.require_strategy_account({'strategy_id':trade.get('strategy')})
+        except MT5ExecutionError as exc:
+            return dict(status='REJECTED',success=False,pending=False,
+                        message='Envio cancelado antes de order_send: '+str(exc))
         if trade.get('forex_multi'):
             positions, orders = sdk.positions_get(), sdk.orders_get()
             if positions is None or orders is None:

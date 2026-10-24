@@ -113,3 +113,6 @@ Se a API MT5 retornar timestamps de mercado fora de UTC, configure os ajustes ex
 
 
 O laboratório inclui o experimento **Retomada Forex — M1/M5**, com correção recente na EMA e retomada confirmada, independente do RF. Também permite testar proteção no preço de entrada e trailing ATR, com ajustes válidos na próxima vela e reserva inicial preservada. A avaliação inicial da nova entrada foi inferior à Continuidade nos recortes recebidos; ela permanece bloqueada para execução. Veja [regras, resultados e limites](docs/FOREX_RETOMADA_SAIDAS.md).
+
+
+A opção **7. Triplo ATR — experimental** está implementada para execução automática em conta demo e pesquisa. Usa novo alinhamento de três stops ATR, mantém proteções e orçamento, e bloqueia conta real. Não troca a estratégia ativa. A comparação reduziu perdas em parte dos recortes, mas o conjunto com custos permaneceu negativo. Veja [resultados, limitações e regras](docs/FOREX_TRIPLO_ATR.md).

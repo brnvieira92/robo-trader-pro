@@ -1,14 +1,16 @@
 import time
+import pytest
 from threading import Event
 from test_api import client
 from test_forex_research import request_data, fixed_signal
 
 
-def test_experimental_strategy_config_is_rejected_without_mutating_execution(client):
+@pytest.mark.parametrize('strategy',['forex_pullback_retest'])
+def test_experimental_strategy_config_is_rejected_without_mutating_execution(client,strategy):
     import copy
     import backend.main as main
     before=copy.deepcopy(main.bot.config)
-    response=client.post('/api/config',json={'market_type':'MT5_FOREX','strategy_id':'forex_pullback_retest'})
+    response=client.post('/api/config',json={'market_type':'MT5_FOREX','strategy_id':strategy})
     assert response.status_code==409
     assert 'somente no laboratório' in response.json()['detail']
     assert main.bot.config==before and not main.bot.trade_history

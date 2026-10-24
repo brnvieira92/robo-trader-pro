@@ -103,11 +103,14 @@ class ForexBacktestRequest(BaseModel):
 class HistoricalExecutor(MT5Executor):
     """Only prepare() is used. Frozen symbol money values are explicit assumptions."""
     historical_research=True
-    def __init__(self, config, market, bar, balance, currency, portfolio=(), markets=None, equity=None):
+    def __init__(self, config, market, bar, balance, currency, portfolio=(), markets=None, equity=None,
+                 commission_per_lot_side=0.,adverse_slippage_points=0.):
         self.spec=market.specification
         self.bar=bar;self.config=config;self.balance=balance;self.currency=currency
         self.markets=markets or {market.symbol:market}
         self.equity=balance if equity is None else equity
+        self.commission_per_lot_side=commission_per_lot_side
+        self.adverse_slippage_points=adverse_slippage_points
         self.margin=sum(t['volume']*self.markets[t['symbol']].specification.margin_per_lot for t in portfolio)
         positions=[NS(identifier=t['position_id'],ticket=t['position_id'],symbol=t['symbol'],
             type=0 if t['action']=='BUY' else 1,sl=t['stop_loss'],tp=t['take_profit'],
@@ -121,7 +124,7 @@ class HistoricalExecutor(MT5Executor):
             ORDER_FILLING_FOK=0,ORDER_FILLING_IOC=1,TRADE_ACTION_DEAL=1,ORDER_TIME_GTC=0,
             symbol_select=lambda *a:True,symbol_info=lambda *a:info,
             positions_get=lambda **k:tuple(p for p in positions if not k.get('symbol') or p.symbol==k['symbol']),orders_get=lambda **k:(),
-            order_calc_profit=self.profit,order_calc_margin=lambda kind,symbol,volume,price:volume*spec.margin_per_lot,
+            order_calc_profit=self.planning_profit,order_calc_margin=lambda kind,symbol,volume,price:volume*spec.margin_per_lot,
             order_check=lambda request:NS(retcode=0))
 
     def account(self,*args,**kwargs):
@@ -141,6 +144,22 @@ class HistoricalExecutor(MT5Executor):
         result=float(movement/Decimal(str(spec.tick_size))*Decimal(str(value))*Decimal(str(volume)))
         if not math.isfinite(result):raise MT5ExecutionError('Resultado monetário não finito; confira especificação e preços históricos.')
         return result
+
+    def planning_profit(self,kind,symbol,volume,entry,exit):
+        """Price known research friction BEFORE sizing, without altering fills.
+
+        Existing positions have already reserved their own costs. Only the new
+        symbol is surcharged here; portfolio verification retains gross reserves.
+        Settlement always uses raw profit() and actual assumed fills/fees once.
+        """
+        raw=self.profit(kind,symbol,volume,entry,exit)
+        if symbol!=self.config['symbol']:return raw
+        value=self.spec.tick_value_profit if raw>=0 else self.spec.tick_value_loss
+        friction=volume*(2*self.commission_per_lot_side+
+            2*self.adverse_slippage_points*self.spec.point/self.spec.tick_size*value)
+        if raw>0 and raw-friction<=0:
+            raise MT5ExecutionError('Retorno/risco inviável após custos históricos assumidos.')
+        return raw-friction
 
 
 def exit_on_bar(trade, bar, spec, slippage_points):
@@ -296,7 +315,9 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
                     record.update(action='REJECTED');record['blocks'].append('DAILY_ENTRIES');continue
                 cfg={**config,'symbol':symbol}
                 adapter=HistoricalExecutor(cfg,markets[symbol],bar,balance,request.account_currency,
-                    portfolio=positions,markets=markets,equity=equity_at_open(ts))
+                    portfolio=positions,markets=markets,equity=equity_at_open(ts),
+                    commission_per_lot_side=request.commission_per_lot_side,
+                    adverse_slippage_points=request.adverse_slippage_points)
                 try:
                     prepared=adapter.prepare(cfg,signal,max(0,config['stop_loss']+daily[day]),'HISTORICAL',max(0,goal-daily[day]),portfolio_trades=positions)
                 except MT5ExecutionError as exc:
@@ -374,7 +395,8 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
     for trade in [*trades,*positions]:
         for key in ('mode','protected','position_id','account_login','account_server'):
             trade.pop(key,None)
-    return dict(kind='FOREX_SL_TP',version=3,request_hash=digest(request.model_dump()),currency=request.account_currency,
+    return dict(kind='FOREX_SL_TP',version=4,cost_sizing_version='known-friction-before-lot-v1',
+        request_hash=digest(request.model_dump()),currency=request.account_currency,
         config=config,assumptions=request.model_dump(exclude={'markets'}),
         datasets=[dict(symbol=m.symbol,source=m.source,first_time=m.candles[0].time,last_time=m.candles[-1].time,
             candles=len(m.candles),hash=digest(m.model_dump()),specification=m.specification.model_dump(),specification_basis=m.specification_basis) for m in request.markets],
@@ -391,6 +413,7 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
         trades=trades,analyses=analyses,equity_curve=curve,per_pair=per_pair,
         evidence='EXPLORATORY_ONLY' if trades else 'NO_CLOSED_TRADES' if positions else 'NO_TRADES',
         limitations=[
+            'Custos/slippage assumidos entram no cálculo do lote antes da reserva; isso pode alterar resultados de versões anteriores que rejeitavam o lote sem recalculá-lo.',
             'Saídas dinâmicas são pesquisa: ativação pelo fechamento, ajuste válido na próxima vela, reserva original mantida. Não alteram stops do MT5.',
             'OHLC Bid; Ask aproximado pelo spread de cada vela. Sem sequência intravela nem ticks históricos.',
             'SL e TP na mesma vela: stop primeiro. Gaps no stop executam na abertura adversa; gaps favoráveis no TP limitados ao alvo.',

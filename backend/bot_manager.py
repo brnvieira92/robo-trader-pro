@@ -310,13 +310,14 @@ class BotManager:
             payload['paper_balance'] = payload.pop('custom_balance')
         merged = {**self.config, **payload}
         if not clock_only and merged.get('strategy_id') in RESEARCH_ONLY_STRATEGIES:
-            raise ValueError('Retomada após correção é experimental e está disponível somente no laboratório Forex. A configuração de execução foi preservada.')
+            raise ValueError('Estratégia experimental disponível somente no laboratório Forex. A configuração de execução foi preservada.')
         if 'strategy_params' in payload:
             merged['strategy_params'] = {**self.config['strategy_params'], **payload['strategy_params']}
         if merged.get('execution_mode')=='LIVE_MT5':
             if merged.get('market_type')=='SAFIRION_OB':
                 raise ValueError('Selecione MT5 B3 ou Forex antes de ativar envio ao terminal.')
             account=self.live.account(self.config['mt5_account_login'],self.config['mt5_account_server'],trading=True) if self.config['execution_mode']=='LIVE_MT5' else self.live.account(trading=True)
+            self.live.require_strategy_account(merged)
             merged['mt5_account_login']=account['login']
             merged['mt5_account_server']=account['server']
         validated = TradingConfig.model_validate(merged).model_dump()
@@ -390,6 +391,7 @@ class BotManager:
         if self.config['execution_mode']=='LIVE_MT5':
             try:
                 self.live.account(self.config['mt5_account_login'],self.config['mt5_account_server'],trading=True)
+                self.live.require_strategy_account(self.config)
             except MT5ExecutionError as exc:
                 return str(exc)
         if self.stats['daily_pnl'] <= -self.config['stop_loss']:
