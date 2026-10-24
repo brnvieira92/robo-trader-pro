@@ -16,7 +16,7 @@ from backend.market_data import validate_candles
 from backend.fibonacci import fibonacci_context
 from backend.forex_quality import entry_confirmation, POLICY_VERSION
 from backend.forex_trend import continuation_signal
-from backend.config import strategy_requires_ml
+from backend.config import strategy_requires_ml, FOREX_TECHNICAL_STRATEGIES
 
 
 @dataclass
@@ -145,7 +145,7 @@ class StrategyEngine:
 
         # Executa o motor de Machine Learning (Random Forest scikit-learn) nas velas enriquecidas
         quality_enabled=market_type=='MT5_FOREX' and strategy_id=='ml_random_forest'
-        if strategy_id=='forex_trend_continuation':
+        if strategy_id in FOREX_TECHNICAL_STRATEGIES:
             ml_pred=dict(enabled=False,validated=False,prob_up=50.,prob_down=50.,ml_action='NEUTRAL',
                          ml_confidence=0.,accuracy=0.,samples=0,current_features=[],
                          reason='Estratégia técnica independente; RF não utilizado.',not_applicable=True)
@@ -397,15 +397,15 @@ class StrategyEngine:
         # -------------------------------------------------------------------------
         # ESTRATÉGIA 5: Inteligência Artificial Pura (Machine Learning Random Forest)
         # -------------------------------------------------------------------------
-        elif strategy_id=='forex_trend_continuation':
+        elif strategy_id in FOREX_TECHNICAL_STRATEGIES:
             if market_type!='MT5_FOREX' or timeframe!='M1':
                 reason='Continuidade Forex exige MT5 Forex e timeframe M1.'
             else:
-                trend_signal=continuation_signal(df,params,atr)
+                trend_signal=continuation_signal(df,params,atr,pullback_only=strategy_id=='forex_pullback_retest')
                 action,confidence,reason=trend_signal['action'],trend_signal['score'],trend_signal['reason']
                 indicators_snapshot.update(trend_signal['structure'])
                 indicators_snapshot['entry_confirmation']=trend_signal['confirmation']
-                indicators_snapshot['entry_policy_version']='forex-trend-v1'
+                indicators_snapshot['entry_policy_version']=trend_signal['confirmation']['version']
                 indicators_snapshot['score_kind']='technical_rules_not_win_probability'
         elif strategy_id == "ml_random_forest":
             p_up = ml_pred["prob_up"]

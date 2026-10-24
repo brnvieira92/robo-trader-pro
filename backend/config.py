@@ -2,10 +2,13 @@
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-STRATEGIES = Literal['bollinger_rsi_reversal', 'ema_rsi_crossover', 'price_action_breakout', 'multi_confluence', 'ml_random_forest', 'forex_trend_continuation']
+STRATEGIES = Literal['bollinger_rsi_reversal', 'ema_rsi_crossover', 'price_action_breakout', 'multi_confluence', 'ml_random_forest', 'forex_trend_continuation', 'forex_pullback_retest']
+
+FOREX_TECHNICAL_STRATEGIES=('forex_trend_continuation','forex_pullback_retest')
+RESEARCH_ONLY_STRATEGIES=('forex_pullback_retest',)
 
 def strategy_requires_ml(strategy_id,params):
-    return strategy_id!='forex_trend_continuation' and (strategy_id=='ml_random_forest' or params.get('use_ml_filter',True))
+    return strategy_id not in FOREX_TECHNICAL_STRATEGIES and (strategy_id=='ml_random_forest' or params.get('use_ml_filter',True))
 
 class StrategyParams(BaseModel):
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
@@ -92,15 +95,15 @@ class TradingConfig(BaseModel):
 
     @model_validator(mode='after')
     def native_execution_market(self):
-        if self.strategy_id=='forex_trend_continuation' and (self.market_type!='MT5_FOREX' or self.timeframe!='M1' or self.min_confidence<78):
-            raise ValueError('Continuidade Forex exige MT5 Forex, M1 e score técnico mínimo de 78.')
+        if self.strategy_id in FOREX_TECHNICAL_STRATEGIES and (self.market_type!='MT5_FOREX' or self.timeframe!='M1' or self.min_confidence<78):
+            raise ValueError('Estratégias técnicas Forex exigem MT5 Forex, M1 e score técnico mínimo de 78.')
         if len({p.pair for p in self.forex_pairs}) != len(self.forex_pairs) or len({p.symbol for p in self.forex_pairs}) != len(self.forex_pairs):
             raise ValueError('Pares e símbolos exatos devem ser únicos.')
         if self.forex_multi_enabled:
             if self.market_type != 'MT5_FOREX' or self.execution_mode != 'LIVE_MT5':
                 raise ValueError('Motor multipares exige MT5 Forex com conta vinculada; PAPER continua no modo individual.')
-            if self.strategy_id not in ('ml_random_forest','forex_trend_continuation') or self.min_confidence < 78 or (self.strategy_id=='ml_random_forest' and not self.strategy_params.use_ml_filter):
-                raise ValueError('Multipares exige RF com filtro ML, ou Continuidade Forex, e score mínimo de 78.')
+            if self.strategy_id not in ('ml_random_forest',*FOREX_TECHNICAL_STRATEGIES) or self.min_confidence < 78 or (self.strategy_id=='ml_random_forest' and not self.strategy_params.use_ml_filter):
+                raise ValueError('Multipares exige RF com filtro ML, ou estratégia técnica Forex, e score mínimo de 78.')
             if not any(p.enabled for p in self.forex_pairs):
                 raise ValueError('Selecione pelo menos um par para monitorar.')
             if self.symbol not in [p.symbol for p in self.forex_pairs if p.enabled]:

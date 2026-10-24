@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, ROUND_FLOOR
 from backend.trade_plan import price_plan, goal_limited_budget, TradePlanError
 from backend.portfolio_risk import inspect_portfolio, position_limit, context
+from backend.config import RESEARCH_ONLY_STRATEGIES
 
 ACTIVE_LIVE = {'SUBMITTING', 'PENDING', 'OPEN', 'NEEDS_REVIEW'}
 
@@ -16,6 +17,7 @@ class MT5ExecutionError(ValueError):
     pass
 
 class MT5Executor:
+    historical_research=False
     def __init__(self, connector, sdk=None):
         if sdk is None:
             from backend.mt5_connector import mt5
@@ -199,6 +201,8 @@ class MT5Executor:
         raise MT5ExecutionError('O símbolo de conversão não corresponde à moeda da conta/BRL.')
 
     def prepare(self, config, signal, remaining_loss_budget, client_tag, remaining_goal_account=None, portfolio_trades=None):
+        if config.get('strategy_id') in RESEARCH_ONLY_STRATEGIES and not self.historical_research:
+            raise MT5ExecutionError('Estratégia experimental disponível somente no laboratório Forex; nenhuma ordem preparada.')
         sdk = self.sdk
         account = self.account(config['mt5_account_login'], config['mt5_account_server'], trading=True)
         portfolio = None

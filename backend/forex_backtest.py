@@ -12,13 +12,14 @@ from typing import Literal
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from backend.backtest import Candle
-from backend.config import TradingConfig, strategy_requires_ml
+from backend.config import TradingConfig, strategy_requires_ml, FOREX_TECHNICAL_STRATEGIES
 from backend.diagnostics import digest, preflight_code
 from backend.ml_engine import MLEngine
 from backend.mt5_execution import MT5Executor, MT5ExecutionError
 from backend.strategies import StrategyEngine
 from backend.portfolio_risk import position_limit
 from backend.forex_statistics import financial_breakdown
+from backend.forex_exit_research import ResearchExitManagement, update_research_stop
 
 
 class HistoricalBar(Candle):
@@ -66,6 +67,7 @@ class ForexBacktestRequest(BaseModel):
     swap_cost_per_lot_utc_day: float = Field(0,ge=0,le=10000)
     goal_fx_account_per_brl: float | None = Field(None,gt=0,le=1000000)
     captured_at: float | None = Field(None,ge=0)
+    exit_management: ResearchExitManagement = Field(default_factory=ResearchExitManagement)
     assumptions_acknowledged: Literal[True]
 
     @model_validator(mode='before')
@@ -81,8 +83,8 @@ class ForexBacktestRequest(BaseModel):
     def consistency(self):
         c=self.config
         if c.market_type!='MT5_FOREX': raise ValueError('Este laboratório aceita somente Forex.')
-        if c.strategy_id not in ('ml_random_forest','forex_trend_continuation') or c.min_confidence<78 or (c.strategy_id=='ml_random_forest' and not c.strategy_params.use_ml_filter):
-            raise ValueError('Use RF com filtro ML, ou Continuidade Forex, e score mínimo de 78.')
+        if c.strategy_id not in ('ml_random_forest',*FOREX_TECHNICAL_STRATEGIES) or c.min_confidence<78 or (c.strategy_id=='ml_random_forest' and not c.strategy_params.use_ml_filter):
+            raise ValueError('Use RF com filtro ML, ou estratégia técnica Forex, e score mínimo de 78.')
         symbols=[m.symbol for m in self.markets]
         if len(set(symbols))!=len(symbols): raise ValueError('Símbolos duplicados no histórico.')
         selected=[p.symbol for p in c.forex_pairs if p.enabled] if c.forex_multi_enabled else [c.symbol]
@@ -100,6 +102,7 @@ class ForexBacktestRequest(BaseModel):
 
 class HistoricalExecutor(MT5Executor):
     """Only prepare() is used. Frozen symbol money values are explicit assumptions."""
+    historical_research=True
     def __init__(self, config, market, bar, balance, currency, portfolio=(), markets=None, equity=None):
         self.spec=market.specification
         self.bar=bar;self.config=config;self.balance=balance;self.currency=currency
@@ -189,7 +192,7 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
         moves=[direction*(price-trade['entry_price']) for price in prices]
         trade['sampled_mfe_price']=max(trade['sampled_mfe_price'],max(moves))
         trade['sampled_mae_price']=max(trade['sampled_mae_price'],-min(moves))
-        risk=abs(trade['entry_price']-trade['stop_loss'])
+        risk=trade['initial_risk_distance']
         trade['sampled_mfe_r']=trade['sampled_mfe_price']/risk
         trade['sampled_mae_r']=trade['sampled_mae_price']/risk
 
@@ -237,7 +240,7 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
                 observe(position,[mark])
                 result=exit_on_bar(position,current,markets[position['symbol']].specification,request.adverse_slippage_points)
                 if result and result[1].startswith('GAP_'):settle(position,*result,ts)
-        candidates=[]
+        candidates=[];available_atr={}
         for symbol in order:
             bar=bars[symbol].get(ts)
             history=frames[symbol]
@@ -248,6 +251,7 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
                 {**config['strategy_params'],'data_source':'HISTORICAL_FOREX'},model_engine=engines[symbol],
                 model_context=model_context).to_dict()
             ml=signal.get('indicators',{}).get('ml_validation',{})
+            available_atr[symbol]=float(signal.get('indicators',{}).get('atr',0))
             blocks=[]
             if not bar:blocks.append('BAR_MISSING')
             if len(history)<50:blocks.append('HISTORY')
@@ -322,6 +326,8 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
                     account_login=prepared['account']['login'],account_server=prepared['account']['server'],
                     filled_volume=prepared['volume'],reserved_risk=risk,cost_buffer=config['mt5_cost_buffer']+2*fee,
                     quoted_entry=prepared['price'],entry_time=ts,entry_bar=ts,stop_loss=prepared['stop_loss'],take_profit=prepared['take_profit'],
+                    initial_stop_loss=prepared['stop_loss'],initial_risk_distance=abs(entry-prepared['stop_loss']),
+                    cost_buffer_configured=config['mt5_cost_buffer'],stop_updates=[],exit_management_activated=False,
                     entry_commission=fee,swap_cost=0,last_swap_time=ts,risk_budget=prepared['risk_budget'],
                     estimated_risk=risk,plan=prepared['plan'],entry_diagnostics=prepared['entry_diagnostics'],status='OPEN',signal_bar=signal['bar_time'],
                     entry_policy_version=record['entry_policy_version'],entry_confirmation=record['entry_confirmation'],
@@ -346,6 +352,8 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
                     pnl=model.profit(0 if position['action']=='BUY' else 1,symbol,position['volume'],position['entry_price'],mark)
                     floating+=pnl
                     position['mark_price']=mark;position['floating_pnl']=pnl
+                    update_research_stop(position,bar,markets[symbol].specification,available_atr.get(symbol,0),
+                        request.exit_management,request.commission_per_lot_side,request.adverse_slippage_points,ts+step)
             else:floating+=position.get('floating_pnl',0)
         equity=balance+floating;peak=max(peak,equity);drawdown=max(drawdown,peak-equity);drawdown_pct=max(drawdown_pct,(peak-equity)/peak*100)
         curve.append(dict(time=ts+step,balance=round(balance,8),equity=round(equity,8),open_positions=len(positions),
@@ -357,7 +365,7 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
     for symbol in order:
         observations=[a for a in analyses if a['symbol']==symbol];closed=[t for t in trades if t['symbol']==symbol]
         per_pair.append(dict(symbol=symbol,analyses=len(observations),validated=sum(a['validation'].get('validated',False) for a in observations),
-            validation_kind='TECHNICAL_RULES' if config['strategy_id']=='forex_trend_continuation' else 'ML',
+            validation_kind='TECHNICAL_RULES' if config['strategy_id'] in FOREX_TECHNICAL_STRATEGIES else 'ML',
             technical_qualified=sum(a['signal'] in ('BUY','SELL') and a['score']>=config['min_confidence'] for a in observations),
             entries=sum(a['action']=='ENTERED' for a in observations),closed_trades=len(closed),net_pnl=sum(t['net_pnl'] for t in closed),
             blocks=dict(Counter(code for a in observations for code in a['blocks']))))
@@ -366,12 +374,13 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
     for trade in [*trades,*positions]:
         for key in ('mode','protected','position_id','account_login','account_server'):
             trade.pop(key,None)
-    return dict(kind='FOREX_SL_TP',version=2,request_hash=digest(request.model_dump()),currency=request.account_currency,
+    return dict(kind='FOREX_SL_TP',version=3,request_hash=digest(request.model_dump()),currency=request.account_currency,
         config=config,assumptions=request.model_dump(exclude={'markets'}),
         datasets=[dict(symbol=m.symbol,source=m.source,first_time=m.candles[0].time,last_time=m.candles[-1].time,
             candles=len(m.candles),hash=digest(m.model_dump()),specification=m.specification.model_dump(),specification_basis=m.specification_basis) for m in request.markets],
         evaluated_bars=len(timeline),start=timeline[0],end=timeline[-1]+step,closed_trades=len(trades),
         wins=sum(t['status']=='WIN' for t in trades),losses=sum(t['status']=='LOSS' for t in trades),
+        draws=sum(t['status']=='DRAW' for t in trades),
         realized_pnl=round(balance-request.initial_balance,8),closed_trade_net_pnl=round(sum(t['net_pnl'] for t in trades),8),
         ending_balance=round(balance,8),ending_equity=curve[-1]['equity'],max_drawdown=round(drawdown,8),max_drawdown_pct=round(drawdown_pct,6),
         win_rate=round(sum(t['status']=='WIN' for t in trades)/len(trades)*100,4) if trades else None,
@@ -382,6 +391,7 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
         trades=trades,analyses=analyses,equity_curve=curve,per_pair=per_pair,
         evidence='EXPLORATORY_ONLY' if trades else 'NO_CLOSED_TRADES' if positions else 'NO_TRADES',
         limitations=[
+            'Saídas dinâmicas são pesquisa: ativação pelo fechamento, ajuste válido na próxima vela, reserva original mantida. Não alteram stops do MT5.',
             'OHLC Bid; Ask aproximado pelo spread de cada vela. Sem sequência intravela nem ticks históricos.',
             'SL e TP na mesma vela: stop primeiro. Gaps no stop executam na abertura adversa; gaps favoráveis no TP limitados ao alvo.',
             'Sem expiração. Posição aberta no fim permanece aberta; não vira lucro realizado.',

@@ -35,7 +35,7 @@ def pair_report(journal, start, end, mode, login=None, server=None):
             gates={g['code']:g['status'] for g in p.get('checks',[]) if not g.get('informational')}
             validated+=int(gates.get('ML_VALIDATED')=='PASS')
             score_pass+=int(gates.get('MIN_CONFIDENCE')=='PASS')
-            required=('SIGNAL_DIRECTION','MIN_CONFIDENCE','VOLATILITY') if p.get('entry_policy_version')=='forex-trend-v1' else ('ML_VALIDATED','SIGNAL_DIRECTION','MIN_CONFIDENCE','VOLATILITY')
+            required=('SIGNAL_DIRECTION','MIN_CONFIDENCE','VOLATILITY') if p.get('entry_policy_version') in ('forex-trend-v1','forex-pullback-v1') else ('ML_VALIDATED','SIGNAL_DIRECTION','MIN_CONFIDENCE','VOLATILITY')
             qualified+=int(all(gates.get(k)=='PASS' for k in required))
             candidates+=int(bool(gates) and all(g!='FAIL' for g in gates.values()) and gates.get('AUTOMATION_REQUESTED')=='PASS'
                 and p.get('latest_code') in ('CANDIDATE','CANDIDATO') and not p.get('blocked_reason',p.get('first_block')))

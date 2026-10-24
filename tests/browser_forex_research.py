@@ -31,15 +31,21 @@ with sync_playwright() as p:
         assert capture.value.ok,capture.value.text()
         page.wait_for_function("forexDataset?.markets?.length===4")
         assert page.evaluate('forexDataset.config.forex_max_open_positions')==2
-        page.locator('#forexResearchStrategy').select_option('forex_trend_continuation')
+        page.locator('#forexResearchStrategy').select_option('forex_pullback_retest')
+        page.locator('#forexExitMode').select_option('BREAK_EVEN_ATR')
         page.locator('#forexResearchSlots').select_option('2')
         page.locator('#forexEvaluatedBars').fill('2')
         page.locator('#forexAssumptions').check()
         with page.expect_response('**/api/research/forex/jobs') as started:
             page.locator('#forexResearchRun').click()
         assert started.value.status==202,started.value.text()
+        submitted=started.value.request.post_data_json
+        assert submitted['config']['strategy_id']=='forex_pullback_retest'
+        assert submitted['exit_management']['mode']=='BREAK_EVEN_ATR'
         page.wait_for_function("document.querySelector('#forexResearchOutput').textContent.includes('Backtest Forex •')",timeout=60000)
         assert 'SEM OPERAÇÕES' in page.locator('#forexResearchOutput').inner_text()
+        assert 'Proteção + trailing ATR' in page.locator('#forexResearchOutput').inner_text()
+        assert 'Retomada após correção' in page.locator('#forexResearchOutput').inner_text()
         assert 'Limite global: 2' in page.locator('#forexResearchOutput').inner_text()
         assert 'Diagnóstico financeiro por grupo' in page.locator('#forexResearchOutput').inner_text()
         assert page.evaluate('latestState.config.forex_max_open_positions')==2

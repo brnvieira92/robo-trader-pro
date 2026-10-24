@@ -110,3 +110,6 @@ Os testes cobrem separação temporal, ausência de dados futuros, RSI, estimati
 Para verificar a interface Forex em um servidor isolado PAPER: `python tests/browser_forex.py http://127.0.0.1:8001`. Esse roteiro altera apenas a configuração do servidor de teste, abre e encerra posições virtuais e usa parâmetros permissivos para testar a interface; não valida a estratégia.
 
 Se a API MT5 retornar timestamps de mercado fora de UTC, configure os ajustes explícitos e independentes de tick e velas em **Limites específicos do MT5**, após conferir os horários brutos no diagnóstico. O padrão é zero; consulte [o procedimento de normalização](docs/MT5_TELEGRAM.md#api-retorna-tick-cerca-de-três-horas-no-futuro).
+
+
+O laboratório inclui o experimento **Retomada Forex — M1/M5**, com correção recente na EMA e retomada confirmada, independente do RF. Também permite testar proteção no preço de entrada e trailing ATR, com ajustes válidos na próxima vela e reserva inicial preservada. A avaliação inicial da nova entrada foi inferior à Continuidade nos recortes recebidos; ela permanece bloqueada para execução. Veja [regras, resultados e limites](docs/FOREX_RETOMADA_SAIDAS.md).

@@ -76,3 +76,6 @@ PYTHONPATH=. .venv/bin/python tests/multi_browser_server.py
 ```
 
 A fixture de navegador inicia pausada, cria e remove seu próprio diário temporário e impede `order_send`. Não use o teste de seleção de configuração contra sua instalação operacional.
+
+
+O laboratório permite pesquisar `forex_pullback_retest` com risco multipares, mas essa estratégia experimental não pode ser selecionada para executar ordens. Consulte [Retomada e saídas de pesquisa](FOREX_RETOMADA_SAIDAS.md).

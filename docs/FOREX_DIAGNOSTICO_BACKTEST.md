@@ -128,3 +128,8 @@ Na execução MT5, `sampled_excursions` passa a registrar cotações de encerram
 A interface permite escolher **Estratégia somente da pesquisa** e **Posições somente da pesquisa**. Uma cópia da configuração é enviada ao laboratório; a base original e a configuração de execução ficam preservadas. Compare os mesmos períodos e custos, baixe cada resultado e reserve outra base para confirmação. Escolher a pesquisa Continuidade não inicia nem seleciona essa estratégia no robô.
 
 Na reavaliação exploratória de 23/10/2026 da base de 20/10 previamente enviada (quatro pares, últimos 100 minutos, duas vagas, comissão e swap hipoteticamente zero), a Continuidade apresentou 16 sinais técnicos qualificados. Sem slippage assumido, três entradas, duas perdas encerradas com PnL realizado de -15,04 USD e uma posição aberta. Com dois pontos adversos por preenchimento, três candidatos foram recusados na reserva de risco após custos; os demais sinais já falhavam em outras pré-validações, resultando em zero entradas. O RF apresentou zero entradas nesse recorte. Essa amostra curta e a forte sensibilidade às hipóteses não demonstram vantagem financeira. O veto por custos assumidos pertence ao laboratório e não altera os filtros da execução MT5.
+
+
+## Pesquisa de retomada e proteção dinâmica
+
+O laboratório aceita também `forex_pullback_retest` e um campo `exit_management` fora da configuração ativa. As saídas disponíveis são FIXED, BREAK_EVEN, ATR_TRAILING e BREAK_EVEN_ATR. O padrão FIXED preserva as bases antigas. Os ajustes usam fechamento conhecido, passam a valer na próxima vela e mantêm o risco inicial reservado. Não há modificação de stops no terminal por essa pesquisa. Veja [regras completas e limites](FOREX_RETOMADA_SAIDAS.md).

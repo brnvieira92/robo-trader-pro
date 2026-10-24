@@ -4,6 +4,16 @@ from test_api import client
 from test_forex_research import request_data, fixed_signal
 
 
+def test_experimental_strategy_config_is_rejected_without_mutating_execution(client):
+    import copy
+    import backend.main as main
+    before=copy.deepcopy(main.bot.config)
+    response=client.post('/api/config',json={'market_type':'MT5_FOREX','strategy_id':'forex_pullback_retest'})
+    assert response.status_code==409
+    assert 'somente no laboratório' in response.json()['detail']
+    assert main.bot.config==before and not main.bot.trade_history
+
+
 def test_background_job_exports_persistence_and_trade_isolation(client,monkeypatch):
     import backend.main as main
     from backend.forex_backtest import run_forex_backtest
@@ -14,7 +24,8 @@ def test_background_job_exports_persistence_and_trade_isolation(client,monkeypat
         return run_forex_backtest(request,progress)
     monkeypatch.setattr(main,'run_forex_backtest',slow)
     before=main.bot.config.copy()
-    response=client.post('/api/research/forex/jobs',json=request_data())
+    payload=request_data();payload['exit_management']=dict(mode='BREAK_EVEN_ATR',activation_r=1,trailing_atr_mult=2)
+    response=client.post('/api/research/forex/jobs',json=payload)
     assert response.status_code==202
     job_id=response.json()['id'];assert started.wait(5)
     try:
@@ -31,6 +42,7 @@ def test_background_job_exports_persistence_and_trade_isolation(client,monkeypat
     assert result['state']=='DONE' and latest['id']==job_id
     assert main.bot.config==before and not main.bot.trade_history and not main.bot.is_running
     assert result['result']['kind']=='FOREX_SL_TP'
+    assert result['result']['assumptions']['exit_management']['mode']=='BREAK_EVEN_ATR'
     for kind in ('json','analyses','trades'):
         res=client.get(f'/api/research/forex/jobs/{job_id}/export?kind={kind}')
         assert res.status_code==200 and 'attachment' in res.headers['content-disposition']

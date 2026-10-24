@@ -7,7 +7,7 @@ from backend.forex_quality import entry_confirmation
 POLICY_VERSION='forex-trend-v1'
 
 
-def continuation_signal(df,params,atr):
+def continuation_signal(df,params,atr,pullback_only=False):
     context=entry_confirmation(df,'M1','NEUTRAL',atr)
     trend=context['trend'];side='BUY' if trend=='UP' else 'SELL' if trend=='DOWN' else 'NEUTRAL'
     current=df.iloc[-1];prev=df.iloc[-2];price=float(current['close'])
@@ -24,6 +24,17 @@ def continuation_signal(df,params,atr):
         touched=bool(((pullback['high']>=pullback['ema_fast']-.15*atr)&(pullback['close']>pullback['open'])).any())
         resumed=price<float(prev['low']) and price<fast
     retrace=side!='NEUTRAL' and touched and resumed
+    if pullback_only:
+        # A correction must be the immediately PREVIOUS closed candle, actually
+        # intersect the EMA zone and preserve the slow EMA structure. An old
+        # correction somewhere in the last three candles cannot authorize a
+        # fresh breakout. All conditions are mirrored for SELL.
+        previous_fast=float(prev['ema_fast']);previous_slow=float(prev['ema_slow'])
+        zone_touched=float(prev['low'])<=previous_fast+.15*atr and float(prev['high'])>=previous_fast-.15*atr
+        correction=direction*(float(prev['close'])-float(prev['open']))<0
+        held=direction*(float(prev['close'])-previous_slow)>=-.15*atr
+        resumed=direction*(price-float(prev['high'] if side=='BUY' else prev['low']))>.05*atr and direction*(price-fast)>0
+        retrace=side!='NEUTRAL' and zone_touched and correction and held and resumed
     span=float(current['high']-current['low'])
     close_position=(price-float(current['low']))/span if span>0 else .5
     candle=side!='NEUTRAL' and direction*(price-float(current['open']))>0 and (close_position>=.6 if side=='BUY' else close_position<=.4)
@@ -36,6 +47,11 @@ def continuation_signal(df,params,atr):
             dict(code='TREND_EXTENSION',passed=extension<=params.get('trend_max_extension_atr',1.5),observed=extension,required=params.get('trend_max_extension_atr',1.5),reason='Preço esticado em relação à EMA rápida; não perseguir entrada.')]
     for check in checks:
         if check['passed']:check['reason']=''
+    if pullback_only:
+        checks[2]=dict(code='PULLBACK_RETEST',passed=retrace,
+            observed=dict(zone_touched=zone_touched,correction=correction,structure_held=held,resumed=resumed),
+            required='Correção na vela anterior toca EMA rápida, preserva EMA lenta e tem retomada confirmada.',
+            reason='' if retrace else 'Aguardando correção recente na EMA e retomada; rompimento isolado não autoriza entrada.')
     passed=all(check['passed'] for check in checks)
     # Mandatory structure/context/trigger/candle = 80; optional evidence = 20.
     rsi=float(current['rsi']);momentum=(50<=rsi<=75) if side=='BUY' else (25<=rsi<=50)
@@ -54,9 +70,11 @@ def continuation_signal(df,params,atr):
                    target_support=max(supports) if supports else None,
                    target_resistance=min(resistances) if resistances else None,
                    target_rr_projection=params.get('trend_target_r',2.))
+    trigger=('PULLBACK_RETEST' if retrace else None) if pullback_only else ('BREAKOUT' if breakout else 'PULLBACK' if retrace else None)
     return dict(action=side if passed else 'NEUTRAL',score=float(score),structure=structure,
-                reason=(f"Continuidade {side}: {'rompimento' if breakout else 'retomada de pullback'} M1 alinhado ao M5; score técnico {score}/100." if passed else
+                reason=((f"Retomada após correção {side}: {trigger} M1 alinhado ao M5; score técnico {score}/100." if pullback_only else
+                         f"Continuidade {side}: {'rompimento' if breakout else 'retomada de pullback'} M1 alinhado ao M5; score técnico {score}/100.") if passed else
                         ' '.join(check['reason'] for check in checks if not check['passed'])),
-                confirmation={**context,'version':POLICY_VERSION,'checked_action':side,'passed':passed,'checks':checks,
-                              'trigger':'BREAKOUT' if breakout else 'PULLBACK' if retrace else None,
+                confirmation={**context,'version':'forex-pullback-v1' if pullback_only else POLICY_VERSION,'checked_action':side,'passed':passed,'checks':checks,
+                              'trigger':trigger,
                               'score_components':dict(mandatory=80 if passed else 0,rsi=10 if passed and momentum else 0,close_strength=10 if passed and strong_close else 0)})

@@ -4,6 +4,7 @@ A daily objective caps exposure; it never manufactures a signal or increases
 position size to recover losses. Price plans are estimates, not win probabilities.
 """
 import math
+from backend.config import FOREX_TECHNICAL_STRATEGIES
 from decimal import Decimal, ROUND_FLOOR, ROUND_CEILING
 
 class TradePlanError(ValueError):
@@ -46,7 +47,7 @@ def price_plan(config, signal, entry, min_stop_distance=0., min_target_distance=
         raise TradePlanError('Stop estrutural distante demais para a volatilidade atual; entrada descartada.')
     target_distance=max(atr*p['tp_atr_mult'],float(min_target_distance))
     target_basis='projeção ATR (não é resistência/suporte confirmado)'
-    if config.get('strategy_id')=='forex_trend_continuation':
+    if config.get('strategy_id') in FOREX_TECHNICAL_STRATEGIES:
         target_r=float(p.get('trend_target_r',2.))
         target_distance=max(target_distance,stop_distance*target_r)
         target_basis=f'projeção ATR / {target_r:g}R (não é alvo confirmado)'

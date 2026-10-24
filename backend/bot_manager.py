@@ -11,7 +11,7 @@ import hashlib
 import time
 import copy
 import pandas as pd
-from backend.config import TradingConfig, strategy_requires_ml
+from backend.config import TradingConfig, strategy_requires_ml, RESEARCH_ONLY_STRATEGIES
 from backend.diagnostics import DiagnosticRecorder, RecoveryState, analysis_event, digest, preflight_code
 from backend.journal import PaperJournal
 from backend.market_data import validate_candles
@@ -309,6 +309,8 @@ class BotManager:
         if 'custom_balance' in payload:
             payload['paper_balance'] = payload.pop('custom_balance')
         merged = {**self.config, **payload}
+        if not clock_only and merged.get('strategy_id') in RESEARCH_ONLY_STRATEGIES:
+            raise ValueError('Retomada após correção é experimental e está disponível somente no laboratório Forex. A configuração de execução foi preservada.')
         if 'strategy_params' in payload:
             merged['strategy_params'] = {**self.config['strategy_params'], **payload['strategy_params']}
         if merged.get('execution_mode')=='LIVE_MT5':
@@ -373,6 +375,8 @@ class BotManager:
         return amount, f"{'RISCO ATÉ SL' if live else 'PAPER'} {amount:.2f} {currency} • limite {self.config['risk_per_trade_pct']}% • sem progressão"
 
     def _risk_block(self, signal=None, manual=False):
+        if self.config.get('strategy_id') in RESEARCH_ONLY_STRATEGIES:
+            return 'Estratégia experimental disponível somente no laboratório Forex; execução de ordens bloqueada.'
         if self._mt5_busy:
             return 'MT5 processando consulta/envio; aguarde a confirmação.'
         if position_limit(self.config) > 1:
