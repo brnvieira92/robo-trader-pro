@@ -8,13 +8,18 @@ from typing import Dict, Any, List, Optional
 import math
 import uuid
 import hashlib
+import time
+import copy
 import pandas as pd
-from backend.config import TradingConfig
+from backend.config import TradingConfig, strategy_requires_ml, RESEARCH_ONLY_STRATEGIES
+from backend.diagnostics import DiagnosticRecorder, RecoveryState, analysis_event, digest, preflight_code
 from backend.journal import PaperJournal
 from backend.market_data import validate_candles
 from backend.mt5_execution import MT5Executor, MT5ExecutionError, ACTIVE_LIVE
+from backend.portfolio_risk import position_limit, active_trades, reserved_risk, global_budget, local_block, context
 from backend.telegram_bot import TelegramBot
 from backend.trade_plan import price_plan, goal_limited_budget, TradePlanError
+from backend.trade_diagnostics import observe_exit_quote
 
 from backend.strategies import StrategyEngine, SignalResult
 from backend.mt5_connector import MT5Connector
@@ -30,6 +35,12 @@ class BotManager:
 
         self.is_running = False
         self.journal = PaperJournal()
+        self.audit = DiagnosticRecorder(self.journal)
+        self.recovery = RecoveryState()
+        self._pending_trade_saves = {}
+        self._intent_uncertain = False
+        self._notification_failure = False
+        self._pending_notifications = {}
         self.config = TradingConfig.model_validate(self.journal.load_config() or {}).model_dump()
         self.mt5.configure_time(self.config)
         self.mt5.connect(use_simulation_if_unavailable=self.config['execution_mode']=='PAPER')
@@ -37,6 +48,7 @@ class BotManager:
         self._order_lock = asyncio.Lock()
         self._mt5_busy=False
         self._last_snapshot=None
+        self._multi = None
         self._last_signal_bar = None
         self._settlement_tasks = set()
 
@@ -85,6 +97,21 @@ class BotManager:
         result=[]
         for t in self.journal.all_trades():
             tmode=t.get('mode','PAPER')
+            if tmode == 'LIVE_MT5' and t.get('deals') and t.get('deal_times_version') != 1:
+                same_account = (t.get('account_login'), t.get('account_server')) == (self.config['mt5_account_login'], self.config['mt5_account_server'])
+                try:
+                    normalized = MT5Executor.normalize_trade_times(t, self.config.get('mt5_deal_time_offset_minutes') if same_account else None)
+                except MT5ExecutionError as exc:
+                    # Preserve an unprovable legacy timestamp, never guess or
+                    # overwrite its financial result. New sync requires proof.
+                    t['deal_time_warning'] = str(exc)
+                else:
+                    t.update(normalized)
+                    t.pop('deal_time_warning', None)
+                    try:
+                        self.journal.save(t)
+                    except Exception:
+                        self._pending_trade_saves[t['id']] = t
             pending=(tmode=='LIVE_MT5' and t['status'] in ACTIVE_LIVE) or (tmode=='PAPER' and t['status']=='OPEN' and t.get('exit_policy')=='SL_TP')
             if tmode!=mode and not pending:
                 continue
@@ -121,11 +148,34 @@ class BotManager:
         c=self.config
         account=f"{c['mt5_account_login']} / {c['mt5_account_server']}" if c['execution_mode']=='LIVE_MT5' else 'banca virtual'
         currency=self.mt5.account_info.get('currency','') if c['execution_mode']=='LIVE_MT5' else 'BRL virtual'
+        monitored = ', '.join(p['symbol'] for p in c.get('forex_pairs', []) if p['enabled']) if c.get('forex_multi_enabled') else c['symbol']
+        operational = self.operational_status()
+        monitoring_label={'PAUSED':'PAUSADO','MONITORING':'MONITORANDO','RECOVERING':'EM RECUPERAÇÃO'}[operational['state']]
+        active = ' • '.join(f"{key} [{fault['code']}]: {fault['message']}" for key, fault in operational['faults'].items())
+        pending_revalidation = ' • '.join(f"{key} [{fault['code']}]" for key, fault in operational['pending_revalidation'].items())
+        operational_reason = operational['blocked_reason'] or active or 'Sem falha operacional ativa registrada.'
+        details = f"\nCausa operacional: {operational_reason}"
+        if pending_revalidation:
+            details += f"\nRejeições anteriores aguardando revalidação: {pending_revalidation}. Nenhuma entrada autorizada por expiração da espera."
+        if c.get('forex_multi_enabled'):
+            rows = self._multi.rows if self._multi else {}
+            portfolio = self._multi.portfolio if self._multi else None
+            details += f"\nLimite simultâneo: {position_limit(c)} posições em símbolos diferentes."
+            if portfolio:
+                details += f"\nRisco reservado/global: {portfolio['reserved_risk']:.2f}/{portfolio['risk_limit']:.2f} {currency}"
+                details += f"\nRisco USD comprado/vendido até SL: {portfolio['usd_risk']['LONG']:.2f}/{portfolio['usd_risk']['SHORT']:.2f} {currency} (sem compensação)."
+            for item in c.get('forex_pairs', []):
+                if item['enabled']:
+                    updated = rows.get(item['pair'], {}).get('updated_at')
+                    last_analysis = datetime.fromtimestamp(updated, timezone.utc).isoformat(timespec='seconds') if updated else 'aguardando primeira análise'
+                    details += f"\nÚltima atualização {item['symbol']}: {last_analysis}"
         pending=sum(t.get('mode')=='LIVE_MT5' and t['status'] in ACTIVE_LIVE for t in self.trade_history)
         return (f"ProspeTraderBot\nModo: {c['execution_mode']} | {'ATIVO' if self.is_running else 'PAUSADO'}\n"
-                f"Conta: {account}\nAtivo: {c['symbol']} / {c['timeframe']}\n"
+                f"Conta: {account}\nAtivo(s): {monitored} / {c['timeframe']}\n"
                 f"PnL realizado hoje (UTC): {self.stats['daily_pnl']:.2f} {currency}\n"
-                f"PnL aberto: {self.stats.get('floating_pnl',0):.2f} {currency}\nPosições/intenção MT5 pendentes: {pending}")
+                f"PnL aberto: {self.stats.get('floating_pnl',0):.2f} {currency}\nPosições/intenção MT5 pendentes: {pending}\n"
+                f"Monitoramento: {monitoring_label}{details}\nResultado das análises: {self.stats['status_reason']}\n"
+                f"Status gerado em UTC: {datetime.now(timezone.utc).isoformat(timespec='seconds')}")
 
     def pause_from_telegram(self):
         self.is_running=False
@@ -141,14 +191,126 @@ class BotManager:
         self.logs.insert(0, entry)
         self.logs = self.logs[:80]
 
+    def _notify(self, event_id, message):
+        try:
+            if self.notifier.enqueue(event_id,message) is False:
+                raise RuntimeError('Notification queue unavailable')
+            self._pending_notifications.pop(event_id,None)
+            self._notification_failure=False
+        except Exception:
+            if len(self._pending_notifications)<100 or event_id in self._pending_notifications:
+                self._pending_notifications[event_id]=message
+            self.notifier.last_error='Notificação indisponível; monitoramento continua.'
+            if not self._notification_failure:
+                self.add_log('ALERT',self.notifier.last_error)
+                self._notification_failure=True
+
+    def _flush_notifications(self):
+        for event_id,message in list(self._pending_notifications.items())[:10]:
+            self._notify(event_id,message)
+            if event_id in self._pending_notifications:
+                break
+
+    def _audit_state(self, healthy):
+        if not healthy:
+            self._fault('audit','DIAGNOSTIC_UNAVAILABLE',self.audit.error or 'Auditoria indisponível; novas entradas bloqueadas.')
+        else:
+            self._recover('audit')
+
+    def _diagnostic_event(self, kind, code, payload, event_key=None, bar_time=None, context=None):
+        context = context or self.config
+        event=dict(event_key=event_key or uuid.uuid4().hex,kind=kind,code=code,
+                   symbol=context['symbol'],timeframe=context['timeframe'],bar_time=bar_time,
+                   payload=dict(mode=context['execution_mode'],account_login=context.get('mt5_account_login'),
+                                account_server=context.get('mt5_account_server'),**payload))
+        healthy=self.audit.record(event)
+        if code!='DIAGNOSTIC_UNAVAILABLE':
+            self._audit_state(healthy)
+        return healthy
+
+    def _fault(self, key, code, message, context=None):
+        context = context or self.config
+        fault,notify=self.recovery.fail(key,code,message)
+        if notify:
+            self.add_log('ERROR',message+' • monitoramento continua; entradas sujeitas aos bloqueios.')
+            self._notify('fault:'+uuid.uuid4().hex,
+                f"ALERTA {context['symbol']} / {context['timeframe']} [{code}]\n{message}\nMonitoramento continua. Novas entradas dependem de revalidação segura. Próxima tentativa em até 60s.")
+        # One persistent event per error code/incident; repeated failures aggregate.
+        self._diagnostic_event('ERROR',code,dict(component=key,**fault),
+            digest([key,code,fault['first_seen'],context['symbol']]), context=context)
+        return fault
+
+    def _recover(self, key):
+        old=self.recovery.clear(key)
+        if old:
+            preflight = key == 'preflight' or key.startswith('pair-preflight:')
+            outcome = 'Rejeição anterior encerrada após revalidação.' if preflight else f'Componente {key} voltou a responder.'
+            self.add_log('INFO',f"Recuperação: {key}. {outcome} Limites permanecem ativos.")
+            self._diagnostic_event('RECOVERY',old['code'],dict(component=key,previous_fault=old))
+            notification_key=('recovery',key,old['code'],self.config['symbol'])
+            if time.time()-self.recovery.alerted.get(notification_key,0)>=300:
+                self.recovery.alerted[notification_key]=time.time()
+                self._notify('recovery:'+uuid.uuid4().hex,
+                    f"RECUPERAÇÃO {self.config['symbol']} [{old['code']}]\n{outcome} Automação {'solicitada' if self.is_running else 'pausada pelo usuário'}; todos os filtros serão reavaliados.")
+
+    def _runtime_block(self):
+        if not self.audit.healthy:
+            return self.audit.error
+        if self._pending_trade_saves or self._intent_uncertain:
+            return 'Persistência de operações pendente; novas entradas bloqueadas até recuperação.'
+        if any(t.get('mode') == 'LIVE_MT5' and t.get('deal_time_warning') for t in self.trade_history):
+            return 'Horário de negócios antigos não confirmado; confira o ajuste dos negócios antes de novas entradas.'
+        if 'analysis' in self.recovery.faults:
+            return 'Análise em recuperação; aguarde uma avaliação válida.'
+        return self.recovery.retry_block()
+
+    def operational_status(self):
+        block=self._runtime_block()
+        active, pending = self.recovery.presentation()
+        # Include local incidents for visibility only. The coordinator retains
+        # its existing per-pair backoff and global execution safety decisions.
+        if self.config.get('forex_multi_enabled') and self._multi:
+            for view in self._multi.views.values():
+                local_active, local_pending = view.recovery.presentation()
+                prefix = 'pair:'+view.config['symbol']+':'
+                active.update({prefix+key: fault for key, fault in local_active.items()})
+                pending.update({prefix+key: fault for key, fault in local_pending.items()})
+        return dict(automation_requested=self.is_running,
+                    state='PAUSED' if not self.is_running else ('RECOVERING' if block or active else 'MONITORING'),
+                    blocked_reason=block,faults=active,pending_revalidation=pending,audit=self.audit.status(),
+                    pending_trade_saves=len(self._pending_trade_saves),pending_notifications=len(self._pending_notifications))
+
+    def _save_trade(self, trade):
+        try:
+            self.journal.save(trade)
+        except Exception:
+            self._pending_trade_saves[trade['id']]=trade
+            self._fault('persistence','TRADE_PERSISTENCE','Não foi possível persistir a operação; estado reservado e novas entradas bloqueadas.')
+            return False
+        self._pending_trade_saves.pop(trade['id'],None)
+        return True
+
+    def _flush_trade_saves(self):
+        for trade in list(self._pending_trade_saves.values()):
+            if not self._save_trade(trade):
+                return
+        if self._intent_uncertain:
+            self.trade_history=self._session_trades()
+            self._has_open_trade=any((t.get('mode')=='LIVE_MT5' and t['status'] in ACTIVE_LIVE) or t['status']=='OPEN' for t in self.trade_history)
+            self._intent_uncertain=False
+        self._recover('persistence')
+
     def update_config(self, new_cfg: Dict[str, Any]) -> Dict[str, Any]:
-        if self.is_running or self._has_open_trade or self._mt5_busy:
+        clock_only = set(new_cfg) == {'mt5_deal_time_offset_minutes'}
+        if self.is_running or self._mt5_busy or (self._has_open_trade and not clock_only):
             raise ValueError("Pause o robô e aguarde a operação encerrar antes de alterar parâmetros.")
         payload = dict(new_cfg)
         # Legacy dashboard balance is virtual only, never a broker balance override.
         if 'custom_balance' in payload:
             payload['paper_balance'] = payload.pop('custom_balance')
         merged = {**self.config, **payload}
+        if not clock_only and merged.get('strategy_id') in RESEARCH_ONLY_STRATEGIES:
+            raise ValueError('Retomada após correção é experimental e está disponível somente no laboratório Forex. A configuração de execução foi preservada.')
         if 'strategy_params' in payload:
             merged['strategy_params'] = {**self.config['strategy_params'], **payload['strategy_params']}
         if merged.get('execution_mode')=='LIVE_MT5':
@@ -164,14 +326,22 @@ class BotManager:
         previous_mode=self.config['execution_mode']
         self.journal.save_config(validated)
         self.config = validated
+        if not strategy_requires_ml(validated['strategy_id'],validated['strategy_params']):
+            self._recover('model')
+        self._multi = None
+        self._last_snapshot = None
         self.mt5.configure_time(self.config)
-        if previous_mode != validated['execution_mode']:
+        if previous_mode != validated['execution_mode'] or 'mt5_deal_time_offset_minutes' in payload:
             self.trade_history=self._session_trades()
             self._refresh_stats()
             self._last_signal_bar=None
         if changed_stream:
+            for component in ('analysis','market_data','preflight'):
+                self.recovery.clear(component)
+            self._last_snapshot=None
             self.safirion.reset_candles()
             self._last_signal_bar = None
+        self._diagnostic_event('CONFIG','CONFIG_UPDATED',dict(config=self.config,config_version=digest(self.config)))
         self.add_log("CONFIG", f"Parâmetros validados: {self.config['symbol']} / {self.config['timeframe']} / {self.config['execution_mode']}")
         return self.config
 
@@ -188,18 +358,35 @@ class BotManager:
         cap = min(balance * self.config['risk_per_trade_pct'] / 100,
                   max(0.0, self.config['stop_loss'] + self.stats['daily_pnl']))
         amount = balance * self.config['risk_per_trade_pct'] / 100 if self.config['bankroll_mode'] == 'PERCENT' else self.config['entry_amount']
+        if live and position_limit(self.config) > 1:
+            cap = global_budget(self.config, balance, max(0., self.config['stop_loss']+self.stats['daily_pnl']))
+            try:
+                used = sum(reserved_risk(t) for t in active_trades(self.trade_history))
+            except ValueError as exc:
+                return 0., str(exc)
+            amount = min(cap/position_limit(self.config), max(0., cap-used))
         amount = math.floor(min(amount, cap) * 100) / 100
         minimum = 5 if self.config['market_type'] == 'SAFIRION_OB' else .01
         if amount < minimum:
             return 0.0, "Bloqueado: mínimo excede o orçamento de risco."
         currency=self.mt5.account_info.get('currency','') if live else 'BRL virtual'
+        if live and position_limit(self.config)>1:
+            return amount, f"RISCO ATÉ SL {amount:.2f} {currency} • carteira até {cap:.2f} {currency} • orçamento compartilhado"
         return amount, f"{'RISCO ATÉ SL' if live else 'PAPER'} {amount:.2f} {currency} • limite {self.config['risk_per_trade_pct']}% • sem progressão"
 
     def _risk_block(self, signal=None, manual=False):
+        if self.config.get('strategy_id') in RESEARCH_ONLY_STRATEGIES:
+            return 'Estratégia experimental disponível somente no laboratório Forex; execução de ordens bloqueada.'
         if self._mt5_busy:
             return 'MT5 processando consulta/envio; aguarde a confirmação.'
-        if self._has_open_trade:
+        if position_limit(self.config) > 1:
+            block=local_block(self.config, self.trade_history, self.config['symbol'])
+            if block: return block
+        elif self._has_open_trade:
             return "Já existe uma operação em andamento."
+        runtime_block=self._runtime_block()
+        if runtime_block:
+            return runtime_block
         if self.config['execution_mode']=='LIVE_MT5':
             try:
                 self.live.account(self.config['mt5_account_login'],self.config['mt5_account_server'],trading=True)
@@ -222,12 +409,14 @@ class BotManager:
         if amount <= 0:
             return reason
         if not manual and signal:
-            if signal['action'] not in ('BUY', 'SELL') or signal['confidence'] < self.config['min_confidence']:
-                return "Sem confluência técnica suficiente."
+            if signal['action'] not in ('BUY', 'SELL'):
+                return signal.get('reason') or "Sem confluência técnica suficiente."
+            if signal['confidence'] < self.config['min_confidence']:
+                return f"Score final {signal['confidence']:.1f}% abaixo do mínimo {self.config['min_confidence']:.1f}%."
             if signal.get('bar_time') == self._last_signal_bar:
                 return "Este candle já originou uma operação."
             validation = signal.get('indicators', {}).get('ml_validation', {})
-            if self.config['strategy_params']['use_ml_filter'] and not validation.get('validated'):
+            if strategy_requires_ml(self.config['strategy_id'],self.config['strategy_params']) and not validation.get('validated'):
                 return "IA sem vantagem demonstrada na validação temporal."
         return None
 
@@ -299,10 +488,53 @@ class BotManager:
         return sum(t.get('mode','PAPER')==self.config['execution_mode'] and t.get('day')==day and t['status']!='REJECTED' for t in self.trade_history)
 
     def get_market_snapshot(self) -> Dict[str, Any]:
+        if self.config.get('forex_multi_enabled') and not getattr(self, '_pair_analysis', False):
+            from backend.forex_multi import ForexCoordinator
+            if self._multi is None:
+                self._multi = ForexCoordinator(self)
+            return self._multi.snapshot()
+        fault=self.recovery.faults.get('analysis')
+        if fault and time.time()<fault['retry_at'] and not self._mt5_busy:
+            return self._unavailable_snapshot(fault['message'])
+        try:
+            return self._build_market_snapshot()
+        except Exception as exc:
+            note=str(exc) if isinstance(exc,(MT5ExecutionError,ValueError,RuntimeError)) else 'Falha interna na análise; consulte os diagnósticos.'
+            self._fault('analysis','ANALYSIS_UNAVAILABLE',note)
+            self.stats['status_reason']='Análise em recuperação; novas entradas bloqueadas. '+note
+            return self._unavailable_snapshot(note)
+
+    def _unavailable_snapshot(self, reason):
+        old=self._last_snapshot or {}
+        currency=self.mt5.account_info.get('currency','') if self.config['execution_mode']=='LIVE_MT5' else 'BRL'
+        signal=dict(symbol=self.config['symbol'],market_type=self.config['market_type'],timeframe=self.config['timeframe'],
+                    strategy_id=self.config['strategy_id'],action='NEUTRAL',confidence=0,price=0,stop_loss=None,take_profit=None,
+                    expiration_minutes=None,indicators={},bar_time=None,reason=reason)
+        goal=dict(target=self.config['stop_gain'],currency=currency,account_currency=currency,realized=None,remaining=None,
+                  remaining_account=None,reached=False,ready=False,error=reason)
+        sf=self.safirion
+        connections=dict(mt5=dict(connected=self.mt5.connected,simulation_mode=self.mt5.simulation_mode,account=self.mt5.account_info),
+            safirion=dict(connected=sf.connected,simulation_mode=sf.simulation_mode,broker_url=sf.broker_url,account_type=sf.account_type,
+                sub_type=self.config['safirion_sub_type'],call_bound=sf.call_bound,put_bound=sf.put_bound,
+                ws_messages_received=sf.ws_messages_received,last_live_price=sf.last_live_price,balance=sf.balance))
+        return {**old,'config':self.config,'is_running':self.is_running,'stats':self.stats,'currency':currency,
+                'execution_mode':self.config['execution_mode'],'has_open_trade':self._has_open_trade,'signal':signal,
+                'candles':[],'trade_plans':{},'connections':connections,'telegram':self.notifier.public_status(),
+                'trades':self.trade_history[:25],'logs':self.logs[:30],'goal':goal,'entry_count':self._entry_count(),
+                'account_balance':self.mt5.account_info.get('balance',0) if self.config['execution_mode']=='LIVE_MT5' else self.config['paper_balance'],
+                'paper_balance':self.config['paper_balance'],'operational':self.operational_status(),
+                'risk':dict(blocked_reason=reason,max_risk_pct=self.config['risk_per_trade_pct'],remaining_loss_budget=max(0,self.config['stop_loss']+self.stats['daily_pnl']),next_amount=0),
+                'data_quality':dict(source='ANALYSIS_UNAVAILABLE',closed_candles=0,synthetic=False,symbol_verified=False,
+                    forming_candle_excluded=True,dropped_gap_candles=0,history_fresh=False,history_error=reason,tick_age_seconds=None),
+                'diagnostics':dict(version='forex-price-exits-v1',mode=self.config['execution_mode'],reason=reason,
+                    terminal_permissions=False,native_orders_enabled=False,clock={})}
+
+    def _build_market_snapshot(self) -> Dict[str, Any]:
         if self._mt5_busy and self._last_snapshot is None:
             raise RuntimeError('Conexão MT5 em andamento; aguarde a primeira atualização.')
         if self._mt5_busy and self._last_snapshot is not None:
             return {**self._last_snapshot,'is_running':self.is_running,'has_open_trade':True,
+                    'operational':self.operational_status(),
                     'stats':dict(self.stats),'trades':self.trade_history[:25], 'telegram':self.notifier.public_status(),
                     'risk':{**self._last_snapshot['risk'],'blocked_reason':'MT5 processando; nenhuma segunda ordem será enviada.'}}
         day = datetime.now(timezone.utc).date().isoformat()
@@ -318,6 +550,7 @@ class BotManager:
         strategy_id = self.config["strategy_id"]
 
         history_error = None
+        history_retry_wait = False
         saf_live_df = (
             self.safirion.get_live_candles_df(timeframe)
             if market_type == "SAFIRION_OB"
@@ -332,15 +565,22 @@ class BotManager:
                 df=pd.DataFrame(columns=['time','open','high','low','close','volume'])
                 source='MT5_UNAVAILABLE'
             else:
-                try:
-                    df = self.mt5.get_candles(symbol, timeframe, count=240)
-                    source = 'SIMULATED' if self.mt5.simulation_mode else 'MT5_LIVE'
-                except RuntimeError as exc:
-                    history_error = str(exc)
-                    if self.config['execution_mode']!='LIVE_MT5':
-                        raise
+                history_fault=self.recovery.faults.get('market_data')
+                if history_fault and time.time()<history_fault['retry_at']:
+                    history_retry_wait=True
+                    history_error=history_fault['message']
                     df=pd.DataFrame(columns=['time','open','high','low','close','volume'])
                     source='MT5_UNAVAILABLE'
+                else:
+                    try:
+                        df = self.mt5.get_candles(symbol, timeframe, count=240)
+                        source = 'SIMULATED' if self.mt5.simulation_mode else 'MT5_LIVE'
+                    except RuntimeError as exc:
+                        history_error = str(exc)
+                        if self.config['execution_mode']!='LIVE_MT5':
+                            raise
+                        df=pd.DataFrame(columns=['time','open','high','low','close','volume'])
+                        source='MT5_UNAVAILABLE'
         validate_candles(df)
         # The last candle is forming, so neither its signal nor label is usable.
         closed = df.iloc[:-1].copy()
@@ -363,6 +603,8 @@ class BotManager:
             market_type=market_type,
             timeframe=timeframe,
             strategy_id=strategy_id,
+            model_engine=getattr(self, "_model_engine", None),
+            model_context=getattr(self, "_model_context", None),
             params={
                 **self.config["strategy_params"],
                 "expiration_minutes": self.config["expiration_minutes"],
@@ -370,6 +612,12 @@ class BotManager:
             },
         )
         self.last_signal = signal.to_dict()
+        validation=self.last_signal.get('indicators',{}).get('ml_validation',{})
+        model_reason=validation.get('reason','')
+        if model_reason.startswith(('Modelo indisponível','scikit-learn indisponível')) and strategy_requires_ml(self.config['strategy_id'],self.config['strategy_params']):
+            self._fault('model','MODEL_UNAVAILABLE',model_reason)
+        elif validation.get('enabled') or not strategy_requires_ml(self.config['strategy_id'],self.config['strategy_params']):
+            self._recover('model')
         if history_error:
             self.last_signal.update(action='NEUTRAL',confidence=0,reason=history_error)
         self.last_signal['bar_time'] = str(closed.iloc[-1]['time']) if len(closed) else None
@@ -419,7 +667,14 @@ class BotManager:
                 }
             )
 
+        self._recover('analysis')
+        if history_error and not history_retry_wait:
+            self._fault('market_data','HISTORY_UNAVAILABLE',history_error)
+        elif source=='MT5_LIVE':
+            self._recover('market_data')
         snapshot = {
+            "entry_count": self._entry_count(),
+            "operational": self.operational_status(),
             "goal": self.goal_status(),
             "diagnostics": self.execution_diagnostics(),
             "trade_plans": {side:self.plan_preview({**self.last_signal,'action':side}) for side in ('BUY','SELL')} if market_type!='SAFIRION_OB' else {},
@@ -461,6 +716,15 @@ class BotManager:
             },
         }
 
+        event=analysis_event(snapshot,self._last_signal_bar,self._last_trade_timestamp)
+        self._audit_state(self.audit.record(event))
+        snapshot['entry_checks']=event['payload']['checks']
+        snapshot['failed_checks']=event['payload']['failed_checks']
+        snapshot['analysis_id']=event['payload']['analysis_id']
+        snapshot['signal']['analysis_id']=snapshot['analysis_id']
+        snapshot['operational']=self.operational_status()
+        if not self.audit.healthy:
+            snapshot['risk']['blocked_reason']=self.audit.error
         self._last_snapshot=snapshot
         return snapshot
 
@@ -492,6 +756,8 @@ class BotManager:
 
     async def execute_trade_from_signal(self, signal: Dict[str, Any], manual: bool = False) -> Dict[str, Any]:
         async with self._order_lock:
+            if self.config.get('forex_multi_enabled'):
+                return dict(success=False,message='Motor multipares usa apenas execução automática pelo coordenador.')
             if signal.get('action') not in ('BUY', 'SELL'):
                 return {"success": False, "message": "Direção inválida ou neutra."}
             blocked = self._risk_block(signal, manual)
@@ -589,12 +855,12 @@ class BotManager:
         trade.update(status='WIN' if pnl>0 else ('LOSS' if pnl<0 else 'DRAW'),exit_price=price,pnl=round(pnl,8),
                      settled_at=datetime.now().timestamp(),exit_reason=reason,floating_pnl=0.,
                      settlement_note='PAPER: preenchimento no preço observado, incluindo gaps e custo configurado; não é execução da corretora.')
-        self.journal.save(trade);self._refresh_stats()
+        self._save_trade(trade);self._refresh_stats()
         self._has_open_trade=any(t['status']=='OPEN' for t in self.trade_history) or any(t.get('mode')=='LIVE_MT5' and t['status'] in ACTIVE_LIVE for t in self.trade_history)
         self._last_trade_timestamp=datetime.now().timestamp()
         self.add_log('INFO',f"PAPER {reason}: {pnl:.2f} BRL virtuais")
         if self.goal_status()['reached']:
-            self.is_running=False;self.stats['status_reason']='Meta diária atingida; novas entradas pausadas.'
+            self.stats['status_reason']='Meta diária atingida; novas entradas bloqueadas, monitoramento ativo.'
 
     async def _monitor_paper_position(self, trade):
         while trade['status']=='OPEN':
@@ -602,6 +868,7 @@ class BotManager:
                 if self._mt5_busy:
                     await asyncio.sleep(.5);continue
                 price=self._paper_position_quote(trade)
+                self._recover('paper_quote')
                 buy=trade['action']=='BUY'
                 reason='STOP_LOSS' if (price<=trade['stop_loss'] if buy else price>=trade['stop_loss']) else (
                     'TAKE_PROFIT' if (price>=trade['take_profit'] if buy else price<=trade['take_profit']) else None)
@@ -616,7 +883,7 @@ class BotManager:
                 raise
             except Exception:
                 trade['sync_error']='Cotação indisponível. Posição PAPER permanece aberta; resultado não estimado.'
-                self.is_running=False
+                self._fault('paper_quote','PAPER_QUOTE_UNAVAILABLE',trade['sync_error'])
             await asyncio.sleep(.5)
 
     async def close_paper_position(self, identifier):
@@ -628,62 +895,113 @@ class BotManager:
             self._finalize_paper_position(trade,price,'MANUAL')
             return dict(success=True,message='Posição PAPER encerrada pelo preço observado.',trade=trade)
 
+    @staticmethod
+    def _preflight_code(reason):
+        return preflight_code(reason)
+
+    SDK_WAIT_SECONDS = 15
+
+    async def _native_call(self, function, *args, **kwargs):
+        # A timeout is only an alert: the original SDK call keeps ownership.
+        # Never submit a second native call or retry an order on timeout.
+        task=asyncio.create_task(asyncio.to_thread(function,*args,**kwargs))
+        try:
+            while True:
+                try:
+                    return await asyncio.wait_for(asyncio.shield(task),timeout=self.SDK_WAIT_SECONDS)
+                except asyncio.TimeoutError:
+                    if task.done():
+                        return task.result()
+                    self._fault('sdk','SDK_SLOW','MT5 demorando a responder. Solicitação original em acompanhamento; nenhum reenvio será realizado.')
+        finally:
+            if task.done():
+                self._recover('sdk')
+
     async def _execute_mt5(self, signal, snapshot, manual=False):
+        config = snapshot.get('config', self.config)
+        preflight_key = 'pair-preflight:'+config['symbol'] if config.get('forex_multi_enabled') else 'preflight'
         if snapshot['data_quality']['source']!='MT5_LIVE' or not snapshot['data_quality'].get('history_fresh',False):
             return dict(success=False,message='Sem dados reais do MT5. Fallback para simulador não é permitido neste modo.')
         client_tag='PT'+uuid.uuid4().hex[:22]
         # Every side, including a discretionary SELL after a BUY signal, gets fresh directional stops.
         self._mt5_busy=True
         try:
-            prepared=await asyncio.to_thread(self.live.prepare,self.config,signal,max(0,self.config['stop_loss']+self.stats['daily_pnl']),client_tag,self.goal_status()['remaining_account'])
+            kwargs={'portfolio_trades':context(self.trade_history)} if position_limit(config)>1 else {}
+            prepared=await self._native_call(self.live.prepare,config,signal,max(0,config['stop_loss']+self.stats['daily_pnl']),client_tag,self.goal_status()['remaining_account'],**kwargs)
         except Exception as exc:
-            self.is_running=False
             note=str(exc) if isinstance(exc,MT5ExecutionError) else 'Falha na pré-validação do terminal MT5. Nenhuma ordem enviada.'
-            self.add_log('ALERT',note)
-            self.notifier.enqueue('preflight:'+client_tag,'MT5: entrada bloqueada. '+note)
+            code=self._preflight_code(note)
+            global_failure = not isinstance(exc, MT5ExecutionError) or code in ('ACCOUNT_PERMISSIONS','ACCOUNT_BINDING','EXTERNAL_EXPOSURE') or 'exposição global' in note
+            self._fault('preflight' if global_failure else preflight_key,code,note,context=config)
+            self._diagnostic_event('DECISION',code,dict(attempt_id=client_tag,analysis_id=signal.get('analysis_id') or snapshot.get('analysis_id'),action=signal['action'],input_signal=signal,reason=note,checks=[dict(code='NATIVE_PREFLIGHT',status='FAIL',reason=note)]),bar_time=signal.get('bar_time'), context=config)
             return dict(success=False,message=note)
         finally:
             self._mt5_busy=False
         if not manual and not self.is_running:
             return dict(success=False,message='Entrada automática cancelada: robô pausado durante a pré-validação.')
+        if self.recovery.faults.get(preflight_key,{}).get('code')!='BROKER_REJECTED':
+            self._recover(preflight_key)
         account=prepared['account']
-        trade=dict(id='MT5-'+uuid.uuid4().hex,client_tag=client_tag,magic=self.config['mt5_magic'],
+        trade=dict(id='MT5-'+uuid.uuid4().hex,client_tag=client_tag,magic=config['mt5_magic'],
                    day=datetime.now(timezone.utc).date().isoformat(),created_at=datetime.now().timestamp(),
-                   time=datetime.now().strftime('%H:%M:%S'),symbol=self.config['symbol'],market=self.config['market_type'],
+                   time=datetime.now().strftime('%H:%M:%S'),symbol=config['symbol'],market=config['market_type'],
+                   forex_multi=bool(config.get('forex_multi_enabled')),
                    mode='LIVE_MT5',source='MT5_LIVE',status='SUBMITTING',pnl=0.,remaining_sec=0,
                    action=signal['action'],amount=prepared['estimated_risk'],risk_budget=prepared['risk_budget'],
                    exit_policy='SL_TP',plan=prepared['plan'],
+                   entry_diagnostics=prepared['entry_diagnostics'],signal_snapshot=copy.deepcopy(signal),
+                   plan_parameters=copy.deepcopy(config['strategy_params']),
+                   entry_policy_version=signal.get('indicators',{}).get('entry_policy_version','legacy'),
                    requested_volume=prepared['volume'],entry_price=prepared['price'],stop_loss=prepared['stop_loss'],
                    take_profit=prepared['take_profit'],account_login=account['login'],account_server=account['server'],
                    currency=account['currency'],account_type=account['account_type'],request=prepared['request'],
-                   strategy=self.config['strategy_id'],timeframe=self.config['timeframe'],confidence=signal['confidence'],
-                   bar_time=signal.get('bar_time'),manual=manual)
+                   strategy=config['strategy_id'],timeframe=config['timeframe'],confidence=signal['confidence'],
+                   analysis_id=signal.get('analysis_id') or snapshot.get('analysis_id'),bar_time=signal.get('bar_time'),manual=manual)
+        if position_limit(config)>1:
+            trade.update(max_open_positions=position_limit(config),reserved_risk=prepared['estimated_risk'],
+                cost_buffer=config['mt5_cost_buffer'],portfolio=prepared['portfolio'],
+                portfolio_context=prepared['portfolio_context'],portfolio_config=config.copy(),
+                remaining_loss_budget=max(0,config['stop_loss']+self.stats['daily_pnl']))
+        self._diagnostic_event('DECISION','PREFLIGHT_APPROVED',dict(attempt_id=client_tag,analysis_id=signal.get('analysis_id') or snapshot.get('analysis_id'),action=signal['action'],input_signal=signal,checks=[dict(code='NATIVE_PREFLIGHT',status='PASS')],plan=prepared['plan'],entry_diagnostics=prepared['entry_diagnostics'],risk_budget=prepared['risk_budget'],volume=prepared['volume']),bar_time=signal.get('bar_time'), context=config)
+        if not self.audit.healthy:
+            return dict(success=False,message=self.audit.error)
         try:
             self.journal.reserve_live(trade)
         except ValueError as exc:
             self._has_open_trade=True
             self.trade_history=self._session_trades()
             return dict(success=False,message=str(exc))
+        except Exception:
+            self._intent_uncertain=True
+            self._has_open_trade=True
+            self._fault('persistence','INTENT_PERSISTENCE','Falha ao reservar intenção no diário; nenhuma ordem enviada.')
+            return dict(success=False,message='Intenção não confirmada no diário; envio bloqueado.')
         self.trade_history.insert(0,trade)
         self._has_open_trade=True
         self._last_signal_bar=signal.get('bar_time')
         self._last_trade_timestamp=trade['created_at']
         self._mt5_busy=True
         try:
-            result=await asyncio.to_thread(self.live.send,trade)
+            result=await self._native_call(self.live.send,trade)
         except Exception:
             # An intent may have reached MT5 even if the local invocation failed.
             result=dict(status='PENDING',success=False,pending=True,message='Envio inconclusivo; aguarde reconciliação no MT5, sem repetir a entrada.')
         finally:
             self._mt5_busy=False
+        trade['submission_confirmed_at'] = time.time()
         trade.update({k:v for k,v in result.items() if k in ('status','retcode','order_ticket','deal_ticket')})
         trade['sync_note']=result['message']
-        self.journal.save(trade)
-        self._has_open_trade=trade['status'] in ACTIVE_LIVE
+        if result.get('success'):
+            self._recover(preflight_key)
+            if config.get('forex_multi_enabled'):
+                self._recover('preflight')
+        self._save_trade(trade)
+        self._diagnostic_event('EXECUTION',trade['status'],dict(attempt_id=trade.get('client_tag'),trade_id=trade['id'],analysis_id=trade.get('analysis_id'),retcode=trade.get('retcode'),reason=trade['sync_note']),bar_time=trade.get('bar_time'), context=config)
+        self._has_open_trade=any(t.get('mode')=='LIVE_MT5' and t['status'] in ACTIVE_LIVE for t in self.trade_history)
         if trade['status']=='REJECTED':
-            self.is_running=False
+            self._fault(preflight_key,'BROKER_REJECTED',trade['sync_note'],context=config)
         self.add_log('TRADE' if result.get('success') else 'ALERT',result['message'])
-        self.notifier.enqueue(trade['id']+':submission',f"MT5 {trade['account_type']} {trade['action']} {trade['symbol']}\nConta {trade['account_login']} / {trade['account_server']}\nVolume solicitado: {trade['requested_volume']} | SL {trade['stop_loss']} | TP {trade['take_profit']}\n{result['message']}")
+        self._notify(trade['id']+':submission',f"MT5 {trade['account_type']} {trade['action']} {trade['symbol']}\nConta {trade['account_login']} / {trade['account_server']}\nVolume solicitado: {trade['requested_volume']} | SL {trade['stop_loss']} | TP {trade['take_profit']}\n{result['message']}")
         return {**result,'mode':'LIVE_MT5','ticket':trade['id']}
 
     async def reconcile_live(self):
@@ -695,31 +1013,42 @@ class BotManager:
             old_status=trade['status']
             self._mt5_busy=True
             try:
-                update=await asyncio.to_thread(self.live.reconcile,trade)
+                update=await self._native_call(self.live.reconcile,trade)
                 trade.update(update)
+                trade['last_reconciled_at'] = time.time()
+                if trade['status']=='OPEN':
+                    observe_exit_quote(trade,update.get('observed_exit_quote'),trade['last_reconciled_at'],'MT5_POSITION_POLL')
+                if trade['status'] in ('WIN','LOSS','DRAW') and trade['status'] != old_status:
+                    trade['closure_confirmed_at'] = trade['last_reconciled_at']
+                    observe_exit_quote(trade,update.get('exit_price'),trade['last_reconciled_at'],'MT5_CONFIRMED_EXIT')
                 trade.pop('sync_error',None)
                 if trade['status']=='OPEN' and not trade.get('protected',False):
-                    self.is_running=False
-                    self.notifier.enqueue(trade['id']+':unprotected','ALERTA MT5: '+trade['sync_note'])
+                    self._fault('position:'+trade['id'],'UNPROTECTED_POSITION',trade['sync_note'])
+                else:
+                    self._recover('position:'+trade['id'])
+                self._recover('sync:'+trade['id'])
             except Exception as exc:
                 note=str(exc) if isinstance(exc,MT5ExecutionError) else 'Falha ao consultar o terminal MT5; novas entradas bloqueadas até reconciliação.'
-                self.is_running=False
+                self._fault('sync:'+trade['id'],'RECONCILIATION_UNAVAILABLE',note)
                 if trade.get('sync_error')!=note:
                     self.add_log('ERROR',note)
-                    self.notifier.enqueue(trade['id']+':sync:'+hashlib.sha256(note.encode()).hexdigest()[:12],'ALERTA MT5: '+note+' Posição não foi fechada pelo robô; monitoramento será retomado quando a conexão correta voltar.')
+                    self._notify(trade['id']+':sync:'+hashlib.sha256(note.encode()).hexdigest()[:12],'ALERTA MT5: '+note+' Posição não foi fechada pelo robô; monitoramento será retomado quando a conexão correta voltar.')
                 trade['sync_error']=note
             finally:
                 self._mt5_busy=False
-            self.journal.save(trade)
+            self._save_trade(trade)
             if trade['status']!=old_status:
+                self._diagnostic_event('RECONCILIATION',trade['status'],dict(attempt_id=trade.get('client_tag'),trade_id=trade['id'],analysis_id=trade.get('analysis_id'),reason=trade.get('sync_note'),position_id=trade.get('position_id'),settled_at=trade.get('settled_at'),closure_confirmed_at=trade.get('closure_confirmed_at'),deal_time_offset_seconds=trade.get('deal_time_offset_seconds')),bar_time=trade.get('bar_time'))
                 if trade['status'] in ('WIN','LOSS','DRAW'):
                     self._last_trade_timestamp=datetime.now().timestamp()
-                    self.notifier.enqueue(trade['id']+':closed',f"MT5 {trade['status']} {trade['symbol']}\nPosição {trade.get('position_id')} | PnL confirmado {trade['pnl']:.2f} {trade['currency']}\n{trade['sync_note']}")
+                    closed = datetime.fromtimestamp(trade['settled_at'], timezone.utc).isoformat(timespec='seconds')
+                    confirmed = datetime.fromtimestamp(trade['closure_confirmed_at'], timezone.utc).isoformat(timespec='seconds')
+                    self._notify(trade['id']+':closed',f"MT5 {trade['status']} {trade['symbol']}\nPosição {trade.get('position_id')} | PnL confirmado {trade['pnl']:.2f} {trade['currency']}\nFechamento UTC: {closed}\nConfirmação pelo robô UTC: {confirmed}\n{trade['sync_note']}")
                 elif trade['status']=='REJECTED':
-                    self.is_running=False
-                    self.notifier.enqueue(trade['id']+':rejected',f"MT5 {trade['symbol']}: {trade['sync_note']}")
+                    self._fault('preflight','BROKER_REJECTED',trade.get('sync_note','Ordem rejeitada pelo histórico.'))
+                    self._notify(trade['id']+':rejected',f"MT5 {trade['symbol']}: {trade['sync_note']}")
                 elif trade['status']=='OPEN':
-                    self.notifier.enqueue(trade['id']+':filled',f"MT5: preenchimento confirmado {trade['symbol']} {trade['action']}\nPosição {trade['position_id']} | Volume {trade['filled_volume']} | Preço médio {trade['entry_price']}\n{trade['sync_note']}")
+                    self._notify(trade['id']+':filled',f"MT5: preenchimento confirmado {trade['symbol']} {trade['action']}\nPosição {trade['position_id']} | Volume {trade['filled_volume']} | Preço médio {trade['entry_price']}\n{trade['sync_note']}")
                 self.add_log('MT5',trade.get('sync_note',trade['status']))
         self._has_open_trade=any(t.get('mode')=='LIVE_MT5' and t['status'] in ACTIVE_LIVE for t in self.trade_history) or any(t.get('mode','PAPER')=='PAPER' and t['status']=='OPEN' for t in self.trade_history)
         self._refresh_stats()
@@ -755,14 +1084,13 @@ class BotManager:
         except Exception as exc:
             trade.update(status='INTERRUPTED', pnl=-trade['amount'],
                          settlement_note=f'Sem resultado verificável: reserva de risco debitada na simulação. {exc}')
-            self.is_running = False
-            self.add_log('ERROR', trade['settlement_note'])
+            self._fault('paper_settlement','PAPER_INTERRUPTED',trade['settlement_note'])
         finally:
             # Cancellation leaves OPEN persisted for conservative recovery on restart.
             if trade['status'] != 'OPEN':
                 trade['settled_at'] = datetime.now().timestamp()
             trade['remaining_sec'] = 0
-            self.journal.save(trade)
+            self._save_trade(trade)
             self._refresh_stats()
             self.stats['open_trade_remaining_sec'] = 0
             self._has_open_trade = False
@@ -777,31 +1105,61 @@ class BotManager:
         await self.safirion.close()
         self.journal.release_runtime_lock()
 
+    async def run_cycle(self):
+        if getattr(self, "_research_busy", False):
+            return
+        if self._mt5_busy:
+            return
+        self._audit_state(self.audit.flush())
+        self._flush_notifications()
+        self._flush_trade_saves()
+        await self.reconcile_live()
+        day = datetime.now(timezone.utc).date().isoformat()
+        if day != self._session_day and not self._has_open_trade:
+            self._session_day = day
+            self.trade_history = self._session_trades()
+            self._refresh_stats()
+            self._last_signal_bar = None
+            self.add_log('INFO', 'Nova sessão UTC; risco global atualizado, histórico preservado.')
+        if self.config.get('forex_multi_enabled'):
+            from backend.forex_multi import ForexCoordinator
+            if self._multi is None:
+                self._multi = ForexCoordinator(self)
+            await self._multi.cycle()
+            return
+        snapshot=self.get_market_snapshot()
+        if self.is_running:
+            signal=snapshot['signal']
+            blocked=self._risk_block(signal)
+            if blocked:
+                self.stats['status_reason']=blocked+' '+signal['reason']
+                if any(word in blocked for word in ('Stop loss','Meta diária','Limite de perdas','Limite de operações')):
+                    self._risk_alert(blocked)
+            else:
+                result=await self.execute_trade_from_signal(signal)
+                self.stats['status_reason']=result['message']
+
+    def _risk_alert(self, reason):
+        key='risk:'+digest([self.config['execution_mode'],self._session_day,reason])
+        if key not in self.recovery.alerted:
+            self.recovery.alerted[key]=time.time()
+            self.add_log('ALERT',reason+' Monitoramento ativo; novas entradas bloqueadas.')
+            self._diagnostic_event('RISK','GLOBAL_BLOCK',dict(reason=reason))
+            self._notify(key,'Proteção de risco: '+reason+' Monitoramento continua; nenhuma entrada fora dos limites.')
+
     async def run_loop(self):
         for trade in self.trade_history:
             if trade.get('mode')=='PAPER' and trade['status']=='OPEN' and trade.get('exit_policy')=='SL_TP':
                 self._track_paper_position(trade)
         while True:
             try:
-                if self._mt5_busy:
-                    await asyncio.sleep(.2)
-                    continue
-                await self.reconcile_live()
-                snapshot = self.get_market_snapshot()
-                if self.is_running:
-                    signal = snapshot['signal']
-                    blocked = self._risk_block(signal)
-                    if blocked:
-                        self.stats['status_reason'] = blocked + ' ' + signal['reason']
-                    else:
-                        result = await self.execute_trade_from_signal(signal)
-                        self.stats['status_reason'] = result['message']
-                    if self.stats['daily_pnl'] <= -self.config['stop_loss'] or self.goal_status()['reached'] or self.stats['loss_streak'] >= self.config['max_consecutive_losses'] or self._entry_count() >= self.config['max_daily_trades']:
-                        self.is_running = False
-                        self.add_log('ALERT', 'Limite de risco da sessão: robô pausado.')
-                        self.notifier.enqueue('risk-stop:'+self.config['execution_mode']+':'+self._session_day,'Proteção de risco: robô pausado. '+self.telegram_status())
+                await self.run_cycle()
+            except asyncio.CancelledError:
+                raise
             except Exception as exc:
-                self.is_running = False
-                self.stats['status_reason'] = 'Análise indisponível: execução pausada.'
-                self.add_log('ERROR', f'Falha de análise: {exc}')
-            await asyncio.sleep(1)
+                note=str(exc) if isinstance(exc,(MT5ExecutionError,ValueError,RuntimeError)) else 'Falha interna na análise; consulte os diagnósticos.'
+                self.stats['status_reason']='Análise em recuperação; novas entradas bloqueadas. '+note
+                self._fault('analysis','ANALYSIS_UNAVAILABLE',note)
+            fault=self.recovery.faults.get('analysis')
+            delay=max(1,min(60,fault['retry_at']-time.time())) if fault else 1
+            await asyncio.sleep(delay)

@@ -57,15 +57,16 @@ class TelegramBot:
 
     def enqueue(self, event_id, text):
         if not self.enabled:
-            return
+            return True
         try:
             with self.journal.connection() as db:
                 db.execute('INSERT OR IGNORE INTO telegram_outbox (id,chat,text) VALUES (?,?,?)',
                            (event_id,self.chat_id,text[:3900]))
         except sqlite3.Error:
             self.last_error='Fila de notificações indisponível. Execução MT5 segue com seu próprio diário.'
-            return
+            return False
         self._wake.set()
+        return True
 
     async def test(self):
         if not self.enabled:

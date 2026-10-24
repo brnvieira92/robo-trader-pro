@@ -108,3 +108,21 @@
 @media(max-width:640px) {.price-plan-grid {grid-template-columns:1fr;}}
 
 #mt5ClockSummary {overflow-wrap:anywhere;}
+
+#operationalStatus,#decisionDiagnosticOutput {overflow-wrap:anywhere;white-space:pre-wrap;}
+#decisionDiagnosticOutput {max-height:420px;overflow:auto;}
+#diagnosticExport {color:#a6e9d5;text-decoration:underline;}
+
+.forex-radar-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr)); gap:12px; margin-top:16px; }
+.forex-radar-card { min-width:0; padding:16px; border:1px solid #305061; border-radius:12px; background:#0b2030; overflow-wrap:anywhere; }
+.forex-radar-card h3 { color:#40dcea; font-weight:700; }
+.forex-radar-card p { margin:8px 0; }
+.forex-radar-card a { color:#73e9df; text-decoration:underline; }
+.forex-check-list { white-space:pre-wrap; font:12px/1.6 ui-monospace,monospace; max-height:350px; overflow:auto; margin:10px 0; padding:8px; background:#061422; border-radius:8px; }
+.research-table-wrap { overflow-x:auto; max-width:100%; }
+.research-table-wrap table { width:100%; border-collapse:collapse; font:12px/1.5 system-ui,sans-serif; }
+.research-table-wrap td,.research-table-wrap th { padding:10px; border:1px solid #294058; text-align:left; min-width:100px; }
+.forex-equity-chart { width:100%; min-width:0; }
+#forexResearchExports a { color:#73e9df; text-decoration:underline; }
+.research-panel output { overflow-wrap:anywhere; }
+.research-controls label { min-width:0; max-width:100%; }

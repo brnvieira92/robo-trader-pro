@@ -118,7 +118,7 @@
         <span id="telLatency" class="font-code-log text-code-log text-secondary font-bold">—</span>
       </div>
       <div class="flex items-center justify-between mb-space-xs">
-        <span class="font-label-caps text-label-caps text-on-surface-variant uppercase">Sinais Processados</span>
+        <span class="font-label-caps text-label-caps text-on-surface-variant uppercase">Eventos de diagnóstico</span>
         <span id="telSignalsProcessed" class="font-code-log text-code-log text-primary font-bold">1.482</span>
       </div>
       <div class="text-[10px] font-code-log text-on-surface-variant/80 border-t border-surface-container-high/40 pt-1 mt-1">
@@ -145,6 +145,21 @@
           </div>
         </div>
 
+        <section class="audit-workspace" aria-label="Radar Forex">
+          <div class="audit-heading"><div><span class="eyebrow">MONITORAMENTO MULTIPARES</span><h2>Radar Forex</h2><p>Leitura do motor automático. Até duas posições em símbolos diferentes, com orçamento global compartilhado. Exposição incerta bloqueia novas entradas.</p></div></div>
+          <p id="portfolioSummary"></p>
+          <p id="radarGlobal" role="status">Modo individual preservado. Ative o motor nas configurações abaixo.</p>
+          <div id="forexRadarRows" class="forex-radar-grid"></div>
+          <details class="execution-controls" style="display:block;margin-top:16px">
+            <summary>Configurar pares monitorados</summary>
+            <p>Pause o robô e aguarde as posições encerrarem. Use o símbolo exato com permissão de negociação no MT5 (por exemplo, EURUSD#). Escolha RF com filtro ML ou Continuidade Forex M1, com score mínimo de 78. O timeframe é o selecionado no Setup.</p>
+            <label><input id="cfgForexMulti" type="checkbox"> Ativar motor multipares automático (MT5 Forex)</label>
+            <div id="forexPairSettings" class="forex-radar-grid"></div>
+            <button id="cfgSaveForexPairs" type="button" onclick="saveForexPairs()">Salvar seleção de pares</button>
+            <p>Selecionar pares não inicia o robô. Use Iniciar MT5 após salvar. O gráfico principal continua mostrando o ativo do Setup; o Radar acompanha todos os selecionados.</p>
+          </details>
+        </section>
+
         <section class="audit-workspace" aria-label="Qualidade da análise">
           <div class="audit-heading"><div><span class="eyebrow">ANÁLISE & EXECUÇÃO</span><h1>Decidir também é esperar.</h1><p>Sinais explicáveis, dados identificados e risco limitado antes de cada entrada.</p></div><span id="executionDetailBadge" class="paper-pill">PAPER • SEM ORDENS REAIS</span></div>
           <div class="execution-controls">
@@ -156,14 +171,51 @@
             <div><strong>Bot Telegram</strong><p id="telegramStatus" role="status">Não configurado. Use BotFather e o assistente local.</p><p>Comandos privados: /status e /pausar. Pausar impede novas entradas automáticas; não fecha posições abertas.</p></div>
             <button onclick="testTelegram()" id="btnTelegramTest">Testar Telegram</button>
           </div>
+          <div id="operationalStatus" class="audit-notice" role="status">Aguardando diagnóstico do monitoramento.</div>
+          <details id="decisionDiagnostics" class="research-panel">
+            <summary>Diagnóstico persistente de decisões</summary>
+            <p>Análises, bloqueios e recuperações do par atual. Abrir esta consulta não envia ordens. O monitoramento continua quando uma condição impede novas entradas.</p>
+            <div class="research-controls"><button type="button" onclick="loadDecisionDiagnostics()">Atualizar registros</button><a id="diagnosticExport" href="/api/diagnostics/export.csv">Exportar CSV do par</a></div>
+            <output id="decisionDiagnosticOutput" aria-live="polite">Clique em Atualizar registros para consultar o diário persistente.</output>
+          </details>
           <div class="audit-grid">
             <article class="audit-card"><span class="eyebrow">01 / ORIGEM DOS DADOS</span><strong id="dataSource">Aguardando servidor</strong><p id="dataDetail">Sem histórico validado.</p></article>
-            <article class="audit-card"><span class="eyebrow">02 / VALIDAÇÃO TEMPORAL</span><strong id="validationScore">Sem evidência</strong><p id="validationDetail">Acurácia fora do treino, comparada à referência.</p></article>
+            <article class="audit-card"><span class="eyebrow" id="validationLabel">02 / VALIDAÇÃO TEMPORAL</span><strong id="validationScore">Sem evidência</strong><p id="validationDetail">Acurácia fora do treino, comparada à referência.</p></article>
             <article class="audit-card"><span class="eyebrow">03 / ORÇAMENTO DE RISCO</span><strong id="riskBudget">—</strong><p id="riskDetail">Limites valem para ordens automáticas e manuais.</p></article>
             <article class="audit-card"><span class="eyebrow">04 / DECISÃO ATUAL</span><strong id="decisionGate">Aguardando análise</strong><p id="decisionDetail">O score técnico não é uma probabilidade de acerto.</p></article>
           </div>
           <div class="audit-notice" id="chartAvailability">Resultados PAPER são hipotéticos. O modelo estima direção de uma vela; isso não comprova lucro, nem acerto na expiração da corretora.</div>
           <div id="pricePlanPreview" class="price-plan-grid" aria-live="polite"></div>
+          <details id="fullEntryChecks" class="research-panel"><summary>Todos os filtros do ativo do gráfico</summary><p>Valores observados e limites. Critérios não avaliados não estão aprovados. A estimativa ML é diferente do score final liberado para operar.</p><output id="fullEntryChecksOutput">Aguardando análise.</output></details>
+          <details id="pairComparison" class="research-panel"><summary>Relatório comparativo por par</summary>
+            <p>Candles distintos por símbolo e timeframe. A última projeção do candle representa seu estado; consultas repetidas não viram novas oportunidades. Filtros podem reprovar simultaneamente.</p>
+            <div class="research-controls"><label>Início (horário do navegador)<input id="pairReportStart" type="datetime-local"></label><label>Fim (horário do navegador; vazio = agora)<input id="pairReportEnd" type="datetime-local"></label><button type="button" onclick="loadPairReport()">Comparar pares</button><button id="pairReportDownload" type="button" disabled onclick="downloadPairReport()">Baixar relatório JSON</button></div>
+            <p id="pairReportScope"></p><div id="pairReportTable" class="research-table-wrap"></div><output id="pairReportOutput">Selecione um período. Os registros antigos podem ter cobertura parcial dos filtros.</output>
+          </details>
+          <details id="forexResearch" class="research-panel"><summary>Backtest Forex — SL/TP e risco global</summary>
+            <p>Estudo histórico separado da execução. Pause e aguarde posições encerrarem. Avalia até duas posições em símbolos distintos, conforme a base, com orçamento e margem compartilhados e cooldown global. Aceita Random Forest ou Continuidade M1/M5, mantendo os respectivos critérios e score mínimo de 78; usa somente candles anteriores a cada entrada.</p>
+            <div class="research-controls"><label>Velas para carregar por par<input id="forexHistoryCount" type="number" min="150" max="10000" value="1000"></label><button id="forexHistoryLoad" type="button" onclick="loadForexHistory()">Carregar histórico real do MT5</button><label>Ou importar base JSON<input id="forexResearchFile" type="file" accept=".json,application/json" onchange="importForexHistory()"></label><button id="forexDatasetDownload" disabled type="button" onclick="downloadForexDataset()">Baixar base JSON</button></div>
+            <p id="forexDatasetSummary">Nenhuma base carregada. Cada símbolo exige spread por vela e especificação monetária própria. Selecione até 10.000 velas fechadas por par; o terminal pode fornecer menos. Uma base curta não valida rentabilidade.</p>
+            <div class="research-controls">
+              <label>Estratégia somente da pesquisa<select id="forexResearchStrategy"><option value="">Manter estratégia da base</option><option value="ml_random_forest">Random Forest</option><option value="forex_trend_continuation">Continuidade M1/M5</option><option value="forex_pullback_retest">Retomada após correção M1/M5 (experimental)</option></select></label>
+              <label>Posições somente da pesquisa<select id="forexResearchSlots"><option value="">Manter limite da base</option><option value="1">Uma posição global</option><option value="2">Até duas, em pares distintos</option></select></label>
+              <label>Saída somente da pesquisa<select id="forexExitMode"><option value="FIXED">SL/TP original</option><option value="BREAK_EVEN">Proteção no preço de entrada + custos</option><option value="ATR_TRAILING">Trailing ATR</option><option value="BREAK_EVEN_ATR">Proteção + trailing ATR</option></select></label>
+              <label>Ativar proteção após avanço (R)<input id="forexExitActivation" type="number" min="0.25" max="5" step="0.25" value="1"></label>
+              <label>Distância do trailing (ATR)<input id="forexExitAtr" type="number" min="0.5" max="5" step="0.25" value="2"></label>
+              <label>Saldo inicial (moeda da conta)<input id="forexInitialBalance" type="number" min="1" value="10000" step="0.01"></label>
+              <label>Velas avaliadas (máx. 2.000)<input id="forexEvaluatedBars" type="number" min="1" max="2000" value="100"></label>
+              <label>Comissão por lote, por lado<input id="forexCommission" type="number" min="0" value="0" step="0.01"></label>
+              <label>Slippage adverso por preenchimento (pontos MT5)<input id="forexSlippage" type="number" min="0" value="0" step="0.1"></label>
+              <label>Custo swap por lote, por dia UTC<input id="forexSwap" type="number" min="0" value="0" step="0.01"></label>
+              <label>Moeda da conta por R$ 1 (se meta em BRL)<input id="forexGoalRate" type="number" min="0" step="0.000001" placeholder="Ex.: 0,20 USD por BRL"></label>
+            </div>
+            <p>Estratégia, posições e saídas acima alteram somente a pesquisa. A proteção usa o fechamento da vela e vale a partir da próxima; mantém o TP e a reserva inicial de risco. Gaps e custos podem gerar perda mesmo com proteção no preço de entrada. Compare a mesma base e os mesmos custos; a configuração do robô permanece preservada. Custos monetários na moeda da conta. Zero é uma hipótese de custo zero, não uma consulta da tarifa da XM. Especificações importadas do MT5 são atuais e assumidas constantes no histórico.</p>
+            <label><input id="forexAssumptions" type="checkbox"> Revisei os custos e as especificações. Aceito stop primeiro quando SL/TP ocorrerem na mesma vela, gaps adversos e as limitações do OHLC.</label>
+            <div class="research-controls"><button id="forexResearchRun" type="button" onclick="runForexResearch()">Executar backtest Forex</button><button type="button" onclick="restoreForexResearch()">Recuperar último resultado</button></div>
+            <output id="forexResearchOutput" aria-live="polite">Nenhum backtest Forex executado. Sem operações não significa estratégia aprovada.</output>
+            <div id="forexEquityChart" class="forex-equity-chart" aria-label="Curva histórica de equity"></div>
+            <div id="forexResearchExports" class="research-controls"></div>
+          </details>
           <details class="research-panel"><summary>Laboratório de estratégia <span>Backtest binário de uma vela — não valida SL/TP Forex</span></summary>
             <p>Envie entre 150 e 2.000 velas fechadas e contínuas. Colunas: <code>time,open,high,low,close,volume</code> (time em segundos Unix ou ISO; volume opcional). As últimas até 200 velas serão avaliadas sem usar dados futuros.</p>
             <div class="research-controls"><label>Histórico OHLCV<input id="researchFile" type="file" accept=".csv,text/csv"></label><label>Custo por entrada (R$)<input id="researchCost" type="number" value="0" min="0" step="0.01"></label><button id="researchRun" onclick="runResearch()">Avaliar estratégia selecionada</button></div>
@@ -306,6 +358,10 @@
               <span>ATR: <span id="lblQuoteAtr" class="text-on-surface font-semibold">--</span></span>
               <span>Regime: <span id="quoteRegime" class="text-primary font-semibold">—</span></span>
             </div>
+            <details class="text-xs mt-2">
+              <summary class="text-primary cursor-pointer">Fibonacci — informativo</summary>
+              <pre id="fibonacciContext" class="whitespace-pre-wrap">Aguardando análise do par selecionado.</pre>
+            </details>
           </div>
 
         </section>
@@ -378,7 +434,7 @@
               <!-- Estratégia de IA -->
               <div class="flex flex-col gap-space-xs">
                 <label class="font-label-caps text-[11px] uppercase text-on-surface-variant flex items-center justify-between">
-                  <span>Estratégia de Sinais IA</span>
+                  <span>Estratégia de entradas</span>
                   <span class="text-primary cursor-pointer hover:underline text-[10px]">Parâmetros</span>
                 </label>
                 <div class="relative">
@@ -388,6 +444,7 @@
                     <option value="price_action_breakout">3. Price Action Rompimento + Volume Spike</option>
                     <option value="multi_confluence">4. Confluência Multi-Indicadores (EMA+RSI+MACD)</option>
                     <option value="ml_random_forest">5. 🧠 IA Pura — Machine Learning (Random Forest)</option>
+                    <option value="forex_trend_continuation">6. Continuidade Forex — M1/M5, rompimento e pullback</option>
                   </select>
                   <span class="material-symbols-outlined absolute right-2.5 top-2.5 text-on-surface-variant pointer-events-none text-[18px]">expand_more</span>
                 </div>
@@ -399,7 +456,7 @@
                   <span class="font-label-caps text-[10px] uppercase text-on-surface-variant">Score mín. (0–100)</span>
                   <div class="flex items-center bg-surface-container-lowest rounded-lg px-space-sm py-1.5 border border-surface-container-high/40">
                     <input id="cfgMinConfidence" aria-label="Score técnico mínimo" type="number" step="1" min="50" max="99" value="78" onchange="saveConfig()" class="w-full bg-transparent text-on-surface font-code-log text-code-log focus:outline-none" />
-                    <span class="font-code-log text-[11px] text-on-surface-variant">%</span>
+                    <span class="font-code-log text-[11px] text-on-surface-variant" id="scoreUnit">%</span>
                   </div>
                 </div>
                 <div class="flex flex-col gap-space-xs">
@@ -473,7 +530,8 @@
               </div>
 
               <div class="risk-controls">
-                <label>Risco máximo por entrada (%)<input id="cfgRiskPct" type="number" value="1" min="0.1" max="2" step="0.1" onchange="saveConfig()"></label>
+                <label><span id="riskPctLabel">Risco máximo por entrada (%)</span><input id="cfgRiskPct" type="number" value="1" min="0.1" max="2" step="0.1" onchange="saveConfig()"></label>
+                <label>Limite simultâneo Forex multipares<select id="cfgPortfolioSlots" onchange="saveConfig()"><option value="1">1 posição</option><option value="2" selected>2 posições — risco compartilhado</option></select></label>
                 <label>Perdas seguidas (limite)<input id="cfgLossLimit" type="number" value="3" min="1" max="10" onchange="saveConfig()"></label>
                 <label>Entradas por sessão (UTC)<input id="cfgDailyLimit" type="number" value="20" min="1" max="200" onchange="saveConfig()"></label>
                 <label>Intervalo entre entradas (s)<input id="cfgCooldown" type="number" value="60" min="5" max="3600" onchange="saveConfig()"></label>
@@ -504,12 +562,15 @@
                 <div class="risk-controls">
                   <label>Ajuste de timestamp do tick (minutos)<input id="cfgMt5TickOffset" type="number" min="-840" max="840" step="1" value="0" onchange="saveConfig()"></label>
                   <label>Ajuste de timestamp das velas (minutos)<input id="cfgMt5BarOffset" type="number" min="-840" max="840" step="1" value="0" onchange="saveConfig()"></label>
+                  <label>Ajuste de timestamp dos negócios (minutos)<input id="cfgMt5DealOffset" type="number" min="-840" max="840" step="1" placeholder="Automático" onchange="saveDealClock()"></label>
                   <label>Spread máximo (pontos MT5)<input id="cfgMt5Spread" type="number" value="30" min="1" onchange="saveConfig()"></label>
+                  <label>Spread máximo / distância ao SL — Forex (%)<input id="cfgMt5SpreadStopRatio" type="number" value="30" min="1" max="100" step="1" onchange="saveConfig()"></label>
                   <label>Desvio de preço (pontos)<input id="cfgMt5Deviation" type="number" value="20" min="0" onchange="saveConfig()"></label>
                   <label>Teto de volume (lotes/contratos)<input id="cfgMt5VolumeCap" type="number" value="1" min="0.001" step="0.001" onchange="saveConfig()"></label>
                   <label>Reserva para custos (moeda da conta)<input id="cfgMt5Buffer" type="number" value="0" min="0" step="0.01" onchange="saveConfig()"></label>
                 </div>
                 <p>O ajuste é subtraído dos timestamps recebidos: API 3 horas à frente de UTC → +180 minutos. Padrão 0. Tick e velas são independentes; confira os horários antes de alterar. Não mude o relógio do Windows para imitar o servidor. Reveja os ajustes se a corretora mudar o fuso.</p>
+                <p>Negócios: vazio usa confirmação automática pelo negócio de uma execução imediata; 0 declara UTC e 180 subtrai três horas. Não herda o ajuste de tick ou velas. Horários ambíguos mantêm a operação pendente para reconciliação segura.</p>
                 <p id="mt5ClockSummary"></p>
                 <p>SL/TP combinam ATR e estrutura de preços e são enviados ao servidor no modo LIVE_MT5. Gaps, slippage e custos reais podem exceder a estimativa. Sem expiração por cronômetro no MT5.</p>
               </details>
@@ -659,6 +720,13 @@
                   Nenhuma operação registrada ainda hoje.
                 </div>
               </div>
+              <details>
+                <summary class="text-primary cursor-pointer">Histórico persistente — todos os dias</summary>
+                <p class="text-xs text-on-surface-variant">Registros do modo e conta selecionados. O PnL diário continua usando o dia UTC.</p>
+                <button type="button" onclick="loadTradeHistory()" class="text-primary underline">Consultar histórico</button>
+                <a href="/api/trades/history.json" class="text-primary underline" download>Exportar histórico JSON</a>
+                <pre id="persistentTrades" class="text-xs whitespace-pre-wrap overflow-y-auto max-h-[300px]">Consulte para carregar os registros salvos.</pre>
+              </details>
             </div>
 
             <!-- Diário de Execução do Robô (Terminal Logs IA) -->
@@ -781,6 +849,11 @@
     let polling = false;
     let latestState = null;
     let researchBusy = false;
+    let forexDataset = null;
+    let forexResearchBusy = false;
+    let lastPairReport = null;
+    let forexEquityChart = null;
+    let forexChartResizeObserver = null;
     let modalOpener = null;
 
     // Inicializa o gráfico Lightweight Charts com o tema Obsidian
@@ -826,6 +899,16 @@
       } else {
         document.exitFullscreen();
       }
+    }
+
+    async function loadTradeHistory() {
+      const output = document.getElementById('persistentTrades');
+      try {
+        const data = await (await apiFetch('/api/trades/history?limit=200')).json();
+        output.textContent = `${data.items.length} de ${data.total} registros. Exporte o JSON para obter todos.\n` + data.items.map(t =>
+          `${t.day} ${t.time || ''} • ${t.symbol} • ${t.status} • ${t.pnl ?? 0} ${t.currency || ''} • ${t.entry_policy_version || 'legado'}${t.sync_error ? '\n'+t.sync_error : ''}`
+        ).join('\n');
+      } catch (error) { output.textContent = error.message; }
     }
 
     function escapeHtml(value) {
@@ -897,12 +980,97 @@
       if (symbolSelect.value) saveConfig();
     }
 
+    const forexPairNames = ['EURUSD','USDJPY','GBPUSD','USDCHF'];
+    function initializeForexSettings(config) {
+      document.getElementById('cfgForexMulti').checked = !!config.forex_multi_enabled;
+      const container = document.getElementById('forexPairSettings');
+      container.replaceChildren();
+      for (const pair of forexPairNames) {
+        const saved = (config.forex_pairs || []).find(p => p.pair === pair);
+        const legacy = config.symbol.startsWith(pair) ? config.symbol : pair;
+        const label = document.createElement('label');
+        const check = document.createElement('input'); check.type='checkbox'; check.id='cfgPairEnabled'+pair;
+        check.checked = saved?.enabled ?? config.symbol.startsWith(pair);
+        const text = document.createTextNode(' '+pair+' — símbolo exato');
+        const input = document.createElement('input'); input.id='cfgPairSymbol'+pair;
+        input.value = saved?.symbol || legacy; input.maxLength=30;
+        input.setAttribute('aria-label','Símbolo MT5 de '+pair);
+        check.disabled=input.disabled=!!latestState?.is_running || !!latestState?.has_open_trade;
+        label.append(check,text,input); container.append(label);
+      }
+    }
+    async function saveForexPairs() {
+      const pairs = forexPairNames.map(pair => ({pair, enabled:document.getElementById('cfgPairEnabled'+pair).checked,
+        symbol:document.getElementById('cfgPairSymbol'+pair).value.trim()}));
+      const enabled = document.getElementById('cfgForexMulti').checked;
+      const selected = pairs.filter(p => p.enabled);
+      const focus = selected.some(p => p.symbol === latestState.config.symbol) ? latestState.config.symbol : selected[0]?.symbol;
+      try {
+        await apiFetch('/api/config', {method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({forex_multi_enabled:enabled,forex_pairs:pairs,...(enabled && focus ? {symbol:focus}: {})})});
+        isInitialized=false; showToast('Seleção salva. O motor respeitará os filtros e o risco global.','success');
+        await fetchState();
+      } catch (err) { showToast(err.message,'error'); }
+    }
+    function renderForexRadar(state) {
+      const radar=state.forex_radar;
+      const portfolio=radar?.portfolio;
+      document.getElementById('portfolioSummary').textContent=radar?.enabled
+        ? `Limite: ${radar.max_open_positions} posições. `+(portfolio
+          ? `Abertas: ${portfolio.open_positions} • risco reservado ${formatMoney(portfolio.reserved_risk,state.currency)} / ${formatMoney(portfolio.risk_limit,state.currency)} • disponível ${formatMoney(portfolio.remaining_risk,state.currency)}. Risco USD comprado/vendido: ${formatMoney(portfolio.usd_risk.LONG,state.currency)} / ${formatMoney(portfolio.usd_risk.SHORT,state.currency)}, sem compensação.`
+          : 'Exposição global aguardando confirmação; novas entradas dependem de verificação segura.') : '';
+      const container=document.getElementById('forexRadarRows');
+      const expanded = new Set([...container.querySelectorAll('details[open]')].map(d => d.dataset.pair));
+      container.replaceChildren();
+      document.getElementById('radarGlobal').textContent=radar?.enabled
+        ? (radar.global_block || 'Motor multipares: modelos independentes; execução automática com risco global.')+(radar.updated_at ? ' • Atualizado '+new Date(radar.updated_at*1000).toLocaleTimeString() : '')
+        : 'Modo individual preservado. O Radar passa a monitorar após ativar o motor multipares.';
+      for (const pair of forexPairNames) {
+        const row=radar?.rows?.find(r => r.pair===pair);
+        const card=document.createElement('article'); card.className='forex-radar-card';
+        const title=document.createElement('h3'); title.textContent=pair+(row && row.symbol!==pair ? ' • '+row.symbol : '');
+        const status=document.createElement('p'); status.textContent=row?.status || 'DESATIVADO';
+        const signal=document.createElement('p'); signal.textContent='Sinal: '+(row?.action || '—')+(row?.uses_ml===false ? ' • Score técnico: '+(row.signal_score ?? '—')+'/100' : ' • Confiança ML: '+(row?.confidence == null ? '—' : row.confidence.toFixed(1)+'%'));
+        const valid=document.createElement('p'); valid.textContent='Validação: '+(row?.validated == null ? '—' : row.validated ? 'aprovada' : 'sem vantagem demonstrada');
+        if(row?.uses_ml===false) valid.textContent='Regras técnicas: '+(row.entry_confirmation?.passed ? 'atendidas' : 'aguardando')+' • RF não utilizado';
+        if(row?.validation?.walk_forward) valid.textContent+=` • walk-forward ${row.validation.walk_forward.passed_folds}/3 janelas`;
+        if(row?.entry_confirmation) valid.textContent+=` • contexto ${row.entry_confirmation.context_timeframe}: ${row.entry_confirmation.trend}`;
+        const reason=document.createElement('p'); reason.textContent=row?.blocked_reason || row?.signal_reason || 'Par não selecionado.';
+        const link=document.createElement('a'); link.textContent='Exportar diagnóstico deste símbolo';
+        link.href='/api/diagnostics/export.csv?'+new URLSearchParams({symbol:row?.symbol || pair});
+        const details=document.createElement('details'); details.dataset.pair=pair; details.open=expanded.has(pair);
+        const summary=document.createElement('summary'); summary.textContent='Ver filtros e valores ('+(row?.failed_checks?.length || 0)+' reprovados)';
+        const checks=document.createElement('div'); checks.className='forex-check-list';
+        checks.textContent=(row?.checks || []).map(formatEntryCheck).join('\n\n') || 'Sem análise detalhada disponível.';
+        details.append(summary,checks);
+        const fib=document.createElement('details');
+        fib.dataset.pair='fibonacci:'+pair;fib.open=expanded.has(fib.dataset.pair);
+        const fibTitle=document.createElement('summary');fibTitle.textContent='Fibonacci — informativo';
+        const fibText=document.createElement('pre');fibText.className='whitespace-pre-wrap text-xs';
+        fibText.textContent=formatFibonacci(row?.fibonacci);fib.append(fibTitle,fibText);
+        card.append(title,status,signal,valid,reason,details,fib,link); container.append(card);
+      }
+    }
+
+    async function saveDealClock() {
+      const value=document.getElementById('cfgMt5DealOffset').value;
+      try {
+        await apiFetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({mt5_deal_time_offset_minutes:value === '' ? null : Number(value)})});
+      } catch (error) {showToast(error.message,'error');}
+      isInitialized=false;
+      await fetchState();
+    }
+
     async function saveConfig() {
       const payload = {
         execution_mode: document.getElementById('cfgExecutionMode').value,
         mt5_tick_time_offset_minutes: Number(document.getElementById('cfgMt5TickOffset').value),
         mt5_bar_time_offset_minutes: Number(document.getElementById('cfgMt5BarOffset').value),
+        forex_max_open_positions: Number(document.getElementById('cfgPortfolioSlots').value),
+        mt5_deal_time_offset_minutes: document.getElementById('cfgMt5DealOffset').value === '' ? null : Number(document.getElementById('cfgMt5DealOffset').value),
         mt5_max_spread_points: Number(document.getElementById('cfgMt5Spread').value),
+        mt5_max_spread_stop_ratio: Number(document.getElementById('cfgMt5SpreadStopRatio').value)/100,
         mt5_deviation_points: Number(document.getElementById('cfgMt5Deviation').value),
         mt5_volume_cap: Number(document.getElementById('cfgMt5VolumeCap').value),
         mt5_cost_buffer: Number(document.getElementById('cfgMt5Buffer').value),
@@ -1062,8 +1230,12 @@
 
         // 1. Inicializa inputs uma única vez
         if (!isInitialized) {
+          initializeForexSettings(state.config);
           document.getElementById('cfgExecutionMode').value = state.config.execution_mode;
           for (const [id,key] of Object.entries({cfgMt5TickOffset:'mt5_tick_time_offset_minutes',cfgMt5BarOffset:'mt5_bar_time_offset_minutes',cfgMt5Spread:'mt5_max_spread_points',cfgMt5Deviation:'mt5_deviation_points',cfgMt5VolumeCap:'mt5_volume_cap',cfgMt5Buffer:'mt5_cost_buffer'})) document.getElementById(id).value = state.config[key];
+          document.getElementById('cfgMt5SpreadStopRatio').value = (state.config.mt5_max_spread_stop_ratio ?? .30)*100;
+          document.getElementById('cfgMt5DealOffset').value = state.config.mt5_deal_time_offset_minutes ?? '';
+          document.getElementById('cfgPortfolioSlots').value = state.config.forex_max_open_positions ?? 2;
           document.getElementById('cfgMarketType').value = state.config.market_type;
           if (state.config.safirion_sub_type) {
             document.getElementById('cfgSafirionSubType').value = state.config.safirion_sub_type;
@@ -1218,7 +1390,7 @@
           const ind = state.signal.indicators || {};
           document.getElementById('subIndRsi').textContent = ind.rsi !== undefined ? `${ind.rsi}` : '--';
           document.getElementById('subIndBb').textContent = (ind.bb_upper && ind.bb_lower) ? 'Válido' : '--';
-          document.getElementById('subIndEma').textContent = (ind.ml_prob_up !== undefined) ? `▲ ${ind.ml_prob_up}%` : (ind.ema_fast ? 'Sinc' : '--');
+          document.getElementById('subIndEma').textContent = isTechnicalForexStrategy(state.config.strategy_id) ? 'EMA 9/21' : (ind.ml_prob_up !== undefined) ? `▲ ${ind.ml_prob_up}%` : (ind.ema_fast ? 'Sinc' : '--');
 
           // Atualiza fita do RSI (14)
           if (ind.rsi !== undefined) {
@@ -1354,7 +1526,7 @@
         }
 
         // 13. Telemetria do Dock Esquerdo
-        document.getElementById('telSignalsProcessed').textContent = `${(safConn.ws_messages_received || 0) + (state.stats.total_trades || 0)}`;
+        document.getElementById('telSignalsProcessed').textContent = `${state.operational?.audit?.persisted_count || 0}`;
 
       } catch (err) {
       document.getElementById('lastUpdated').textContent = 'OFFLINE • '+err.message;
@@ -1363,6 +1535,19 @@
       } finally {
         polling = false;
       }
+    }
+
+    function formatFibonacci(f) {
+      if (!f?.available) return f?.reason || 'Aguardando pivôs confirmados. Não interfere nas entradas.';
+      const lines=[`Movimento: ${f.direction === 'UP' ? 'alta' : 'baixa'} • estrutura Bid`,
+        `Início: ${formatPrice(f.start.price)} • ${f.start.time}`,
+        `Fim: ${formatPrice(f.end.price)} • ${f.end.time}`,
+        ...f.levels.map(l => `Retração ${(l.ratio*100).toFixed(1)}%: ${formatPrice(l.price)}`),
+        ...f.extensions.map(l => `Extensão ${(l.ratio*100).toFixed(1)}%: ${formatPrice(l.price)}`),
+        f.within_swing ? (f.in_382_618_zone ? 'Preço na região 38,2–61,8%.' : 'Preço dentro do movimento de referência.') : 'Preço fora do movimento de referência.',
+        'Últimos 60 candles fechados; pivôs confirmados por 2 candles de cada lado.',
+        'Referência informativa; não aprova sinais nem altera SL/TP.'];
+      return lines.join('\n');
     }
 
     function formatPrice(value) { return Number.isFinite(Number(value)) ? Number(value).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:8}) : '—'; }
@@ -1380,8 +1565,23 @@
       catch (err) { showToast(err.message,'error'); }
     }
     function renderAudit(state) {
+      renderForexRadar(state);
+      document.getElementById('fullEntryChecksOutput').textContent=(state.entry_checks || []).map(formatEntryCheck).join('\n\n') || 'Aguardando análise detalhada.';
+      for (const id of ['forexHistoryLoad','forexResearchRun']) document.getElementById(id).disabled=forexResearchBusy || state.is_running || state.has_open_trade;
+      if (!document.getElementById('pairReportStart').value) {
+        const localInput = d => new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);
+        document.getElementById('pairReportStart').value=localInput(new Date(Date.now()-86400000));
+      }
       const live = state.execution_mode === 'LIVE_MT5';
       const priceBased = state.config.market_type !== 'SAFIRION_OB';
+      const op=state.operational || {};
+      document.getElementById('riskPctLabel').textContent=state.config.forex_multi_enabled && state.config.forex_max_open_positions>1 ? 'Orçamento global simultâneo (%)' : 'Risco máximo por entrada (%)';
+      const stateLabels={PAUSED:'Pausado pelo usuário',MONITORING:'Monitoramento solicitado',RECOVERING:'Falha ou espera de recuperação registrada'};
+      const faults=Object.entries(op.faults || {}).map(([key,f]) => `${key} [${f.code}]: ${f.message}`).join(' • ');
+      const pending=Object.entries(op.pending_revalidation || {}).map(([key,f]) => `${key} [${f.code}]: ${f.message}`).join(' • ');
+      const operationalReason=op.blocked_reason || faults || 'Sem falha operacional ativa registrada.';
+      document.getElementById('operationalStatus').textContent=(stateLabels[op.state] || 'Aguardando diagnóstico')+'\nOperacional: '+operationalReason+'\nAnálises: '+(state.stats.status_reason || state.risk.blocked_reason || 'Condições sendo avaliadas')+(pending ? '\nRejeições anteriores aguardando revalidação: '+pending+'. O fim da espera não aprova uma entrada.' : '');
+      document.getElementById('diagnosticExport').href='/api/diagnostics/export.csv?'+new URLSearchParams({symbol:state.config.symbol});
       const account = state.connections.mt5.account || {};
       const clock = state.diagnostics.clock || {};
       document.getElementById('mt5ClockSummary').textContent = `Computador UTC: ${clock.computer_utc || '—'} • Tick bruto interpretado como UTC: ${clock.raw_tick_utc || '—'} • Tick normalizado UTC: ${clock.tick_utc || '—'} • Última vela bruta como UTC: ${clock.raw_bar_utc || '—'} • Última vela normalizada UTC: ${clock.bar_utc || '—'}`;
@@ -1397,6 +1597,7 @@
       for (const el of document.querySelectorAll('[data-money-prefix]')) el.textContent = state.currency;
       document.getElementById('bridgeTelemetry').textContent = state.connections.safirion.connected ? 'conectada' : 'não conectada';
       document.getElementById('quoteRegime').textContent = state.signal?.indicators?.regime || '—';
+      document.getElementById('fibonacciContext').textContent = formatFibonacci(state.signal?.indicators?.fibonacci);
       document.getElementById('lblQuoteDelta').textContent = state.execution_mode;
       const q = state.data_quality;
       const v = state.signal?.indicators?.ml_validation || {};
@@ -1405,16 +1606,27 @@
       document.getElementById('dataDetail').textContent = `${q.closed_candles} velas fechadas • vela em formação excluída${q.history_error ? ' • '+q.history_error : ''}`+(q.tick_age_seconds != null ? ` • último tick há ${q.tick_age_seconds}s` : '');
       document.getElementById('validationScore').textContent = v.enabled ? `${v.accuracy}% fora do treino` : 'Amostra insuficiente';
       document.getElementById('validationDetail').textContent = v.enabled ? `Referência ${v.baseline_accuracy}% • ${v.validation_samples} amostras • Brier ${v.brier_score}. ${v.validated ? 'Filtro temporal aprovado neste período.' : 'Sem vantagem demonstrada.'}` : (v.reason || 'Aguardando histórico real suficiente.');
+      if(v.validation_method==='walk_forward_v2') document.getElementById('validationDetail').textContent+=` RF Forex v3 • walk-forward ${v.walk_forward?.passed_folds ?? 0}/3 janelas (mínimo 2 e métricas agregadas).`;
+      const technical=isTechnicalForexStrategy(state.config.strategy_id);
+      document.getElementById('scoreUnit').textContent=technical ? '/100' : '%';
+      document.getElementById('validationLabel').textContent=technical ? '02 / VALIDAÇÃO TÉCNICA' : '02 / VALIDAÇÃO TEMPORAL';
+      document.getElementById('barSentBuyers').closest('.bg-surface-container-lowest').style.display=technical ? 'none' : '';
+      if(technical) {
+        const context=state.signal?.indicators?.entry_confirmation;
+        document.getElementById('validationScore').textContent=context?.passed ? 'Regras atendidas' : 'Aguardando confirmação';
+        document.getElementById('validationDetail').textContent=`${forexStrategyLabel(state.config.strategy_id)} • M5: ${context?.trend || 'aguardando dados'} • gatilho: ${context?.trigger || 'nenhum'}. Score de regras; rentabilidade ainda não demonstrada. RF não utilizado.`;
+      }
       document.getElementById('riskBudget').textContent = `${state.risk.max_risk_pct}% por entrada`;
       document.getElementById('riskDetail').textContent = `Orçamento da próxima ordem ${formatMoney(state.risk.next_amount,state.currency)} • perda restante ${formatMoney(state.risk.remaining_loss_budget,state.currency)}`;
       document.getElementById('decisionGate').textContent = state.risk.blocked_reason ? 'AGUARDAR' : 'SETUP DISPONÍVEL';
       document.getElementById('decisionDetail').textContent = state.risk.blocked_reason || 'Score técnico é confluência de regras, não probabilidade de lucro.';
       const open = state.has_open_trade;
-      for (const input of document.querySelectorAll('[id^="cfg"]')) input.disabled = state.is_running || open;
+      for (const input of document.querySelectorAll('[id^="cfg"]')) input.disabled = forexResearchBusy || researchBusy || state.is_running || open;
+      document.getElementById('cfgMt5DealOffset').disabled = forexResearchBusy || researchBusy || state.is_running;
       document.getElementById('cfgCustomBalance').disabled = state.execution_mode === 'LIVE_MT5' || state.is_running || open || state.stats.total_trades > 0;
       document.getElementById('cfgUseMartingale').disabled = true;
       document.getElementById('cfgMartingaleFactor').disabled = true;
-      for (const id of ['btn-call','btn-put']) document.getElementById(id).disabled = open || state.risk.next_amount <= 0;
+      for (const id of ['btn-call','btn-put']) document.getElementById(id).disabled = forexResearchBusy || researchBusy || !!state.config.forex_multi_enabled || open || state.risk.next_amount <= 0;
       document.getElementById('btnToggleBot').disabled = false;
       document.getElementById('researchRun').disabled = researchBusy || state.is_running || open;
       document.getElementById('cfgExpiration').closest('.flex.flex-col').hidden = priceBased;
@@ -1428,6 +1640,126 @@
       document.getElementById('pricePlanPreview').innerHTML = Object.entries(state.trade_plans || {}).map(([side,p]) => `<div class="bg-surface-container-lowest rounded-lg p-space-sm text-xs price-plan-card"><strong>${side}</strong> ${p.ready ? `Entrada ${escapeHtml(formatPrice(p.entry_price))} • SL ${escapeHtml(formatPrice(p.stop_loss))} • TP ${escapeHtml(formatPrice(p.take_profit))}<br>Retorno/risco ${p.net_reward_risk.toFixed(2)} • perda estimada ${escapeHtml(formatMoney(p.estimated_loss,state.currency))} • lucro projetado ${escapeHtml(formatMoney(p.estimated_profit,state.currency))}<br>${escapeHtml(p.stop_basis)}; ${escapeHtml(p.target_basis)}. Prévia; revalidada na ordem.` : escapeHtml(p.reason)}</div>`).join('');
       if (priceBased && !live) document.getElementById('chartAvailability').textContent = 'PAPER Forex/B3: saída por preço no SL/TP ou encerramento manual. Sem prazo de expiração. PnL e quantidade são virtuais; não simulam integralmente custos e liquidez da corretora.';
       document.getElementById('cfgExpiration').disabled = priceBased || state.is_running || open;
+    }
+
+    async function loadDecisionDiagnostics() {
+      const output=document.getElementById('decisionDiagnosticOutput');
+      if (!latestState) return;
+      try {
+        const response=await apiFetch('/api/diagnostics/events?'+new URLSearchParams({symbol:latestState.config.symbol,limit:'30'}));
+        const data=await response.json();
+        output.textContent=data.items.map(e => {
+          const p=e.payload;
+          const failures=(p.checks || []).filter(g => g.status==='FAIL').map(formatEntryCheck).join('\n');
+          return `${new Date(e.last_seen*1000).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'})} • ${e.symbol} / ${e.timeframe} • ${e.kind} [${e.code}]\n${p.reason || p.message || p.first_block || ''}${failures ? '\nBloqueios: '+failures : ''}\nID ${e.id} • análise ${p.analysis_id || '—'}`;
+        }).join('\n\n') || 'Nenhum registro disponível para este par.';
+      } catch (error) { output.textContent=error.message; }
+    }
+
+
+    function formatEntryCheck(g) {
+      const status={PASS:'APROVADO',FAIL:'REPROVADO',NOT_EVALUATED:'NÃO AVALIADO'}[g.status] || g.status;
+      const value = v => v == null ? '—' : typeof v === 'boolean' ? (v ? 'sim':'não') : typeof v === 'object' ? JSON.stringify(v) : String(v);
+      return `${g.informational ? '[Informativo] ' : ''}${g.label || g.code}: ${status}`+
+        ('observed' in g ? `\nObservado: ${value(g.observed)} ${g.unit || ''} • Exigido: ${g.operator || ''} ${value(g.required)}` : '')+
+        (g.reason ? '\n'+g.reason : '')+(g.note ? '\n'+g.note : '');
+    }
+    function downloadJSON(value,name) {
+      const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:'application/json'}));
+      const link=document.createElement('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    }
+    async function loadPairReport() {
+      const output=document.getElementById('pairReportOutput');
+      try {
+        const start=new Date(document.getElementById('pairReportStart').value).getTime()/1000;
+        const end=document.getElementById('pairReportEnd').value ? new Date(document.getElementById('pairReportEnd').value).getTime()/1000 : Date.now()/1000;
+        if (!Number.isFinite(start) || !Number.isFinite(end) || end<start) throw new Error('Confira o início e o fim do período.');
+        const response=await apiFetch('/api/diagnostics/pairs?'+new URLSearchParams({start,end,mode:latestState.execution_mode}));
+        const data=await response.json();lastPairReport=data;
+        document.getElementById('pairReportScope').textContent=`Modo ${data.mode} • Conta ${data.account_login || 'PAPER'} / ${data.account_server || 'virtual'} • Horários exibidos pelo navegador; consulta por última observação UTC.`;
+        const box=document.getElementById('pairReportTable');box.replaceChildren();
+        const table=document.createElement('table');const head=document.createElement('tr');
+        for (const name of ['Símbolo / TF','Candles','ML aprovado','Score aprovado','Sinal qualificado','Candidatos à pré-validação','Pré-validação aprovada','Tentativas rejeitadas','Intenções registradas','Principais bloqueios']) {const th=document.createElement('th');th.textContent=name;head.append(th);}
+        table.append(head);
+        for (const row of data.rows) {
+          const tr=document.createElement('tr');
+          for (const value of [row.symbol+' / '+row.timeframe,row.analyzed_candles,row.ml_validated_candles,row.score_passed_candles,row.signal_qualified_candles,row.candidate_candles,row.preflight_approved,row.preflight_rejected,row.recorded_intents,row.blocks.slice(0,5).map(g => g.label+': '+g.candles).join(' • ')+' • Rejeições em tentativas: '+((row.preflight_rejection_details || []).map(g=>g.label+': '+g.attempts).join(' • ') || 'nenhuma')]) {const td=document.createElement('td');td.textContent=String(value);tr.append(td);}
+          table.append(tr);
+        }
+        box.append(table);output.textContent=(data.rows.length ? data.counting : 'Nenhum registro Forex no período e escopo selecionados.')+'\n'+data.limitations.join('\n');
+        document.getElementById('pairReportDownload').disabled=false;
+      } catch (error) {output.textContent=error.message;}
+    }
+    function downloadPairReport() {if(lastPairReport) downloadJSON(lastPairReport,'relatorio-pares.json');}
+    function isTechnicalForexStrategy(id) {return ['forex_trend_continuation','forex_pullback_retest'].includes(id);}
+    function forexExitLabel(mode) {return {FIXED:'SL/TP original',BREAK_EVEN:'Proteção no preço de entrada + custos',ATR_TRAILING:'Trailing ATR',BREAK_EVEN_ATR:'Proteção + trailing ATR'}[mode] || mode;}
+    function forexStrategyLabel(id) {return {forex_trend_continuation:'Continuidade M1/M5',forex_pullback_retest:'Retomada após correção M1/M5',ml_random_forest:'Random Forest'}[id] || id;}
+    function setForexDataset(data) {
+      if (!Array.isArray(data.markets) || !data.markets.length) throw new Error('Base JSON precisa conter markets, specification e candles por símbolo. Baixe uma base do MT5 como referência.');
+      forexDataset=data;
+      document.getElementById('forexResearchStrategy').value='';
+      document.getElementById('forexResearchSlots').value='';
+      document.getElementById('forexExitMode').value=data.exit_management?.mode || 'FIXED';
+      document.getElementById('forexExitActivation').value=data.exit_management?.activation_r ?? 1;
+      document.getElementById('forexExitAtr').value=data.exit_management?.trailing_atr_mult ?? 2;
+      document.getElementById('forexDatasetSummary').textContent=data.markets.map(m => `${m.symbol}: ${m.candles?.length || 0} velas • ${m.source} • ${m.specification_basis}`).join(' • ');
+      if(data.config)document.getElementById('forexDatasetSummary').textContent+=` • Configuração da base: ${data.config.timeframe}, score ${data.config.min_confidence}%, limite ${data.config.forex_max_open_positions ?? 1} posição(ões).`;
+      for (const [id,key] of Object.entries({forexInitialBalance:'initial_balance',forexEvaluatedBars:'evaluated_bars',forexCommission:'commission_per_lot_side',forexSlippage:'adverse_slippage_points',forexSwap:'swap_cost_per_lot_utc_day',forexGoalRate:'goal_fx_account_per_brl'})) if (data[key]!=null) document.getElementById(id).value=data[key];
+      document.getElementById('forexDatasetDownload').disabled=false;
+      document.getElementById('forexAssumptions').checked=false;
+    }
+    async function loadForexHistory() {
+      if(forexResearchBusy)return;
+      const output=document.getElementById('forexResearchOutput');forexResearchBusy=true;
+      output.textContent='Consultando histórico e especificações no terminal. Nenhuma ordem será enviada.';
+      try {const count=Number(document.getElementById('forexHistoryCount').value);if(!Number.isInteger(count)||count<150||count>10000)throw new Error('Informe entre 150 e 10.000 velas por par.');const res=await apiFetch('/api/research/forex/history?count='+count,{method:'POST',signal:AbortSignal.timeout(120000)});setForexDataset(await res.json());output.textContent='Base carregada. Revise custos, saldo, câmbio e hipóteses antes de executar.';}
+      catch(error) {output.textContent=error.message;}
+      finally {forexResearchBusy=false;}
+    }
+    async function importForexHistory() {
+      try {const file=document.getElementById('forexResearchFile').files[0];if(!file)return;if(file.size>8*1024*1024)throw new Error('Arquivo acima de 8 MB.');setForexDataset(JSON.parse(await file.text()));}
+      catch(error) {document.getElementById('forexResearchOutput').textContent=error.message;}
+    }
+    function downloadForexDataset() {if(forexDataset)downloadJSON(forexDataset,'base-forex.json');}
+    function showForexResult(job) {
+      const r=job.result,output=document.getElementById('forexResearchOutput');
+      output.textContent=`Backtest Forex • ${r.currency} • ${r.evaluated_bars} velas avaliadas\nEstratégia: ${forexStrategyLabel(r.config.strategy_id)}\nPeríodo: ${new Date(r.start*1000).toLocaleString('pt-BR')} a ${new Date(r.end*1000).toLocaleString('pt-BR')} (horário do navegador) • ${r.config.timeframe} • score mínimo ${r.config.min_confidence}${isTechnicalForexStrategy(r.config.strategy_id) ? ' pontos' : '%'}\nSaída da pesquisa: ${forexExitLabel(r.assumptions.exit_management?.mode || 'FIXED')} • ajustes registrados: ${[...r.trades,...(r.open_positions || [])].reduce((n,t)=>n+(t.stop_updates?.length || 0),0)}\nCustos assumidos: comissão ${r.assumptions.commission_per_lot_side} por lote/lado; slippage ${r.assumptions.adverse_slippage_points} pontos/preenchimento; swap ${r.assumptions.swap_cost_per_lot_utc_day} por lote/dia UTC.\nOperações encerradas: ${r.closed_trades} • Ganhos: ${r.wins} • Perdas: ${r.losses} • Empates: ${r.draws ?? r.trades.filter(t=>t.status==='DRAW').length}\nPnL realizado: ${r.realized_pnl.toFixed(2)} • Equity final: ${r.ending_equity.toFixed(2)} • Drawdown amostrado: ${r.max_drawdown.toFixed(2)}\nProfit factor: ${r.profit_factor ?? (r.closed_trades ? 'indefinido (sem perdas)' : 'sem amostra')} • Expectativa por trade encerrado: ${r.expectancy ?? 'sem amostra'}\nVelas ambíguas (stop primeiro): ${r.ambiguous_bars} • Posições abertas no fim: ${(r.open_positions ?? (r.open_position ? [r.open_position] : [])).map(t=>t.symbol).join(', ') || 'nenhuma'} • Limite global: ${r.max_open_positions ?? 1}\n${r.per_pair.map(p=>p.symbol+': '+p.analyses+' análises, '+(p.validation_kind==='TECHNICAL_RULES' ? p.technical_qualified+' sinais técnicos, ' : p.validated+' validações ML, ')+p.entries+' entradas; bloqueios '+JSON.stringify(p.blocks)).join('\n')}\n${r.closed_trades ? 'Resultado exploratório; não comprova rentabilidade futura.' : (r.open_positions?.length || r.open_position) ? 'POSIÇÕES AINDA ABERTAS: sem operações encerradas para avaliar rentabilidade.' : 'SEM OPERAÇÕES: não há evidência de rentabilidade.'}\n${r.limitations.join('\n')}`+(r.financial_breakdown ? '\n\nDiagnóstico financeiro por grupo (descritivo; não aprova estratégia):\n'+[['symbol','Par'],['entry_hour_utc','Hora de entrada (UTC)'],['trigger','Tipo de entrada'],['policy','Versão da estratégia']].map(([key,label])=>label+':\n'+r.financial_breakdown[key].map(g=>`${g.group}: ${g.closed_trades} encerradas; PnL ${g.net_pnl.toFixed(2)}; expectativa ${g.expectancy}; MAE/R observado ${g.mean_sampled_mae_r.toFixed(2)}; MFE/R observado ${g.mean_sampled_mfe_r.toFixed(2)}`).join('\n')).join('\n')+'\nMAE/R: movimento observado contra a entrada. MFE/R: a favor. Unidade: distância inicial ao stop; são limites inferiores, não trajetórias completas.\n'+r.financial_breakdown.note : '')+(job.persistence_warning ? '\n'+job.persistence_warning : '');
+      const exports=document.getElementById('forexResearchExports');exports.replaceChildren();
+      for(const [kind,label] of [['json','Baixar resultado completo JSON'],['trades','Baixar operações CSV'],['analyses','Baixar análises e rejeições CSV']]) {const link=document.createElement('a');link.textContent=label;link.href='/api/research/forex/jobs/'+job.id+'/export?kind='+kind;exports.append(link);}
+      const container=document.getElementById('forexEquityChart');
+      if(forexEquityChart)forexEquityChart.remove();
+      forexEquityChart=LightweightCharts.createChart(container,{width:container.clientWidth,height:240,layout:{background:{type:'solid',color:'#061422'},textColor:'#bcc9cd'},localization:{timeFormatter:time=>new Date(Number(time)*1000).toLocaleString('pt-BR')},timeScale:{timeVisible:true,tickMarkFormatter:(time,type)=>type<=2 ? new Date(Number(time)*1000).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}) : new Date(Number(time)*1000).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}});
+      forexEquityChart.addLineSeries({color:'#40dcea'}).setData(r.equity_curve.map(p=>({time:p.time,value:p.equity})));
+      forexEquityChart.timeScale().fitContent();
+      if(forexChartResizeObserver)forexChartResizeObserver.disconnect();
+      forexChartResizeObserver=new ResizeObserver(entries=>{const width=Math.floor(entries[0].contentRect.width);if(width>0)forexEquityChart?.applyOptions({width});});
+      forexChartResizeObserver.observe(container);
+    }
+    async function runForexResearch() {
+      if(forexResearchBusy)return;
+      const output=document.getElementById('forexResearchOutput');
+      try {
+        if(!forexDataset)throw new Error('Carregue ou importe uma base de histórico primeiro.');
+        if(!document.getElementById('forexAssumptions').checked)throw new Error('Revise e confirme as hipóteses de custos e execução.');
+        forexResearchBusy=true;
+        const studyConfig=structuredClone(forexDataset.config || latestState.config);
+        const studyStrategy=document.getElementById('forexResearchStrategy').value;
+        const studySlots=document.getElementById('forexResearchSlots').value;
+        if(studyStrategy)studyConfig.strategy_id=studyStrategy;
+        if(studySlots)studyConfig.forex_max_open_positions=Number(studySlots);
+        const payload={...forexDataset,config:studyConfig,assumptions_acknowledged:true,
+          exit_management:{mode:document.getElementById('forexExitMode').value,activation_r:Number(document.getElementById('forexExitActivation').value),trailing_atr_mult:Number(document.getElementById('forexExitAtr').value)},
+          initial_balance:Number(document.getElementById('forexInitialBalance').value),evaluated_bars:Number(document.getElementById('forexEvaluatedBars').value),commission_per_lot_side:Number(document.getElementById('forexCommission').value),adverse_slippage_points:Number(document.getElementById('forexSlippage').value),swap_cost_per_lot_utc_day:Number(document.getElementById('forexSwap').value),goal_fx_account_per_brl:document.getElementById('forexGoalRate').value ? Number(document.getElementById('forexGoalRate').value) : null};
+        const res=await apiFetch('/api/research/forex/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        const initial=await res.json();let job=initial;
+        while(job.state==='RUNNING') {output.textContent=`Avaliando histórico: ${job.completed_bars}/${job.total_bars} velas. O robô permanece pausado. Este estudo não envia ordens.`;await new Promise(resolve=>setTimeout(resolve,1000));const next=await apiFetch('/api/research/forex/jobs/'+initial.id);job=await next.json();}
+        if(job.state!=='DONE')throw new Error(job.error || 'Avaliação não concluída.');showForexResult(job);
+      } catch(error) {output.textContent=error.message;}
+      finally {forexResearchBusy=false;}
+    }
+    async function restoreForexResearch() {
+      try {const res=await apiFetch('/api/research/forex/latest');const job=await res.json();if(!job.result)throw new Error('Nenhum resultado persistido neste diário.');showForexResult(job);}
+      catch(error) {document.getElementById('forexResearchOutput').textContent=error.message;}
     }
 
     async function runResearch() {

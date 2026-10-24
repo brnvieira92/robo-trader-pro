@@ -49,7 +49,9 @@ class FakeMT5:
         if self.no_response:return None
         return NS(retcode=self.sendcode,order=500 if self.fill else 0,deal=700 if self.fill else 0)
     def history_deals_get(self,*args,**kw):
-        return None if self.deals is None else tuple(d for d in self.deals if not kw.get('position') or d.position_id==kw['position'])
+        return None if self.deals is None else tuple(d for d in self.deals if
+            (not kw.get('position') or d.position_id==kw['position']) and
+            (not kw.get('ticket') or d.order==kw['ticket']))
     def close_position(self):
         self.positions=[]
         incoming=self.deals[0]
@@ -202,13 +204,14 @@ def test_reconciliation_is_idempotent_and_open_positions_have_no_timer(live_bot)
         assert b.stats['total_trades']==1 and b.stats['daily_pnl']==pytest.approx(2.45)
     asyncio.run(run())
 
-def test_unprotected_position_pauses_but_is_not_falsely_closed(live_bot):
+def test_unprotected_position_blocks_entries_and_keeps_monitoring(live_bot):
     b,sdk=live_bot
     async def run():
         await b.execute_trade_from_signal(signal(),True)
         sdk.positions[0].sl=0;b.is_running=True
         await b.reconcile_live()
-        assert not b.is_running and b._has_open_trade
+        assert b.is_running and b._has_open_trade
+        assert b._risk_block(manual=True)
         assert b.trade_history[0]['status']=='OPEN' and not b.trade_history[0]['protected']
     asyncio.run(run())
 
@@ -268,13 +271,14 @@ def test_cancellation_is_resolved_only_by_matching_unfilled_broker_history(live_
         assert b.stats['wins']==0 and b.stats['daily_pnl']==0
     asyncio.run(run())
 
-def test_widening_stop_is_detected_and_pauses_automation(live_bot):
+def test_widening_stop_blocks_entries_and_keeps_monitoring(live_bot):
     b,sdk=live_bot
     async def run():
         await b.execute_trade_from_signal(signal(),True)
         sdk.positions[0].sl-=.01;b.is_running=True
         await b.reconcile_live()
-        assert b._has_open_trade and not b.is_running
+        assert b._has_open_trade and b.is_running
+        assert b._risk_block(manual=True)
         assert not b.trade_history[0]['protected']
     asyncio.run(run())
 
