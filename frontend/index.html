@@ -193,11 +193,11 @@
             <p id="pairReportScope"></p><div id="pairReportTable" class="research-table-wrap"></div><output id="pairReportOutput">Selecione um período. Os registros antigos podem ter cobertura parcial dos filtros.</output>
           </details>
           <details id="forexResearch" class="research-panel"><summary>Backtest Forex — SL/TP e risco global</summary>
-            <p>Estudo histórico separado da execução. Pause e aguarde posições encerrarem. Avalia até duas posições em símbolos distintos, conforme a base, com orçamento e margem compartilhados e cooldown global. Aceita Random Forest ou Continuidade M1/M5, mantendo os respectivos critérios e score mínimo de 78; usa somente candles anteriores a cada entrada.</p>
+            <p>Estudo histórico separado da execução. Pause e aguarde posições encerrarem. Avalia até duas posições em símbolos distintos, conforme a base, com orçamento e margem compartilhados e cooldown global. Aceita Random Forest ou as estratégias técnicas Forex disponíveis, mantendo os respectivos critérios e score mínimo de 78; usa somente candles anteriores a cada entrada.</p>
             <div class="research-controls"><label>Velas para carregar por par<input id="forexHistoryCount" type="number" min="150" max="10000" value="1000"></label><button id="forexHistoryLoad" type="button" onclick="loadForexHistory()">Carregar histórico real do MT5</button><label>Ou importar base JSON<input id="forexResearchFile" type="file" accept=".json,application/json" onchange="importForexHistory()"></label><button id="forexDatasetDownload" disabled type="button" onclick="downloadForexDataset()">Baixar base JSON</button></div>
             <p id="forexDatasetSummary">Nenhuma base carregada. Cada símbolo exige spread por vela e especificação monetária própria. Selecione até 10.000 velas fechadas por par; o terminal pode fornecer menos. Uma base curta não valida rentabilidade.</p>
             <div class="research-controls">
-              <label>Estratégia somente da pesquisa<select id="forexResearchStrategy"><option value="">Manter estratégia da base</option><option value="ml_random_forest">Random Forest</option><option value="forex_trend_continuation">Continuidade M1/M5</option><option value="forex_pullback_retest">Retomada após correção M1/M5 (experimental)</option><option value="forex_triple_atr">Triplo ATR — novo alinhamento (experimental)</option></select></label>
+              <label>Estratégia somente da pesquisa<select id="forexResearchStrategy"><option value="">Manter estratégia da base</option><option value="ml_random_forest">Random Forest</option><option value="forex_trend_continuation">Continuidade M1/M5</option><option value="forex_pullback_retest">Retomada após correção M1/M5 (experimental)</option><option value="forex_triple_atr">Triplo ATR — novo alinhamento (experimental)</option><option value="forex_structure_retest">Pivô estrutural M1/M5 — rompimento e reteste</option></select></label>
               <label>Posições somente da pesquisa<select id="forexResearchSlots"><option value="">Manter limite da base</option><option value="1">Uma posição global</option><option value="2">Até duas, em pares distintos</option></select></label>
               <label>Saída somente da pesquisa<select id="forexExitMode"><option value="FIXED">SL/TP original</option><option value="BREAK_EVEN">Proteção no preço de entrada + custos</option><option value="ATR_TRAILING">Trailing ATR</option><option value="BREAK_EVEN_ATR">Proteção + trailing ATR</option></select></label>
               <label>Ativar proteção após avanço (R)<input id="forexExitActivation" type="number" min="0.25" max="5" step="0.25" value="1"></label>
@@ -446,6 +446,7 @@
                     <option value="ml_random_forest">5. 🧠 IA Pura — Machine Learning (Random Forest)</option>
                     <option value="forex_trend_continuation">6. Continuidade Forex — M1/M5, rompimento e pullback</option>
                     <option value="forex_triple_atr">7. Triplo ATR — experimental, somente conta demo</option>
+                    <option value="forex_structure_retest">8. Pivô estrutural M1/M5 — rompimento e reteste</option>
                   </select>
                   <span class="material-symbols-outlined absolute right-2.5 top-2.5 text-on-surface-variant pointer-events-none text-[18px]">expand_more</span>
                 </div>
@@ -1024,7 +1025,7 @@
       const expanded = new Set([...container.querySelectorAll('details[open]')].map(d => d.dataset.pair));
       container.replaceChildren();
       document.getElementById('radarGlobal').textContent=radar?.enabled
-        ? (radar.global_block || 'Motor multipares: modelos independentes; execução automática com risco global.')+(radar.updated_at ? ' • Atualizado '+new Date(radar.updated_at*1000).toLocaleTimeString() : '')
+        ? (radar.global_block || 'Motor multipares: análises independentes; execução automática com risco global.')+(radar.updated_at ? ' • Atualizado '+new Date(radar.updated_at*1000).toLocaleTimeString() : '')
         : 'Modo individual preservado. O Radar passa a monitorar após ativar o motor multipares.';
       for (const pair of forexPairNames) {
         const row=radar?.rows?.find(r => r.pair===pair);
@@ -1036,6 +1037,7 @@
         if(row?.uses_ml===false) valid.textContent='Regras técnicas: '+(row.entry_confirmation?.passed ? 'atendidas' : 'aguardando')+' • RF não utilizado';
         if(row?.validation?.walk_forward) valid.textContent+=` • walk-forward ${row.validation.walk_forward.passed_folds}/3 janelas`;
         if(row?.entry_confirmation) valid.textContent+=` • contexto ${row.entry_confirmation.context_timeframe}: ${row.entry_confirmation.trend}`;
+        if(row?.entry_confirmation?.phase) valid.textContent+=' • '+forexPhaseLabel(row.entry_confirmation.phase);
         const reason=document.createElement('p'); reason.textContent=row?.blocked_reason || row?.signal_reason || 'Par não selecionado.';
         const link=document.createElement('a'); link.textContent='Exportar diagnóstico deste símbolo';
         link.href='/api/diagnostics/export.csv?'+new URLSearchParams({symbol:row?.symbol || pair});
@@ -1615,7 +1617,7 @@
       if(technical) {
         const context=state.signal?.indicators?.entry_confirmation;
         document.getElementById('validationScore').textContent=context?.passed ? 'Regras atendidas' : 'Aguardando confirmação';
-        document.getElementById('validationDetail').textContent=`${state.config.strategy_id==='forex_triple_atr' ? 'EXPERIMENTAL / DEMO • ' : ''}${forexStrategyLabel(state.config.strategy_id)} • ${context?.context_timeframe || 'M5'}: ${context?.trend || 'aguardando dados'} • gatilho: ${context?.trigger || 'nenhum'}. Score de regras; rentabilidade ainda não demonstrada. RF não utilizado.`;
+        document.getElementById('validationDetail').textContent=`${state.config.strategy_id==='forex_triple_atr' ? 'EXPERIMENTAL / DEMO • ' : ''}${forexStrategyLabel(state.config.strategy_id)} • ${context?.context_timeframe || 'M5'}: ${context?.trend || 'aguardando dados'} • gatilho: ${context?.trigger || 'nenhum'}${context?.phase ? ' • etapa: '+forexPhaseLabel(context.phase) : ''}. Score de regras; rentabilidade ainda não demonstrada. RF não utilizado.`;
       }
       document.getElementById('riskBudget').textContent = `${state.risk.max_risk_pct}% por entrada`;
       document.getElementById('riskDetail').textContent = `Orçamento da próxima ordem ${formatMoney(state.risk.next_amount,state.currency)} • perda restante ${formatMoney(state.risk.remaining_loss_budget,state.currency)}`;
@@ -1692,9 +1694,10 @@
       } catch (error) {output.textContent=error.message;}
     }
     function downloadPairReport() {if(lastPairReport) downloadJSON(lastPairReport,'relatorio-pares.json');}
-    function isTechnicalForexStrategy(id) {return ['forex_trend_continuation','forex_pullback_retest','forex_triple_atr'].includes(id);}
+    function isTechnicalForexStrategy(id) {return ['forex_trend_continuation','forex_pullback_retest','forex_triple_atr','forex_structure_retest'].includes(id);}
+    function forexPhaseLabel(phase) {return {NO_PATTERN:'Aguardando pivô 1-2-3',WAIT_BREAKOUT:'Aguardando rompimento',WAIT_RETEST:'Aguardando reteste',WAIT_CONFIRMATION:'Aguardando retomada',INVALIDATED:'Estrutura invalidada',EXPIRED:'Setup expirado',CONSUMED:'Confirmação em vela anterior',CONFIRMED:'Retomada confirmada'}[phase] || phase;}
     function forexExitLabel(mode) {return {FIXED:'SL/TP original',BREAK_EVEN:'Proteção no preço de entrada + custos',ATR_TRAILING:'Trailing ATR',BREAK_EVEN_ATR:'Proteção + trailing ATR'}[mode] || mode;}
-    function forexStrategyLabel(id) {return {forex_trend_continuation:'Continuidade M1/M5',forex_pullback_retest:'Retomada após correção M1/M5',forex_triple_atr:'Triplo ATR',ml_random_forest:'Random Forest'}[id] || id;}
+    function forexStrategyLabel(id) {return {forex_trend_continuation:'Continuidade M1/M5',forex_pullback_retest:'Retomada após correção M1/M5',forex_triple_atr:'Triplo ATR',forex_structure_retest:'Pivô estrutural M1/M5',ml_random_forest:'Random Forest'}[id] || id;}
     function setForexDataset(data) {
       if (!Array.isArray(data.markets) || !data.markets.length) throw new Error('Base JSON precisa conter markets, specification e candles por símbolo. Baixe uma base do MT5 como referência.');
       forexDataset=data;

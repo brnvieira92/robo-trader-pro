@@ -17,6 +17,7 @@ from backend.fibonacci import fibonacci_context
 from backend.forex_quality import entry_confirmation, POLICY_VERSION
 from backend.forex_trend import continuation_signal
 from backend.forex_triple_atr import triple_atr_signal
+from backend.forex_structure import structure_retest_signal
 from backend.forex_research_candidates import research_signal, CANDIDATES
 from backend.config import strategy_requires_ml, FOREX_TECHNICAL_STRATEGIES
 
@@ -403,7 +404,8 @@ class StrategyEngine:
             if market_type!='MT5_FOREX' or timeframe!='M1':
                 reason='Continuidade Forex exige MT5 Forex e timeframe M1.'
             else:
-                trend_signal=(research_signal(df,params,atr,strategy_id) if strategy_id in CANDIDATES else
+                trend_signal=(structure_retest_signal(df,params,atr) if strategy_id=='forex_structure_retest' else
+                              research_signal(df,params,atr,strategy_id) if strategy_id in CANDIDATES else
                               triple_atr_signal(df,params,atr) if strategy_id=='forex_triple_atr' else
                               continuation_signal(df,params,atr,pullback_only=strategy_id=='forex_pullback_retest'))
                 action,confidence,reason=trend_signal['action'],trend_signal['score'],trend_signal['reason']
@@ -411,6 +413,9 @@ class StrategyEngine:
                 indicators_snapshot['entry_confirmation']=trend_signal['confirmation']
                 indicators_snapshot['entry_policy_version']=trend_signal['confirmation']['version']
                 indicators_snapshot['score_kind']='technical_rules_not_win_probability'
+                if strategy_id=='forex_structure_retest':
+                    indicators_snapshot['regime']='ESTRUTURA / '+trend_signal['confirmation']['trend']
+                    indicators_snapshot['regime_basis']='PIVOT_RETEST_M1_M5_CONTEXT'
                 if strategy_id=='forex_triple_atr':
                     indicators_snapshot['regime']='TENDÊNCIA ATR' if trend_signal['confirmation']['trend'] in ('UP','DOWN') else 'MISTO ATR'
                     indicators_snapshot['regime_basis']='TRIPLE_ATR_M1_CONSENSUS'

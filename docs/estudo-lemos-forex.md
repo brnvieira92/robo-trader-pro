@@ -2,6 +2,8 @@
 
 Data: 24/10/2026. Código examinado: commit `891b54b`, branch `work`.
 
+Nota posterior: após este estudo, o usuário solicitou execução operacional. A implementação posterior está descrita em [Pivô estrutural MT5](pivo-estrutural-mt5.md). As descrições abaixo são o retrato do código no momento do estudo, não uma afirmação de que nenhuma implementação posterior ocorreu.
+
 Identificação do arquivo estudado — SHA-256: `2dbbb48a723180d4c36efa7b95c5ffc7e7f20faaeb6cf54fd30881a8effb009c`.
 
 Fonte: PDF enviado pelo usuário, *Análise Técnica dos Mercados Financeiros*, Flávio Alexandre Caldas de Almeida Lemos, 3ª edição. O arquivo contém **997 páginas**; as referências abaixo usam a numeração do leitor de PDF, não a paginação de uma edição impressa. Não foram consultados serviços pagos nem resultados externos para atribuir rentabilidade a uma técnica.

@@ -2,9 +2,9 @@
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-STRATEGIES = Literal['bollinger_rsi_reversal', 'ema_rsi_crossover', 'price_action_breakout', 'multi_confluence', 'ml_random_forest', 'forex_trend_continuation', 'forex_pullback_retest','forex_triple_atr','forex_range_reentry','forex_squeeze_breakout']
+STRATEGIES = Literal['bollinger_rsi_reversal', 'ema_rsi_crossover', 'price_action_breakout', 'multi_confluence', 'ml_random_forest', 'forex_trend_continuation', 'forex_pullback_retest','forex_triple_atr','forex_range_reentry','forex_squeeze_breakout','forex_structure_retest']
 
-FOREX_TECHNICAL_STRATEGIES=('forex_trend_continuation','forex_pullback_retest','forex_triple_atr','forex_range_reentry','forex_squeeze_breakout')
+FOREX_TECHNICAL_STRATEGIES=('forex_trend_continuation','forex_pullback_retest','forex_triple_atr','forex_range_reentry','forex_squeeze_breakout','forex_structure_retest')
 RESEARCH_ONLY_STRATEGIES=('forex_pullback_retest','forex_range_reentry','forex_squeeze_breakout')
 DEMO_ONLY_STRATEGIES=('forex_triple_atr',)
 
@@ -98,6 +98,8 @@ class TradingConfig(BaseModel):
     def native_execution_market(self):
         if self.strategy_id in FOREX_TECHNICAL_STRATEGIES and (self.market_type!='MT5_FOREX' or self.timeframe!='M1' or self.min_confidence<78):
             raise ValueError('Estratégias técnicas Forex exigem MT5 Forex, M1 e score técnico mínimo de 78.')
+        if self.strategy_id=='forex_structure_retest' and not (self.strategy_params.use_structure_stops and self.strategy_params.use_structure_targets):
+            raise ValueError('Pivô estrutural exige stops e alvos por estrutura habilitados.')
         if len({p.pair for p in self.forex_pairs}) != len(self.forex_pairs) or len({p.symbol for p in self.forex_pairs}) != len(self.forex_pairs):
             raise ValueError('Pares e símbolos exatos devem ser únicos.')
         if self.forex_multi_enabled:

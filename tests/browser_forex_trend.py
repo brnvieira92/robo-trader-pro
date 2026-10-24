@@ -34,6 +34,12 @@ with sync_playwright() as p:
             select_strategy(page,strategy)
         page.wait_for_function("document.querySelector('#validationLabel').textContent.includes('TÉCNICA')")
         if strategy=='forex_triple_atr':assert 'Triplo ATR' in page.locator('#validationDetail').text_content()
+        if strategy=='forex_structure_retest':
+            page.wait_for_function("latestState?.signal?.indicators?.entry_confirmation?.version==='forex-structure-retest-v1' && latestState.forex_radar.rows.every(r=>r.entry_confirmation?.version==='forex-structure-retest-v1')")
+            assert 'Pivô estrutural' in page.locator('#validationDetail').text_content()
+            assert 'etapa:' in page.locator('#validationDetail').text_content()
+            phases=page.evaluate('latestState.forex_radar.rows.map(r=>forexPhaseLabel(r.entry_confirmation.phase))')
+            assert all(phase in page.locator('#forexRadarRows').text_content() for phase in phases)
         assert 'RF não utilizado' in page.locator('#validationDetail').text_content()
         assert page.locator('#scoreUnit').text_content()=='/100'
         assert page.locator('#barSentBuyers').is_hidden()
