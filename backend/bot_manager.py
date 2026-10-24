@@ -240,18 +240,19 @@ class BotManager:
             digest([key,code,fault['first_seen'],context['symbol']]), context=context)
         return fault
 
-    def _recover(self, key):
+    def _recover(self, key, context=None):
+        context=context or self.config
         old=self.recovery.clear(key)
         if old:
             preflight = key == 'preflight' or key.startswith('pair-preflight:')
             outcome = 'Rejeição anterior encerrada após revalidação.' if preflight else f'Componente {key} voltou a responder.'
             self.add_log('INFO',f"Recuperação: {key}. {outcome} Limites permanecem ativos.")
-            self._diagnostic_event('RECOVERY',old['code'],dict(component=key,previous_fault=old))
-            notification_key=('recovery',key,old['code'],self.config['symbol'])
+            self._diagnostic_event('RECOVERY',old['code'],dict(component=key,previous_fault=old),context=context)
+            notification_key=('recovery',key,old['code'],context['symbol'])
             if time.time()-self.recovery.alerted.get(notification_key,0)>=300:
                 self.recovery.alerted[notification_key]=time.time()
                 self._notify('recovery:'+uuid.uuid4().hex,
-                    f"RECUPERAÇÃO {self.config['symbol']} [{old['code']}]\n{outcome} Automação {'solicitada' if self.is_running else 'pausada pelo usuário'}; todos os filtros serão reavaliados.")
+                    f"RECUPERAÇÃO {context['symbol']} [{old['code']}]\n{outcome} Automação {'solicitada' if self.is_running else 'pausada pelo usuário'}; todos os filtros serão reavaliados.")
 
     def _runtime_block(self):
         if not self.audit.healthy:
@@ -275,10 +276,14 @@ class BotManager:
                 prefix = 'pair:'+view.config['symbol']+':'
                 active.update({prefix+key: fault for key, fault in local_active.items()})
                 pending.update({prefix+key: fault for key, fault in local_pending.items()})
+        notifications=self.notifier.public_status()
+        persisted=notifications.get('pending',0)
         return dict(automation_requested=self.is_running,
                     state='PAUSED' if not self.is_running else ('RECOVERING' if block or active else 'MONITORING'),
                     blocked_reason=block,faults=active,pending_revalidation=pending,audit=self.audit.status(),
-                    pending_trade_saves=len(self._pending_trade_saves),pending_notifications=len(self._pending_notifications))
+                    pending_trade_saves=len(self._pending_trade_saves),pending_notification_saves=len(self._pending_notifications),
+                    pending_notifications=None if persisted is None else persisted+len(self._pending_notifications),
+                    notification_outbox=notifications.get('queue',{}))
 
     def _save_trade(self, trade):
         try:
@@ -1012,6 +1017,8 @@ class BotManager:
         for trade in list(self.trade_history):
             if trade.get('mode')!='LIVE_MT5' or trade['status'] not in ACTIVE_LIVE:
                 continue
+            trade_context={**self.config,'symbol':trade['symbol'],'timeframe':trade.get('timeframe',self.config['timeframe']),
+                'execution_mode':trade['mode'],'mt5_account_login':trade.get('account_login'),'mt5_account_server':trade.get('account_server')}
             old_status=trade['status']
             self._mt5_busy=True
             try:
@@ -1025,13 +1032,13 @@ class BotManager:
                     observe_exit_quote(trade,update.get('exit_price'),trade['last_reconciled_at'],'MT5_CONFIRMED_EXIT')
                 trade.pop('sync_error',None)
                 if trade['status']=='OPEN' and not trade.get('protected',False):
-                    self._fault('position:'+trade['id'],'UNPROTECTED_POSITION',trade['sync_note'])
+                    self._fault('position:'+trade['id'],'UNPROTECTED_POSITION',trade['sync_note'],context=trade_context)
                 else:
-                    self._recover('position:'+trade['id'])
-                self._recover('sync:'+trade['id'])
+                    self._recover('position:'+trade['id'],context=trade_context)
+                self._recover('sync:'+trade['id'],context=trade_context)
             except Exception as exc:
                 note=str(exc) if isinstance(exc,MT5ExecutionError) else 'Falha ao consultar o terminal MT5; novas entradas bloqueadas até reconciliação.'
-                self._fault('sync:'+trade['id'],'RECONCILIATION_UNAVAILABLE',note)
+                self._fault('sync:'+trade['id'],'RECONCILIATION_UNAVAILABLE',note,context=trade_context)
                 if trade.get('sync_error')!=note:
                     self.add_log('ERROR',note)
                     self._notify(trade['id']+':sync:'+hashlib.sha256(note.encode()).hexdigest()[:12],'ALERTA MT5: '+note+' Posição não foi fechada pelo robô; monitoramento será retomado quando a conexão correta voltar.')
@@ -1040,14 +1047,14 @@ class BotManager:
                 self._mt5_busy=False
             self._save_trade(trade)
             if trade['status']!=old_status:
-                self._diagnostic_event('RECONCILIATION',trade['status'],dict(attempt_id=trade.get('client_tag'),trade_id=trade['id'],analysis_id=trade.get('analysis_id'),reason=trade.get('sync_note'),position_id=trade.get('position_id'),settled_at=trade.get('settled_at'),closure_confirmed_at=trade.get('closure_confirmed_at'),deal_time_offset_seconds=trade.get('deal_time_offset_seconds')),bar_time=trade.get('bar_time'))
+                self._diagnostic_event('RECONCILIATION',trade['status'],dict(attempt_id=trade.get('client_tag'),trade_id=trade['id'],analysis_id=trade.get('analysis_id'),reason=trade.get('sync_note'),position_id=trade.get('position_id'),settled_at=trade.get('settled_at'),closure_confirmed_at=trade.get('closure_confirmed_at'),deal_time_offset_seconds=trade.get('deal_time_offset_seconds')),bar_time=trade.get('bar_time'),context=trade_context)
                 if trade['status'] in ('WIN','LOSS','DRAW'):
                     self._last_trade_timestamp=datetime.now().timestamp()
                     closed = datetime.fromtimestamp(trade['settled_at'], timezone.utc).isoformat(timespec='seconds')
                     confirmed = datetime.fromtimestamp(trade['closure_confirmed_at'], timezone.utc).isoformat(timespec='seconds')
                     self._notify(trade['id']+':closed',f"MT5 {trade['status']} {trade['symbol']}\nPosição {trade.get('position_id')} | PnL confirmado {trade['pnl']:.2f} {trade['currency']}\nFechamento UTC: {closed}\nConfirmação pelo robô UTC: {confirmed}\n{trade['sync_note']}")
                 elif trade['status']=='REJECTED':
-                    self._fault('preflight','BROKER_REJECTED',trade.get('sync_note','Ordem rejeitada pelo histórico.'))
+                    self._fault('preflight','BROKER_REJECTED',trade.get('sync_note','Ordem rejeitada pelo histórico.'),context=trade_context)
                     self._notify(trade['id']+':rejected',f"MT5 {trade['symbol']}: {trade['sync_note']}")
                 elif trade['status']=='OPEN':
                     self._notify(trade['id']+':filled',f"MT5: preenchimento confirmado {trade['symbol']} {trade['action']}\nPosição {trade['position_id']} | Volume {trade['filled_volume']} | Preço médio {trade['entry_price']}\n{trade['sync_note']}")

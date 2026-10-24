@@ -32,8 +32,11 @@ from backend.backtest import BacktestRequest, run_backtest
 from backend.forex_backtest import ForexBacktestRequest, run_forex_backtest
 from backend.forex_history import capture_forex_history
 from backend.pair_report import pair_report
+from backend.runtime_info import RuntimeIdentity
 
 load_dotenv(Path(__file__).resolve().parent.parent / '.env', override=False)
+runtime_identity=RuntimeIdentity()
+context_repair_at_start=dict(repaired=0,skipped=0,error=None)
 bot = BotManager()
 research_lock = asyncio.Lock()
 forex_jobs = {}
@@ -43,6 +46,11 @@ forex_tasks = set()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     bot.journal.acquire_runtime_lock()
+    try:
+        context_repair_at_start.update(error=None,**(await asyncio.to_thread(bot.journal.repair_reconciliation_context)))
+    except Exception:
+        context_repair_at_start['error']='Reparo de rótulos históricos indisponível; operações financeiras preservadas.'
+        bot.add_log('ALERT',context_repair_at_start['error'])
     bot.notifier.start()
     loop_task = asyncio.create_task(bot.run_loop())
     try:
@@ -181,6 +189,20 @@ async def trade_history_export():
     return JSONResponse(dict(exported_at=datetime.now(timezone.utc).isoformat(),
                              mode=bot.config['execution_mode'], trades=persisted_trade_history()),
                         headers={'Content-Disposition':'attachment; filename="historico-operacoes.json"'})
+
+
+@app.get('/api/runtime')
+async def runtime_status():
+    return await asyncio.to_thread(runtime_identity.status)
+
+
+@app.get('/api/diagnostics/storage')
+async def diagnostic_storage():
+    try:
+        result=await asyncio.to_thread(bot.journal.storage_status)
+        return {**result,'reconciliation_context_repair':context_repair_at_start}
+    except sqlite3.Error:
+        raise HTTPException(503,detail='Não foi possível consultar o armazenamento de diagnósticos.') from None
 
 
 @app.get("/api/diagnostics/events")

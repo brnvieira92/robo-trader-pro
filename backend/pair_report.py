@@ -1,5 +1,6 @@
 """Read-only comparisons of persisted decisions; counts never drive trading."""
 from collections import Counter
+from backend.diagnostic_codec import decode_payload
 from backend.diagnostics import LABELS
 
 
@@ -10,7 +11,7 @@ def pair_report(journal, start, end, mode, login=None, server=None):
         rows=db.execute('SELECT symbol,timeframe,bar_time,kind,code,last_seen,payload FROM diagnostic_events WHERE last_seen>=? AND last_seen<=? AND kind IN (\'ANALYSIS\',\'RADAR\',\'DECISION\',\'EXECUTION\',\'ERROR\') ORDER BY last_seen,id',(start,end))
         import json
         for symbol,tf,bar,kind,code,stamp,raw in rows:
-            p=json.loads(raw)
+            p=decode_payload(raw)
             cfg=p.get('config',{})
             if p.get('mode',cfg.get('execution_mode'))!=mode: continue
             if login is not None and (p.get('account_login',cfg.get('mt5_account_login'))!=login or p.get('account_server',cfg.get('mt5_account_server'))!=server): continue
@@ -35,7 +36,7 @@ def pair_report(journal, start, end, mode, login=None, server=None):
             gates={g['code']:g['status'] for g in p.get('checks',[]) if not g.get('informational')}
             validated+=int(gates.get('ML_VALIDATED')=='PASS')
             score_pass+=int(gates.get('MIN_CONFIDENCE')=='PASS')
-            required=('SIGNAL_DIRECTION','MIN_CONFIDENCE','VOLATILITY') if p.get('entry_policy_version') in ('forex-trend-v1','forex-pullback-v1','forex-triple-atr-v1') else ('ML_VALIDATED','SIGNAL_DIRECTION','MIN_CONFIDENCE','VOLATILITY')
+            required=('SIGNAL_DIRECTION','MIN_CONFIDENCE','VOLATILITY') if p.get('entry_policy_version') in ('forex-trend-v1','forex-pullback-v1','forex-triple-atr-v1','forex-structure-retest-v1','forex-range-reentry-v1','forex-squeeze-breakout-v1') else ('ML_VALIDATED','SIGNAL_DIRECTION','MIN_CONFIDENCE','VOLATILITY')
             qualified+=int(all(gates.get(k)=='PASS' for k in required))
             candidates+=int(bool(gates) and all(g!='FAIL' for g in gates.values()) and gates.get('AUTOMATION_REQUESTED')=='PASS'
                 and p.get('latest_code') in ('CANDIDATE','CANDIDATO') and not p.get('blocked_reason',p.get('first_block')))

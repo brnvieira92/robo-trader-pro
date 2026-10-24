@@ -15,6 +15,15 @@ with sync_playwright() as p:
         page.goto(base,wait_until='networkidle')
         page.wait_for_function("document.querySelector('#lastUpdated').textContent.includes('Atualizado')")
         assert 'Pausado pelo usuário' in page.locator('#operationalStatus').inner_text()
+        page.evaluate("""() => {
+          const state=structuredClone(latestState);
+          state.telegram={configured:true,connected:false,last_error_code:'TLS_CERTIFICATE_VERIFY_FAILED',
+            last_error:'Certificado não validado.',pending:1,queue:{attempts_at_least_five:1}};
+          renderAudit(state);
+        }""")
+        telegram=page.locator('#telegramStatus').text_content()
+        assert 'TLS_CERTIFICATE_VERIFY_FAILED' in telegram and '1 pendentes' in telegram
+        assert 'novas tentativas continuam' in telegram
         # Render incident phases using a copy; never start or configure the bot.
         page.evaluate("""() => {
           const state=structuredClone(latestState);

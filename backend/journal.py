@@ -4,6 +4,7 @@ import os
 import sqlite3
 from pathlib import Path
 from datetime import datetime, timezone
+from backend.diagnostic_codec import encode_payload, decode_payload
 
 class PaperJournal:
     def __init__(self, path=None):
@@ -106,7 +107,7 @@ class PaperJournal:
     def record_diagnostic(self, event):
         with self.connection() as db:
             db.execute('INSERT INTO diagnostic_events (event_key,kind,symbol,timeframe,bar_time,code,first_seen,last_seen,payload) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(event_key) DO UPDATE SET last_seen=excluded.last_seen,observations=diagnostic_events.observations+1,payload=excluded.payload',
-                (event['event_key'],event['kind'],event['symbol'],event['timeframe'],event.get('bar_time'),event['code'],event['observed_at'],event['observed_at'],json.dumps(event['payload'],allow_nan=False)))
+                (event['event_key'],event['kind'],event['symbol'],event['timeframe'],event.get('bar_time'),event['code'],event['observed_at'],event['observed_at'],encode_payload(event['payload'])))
 
     def diagnostics(self, symbol=None, kind=None, limit=100, before=None):
         filters=[];args=[]
@@ -117,7 +118,7 @@ class PaperJournal:
         with self.connection() as db:
             db.row_factory=sqlite3.Row
             rows=db.execute('SELECT * FROM diagnostic_events'+where+' ORDER BY id DESC LIMIT ?',(*args,limit)).fetchall()
-            return [{**dict(row),'payload':json.loads(row['payload'])} for row in rows]
+            return [{**dict(row),'payload':decode_payload(row['payload'])} for row in rows]
 
     def diagnostic_summary(self):
         with self.connection() as db:
@@ -127,3 +128,46 @@ class PaperJournal:
     def diagnostic_count(self):
         with self.connection() as db:
             return db.execute('SELECT COUNT(*) FROM diagnostic_events').fetchone()[0]
+
+    def repair_reconciliation_context(self):
+        """Repair provable legacy labels only; retain original label in payload.
+
+        Event identity/times/counts and all trade rows remain unchanged. Unknown
+        or conflicting correlations are skipped, never guessed from the pair.
+        """
+        repaired=skipped=0
+        with self.connection() as db:
+            rows=db.execute("SELECT id,symbol,timeframe,payload FROM diagnostic_events WHERE kind='RECONCILIATION'").fetchall()
+            for event_id,symbol,timeframe,raw in rows:
+                try:
+                    payload=decode_payload(raw)
+                    if not isinstance(payload,dict):skipped+=1;continue
+                    trade_id=payload.get('trade_id')
+                    row=db.execute('SELECT payload FROM trades WHERE id=?',(trade_id,)).fetchone()
+                    trade=json.loads(row[0]) if row else None
+                    if payload.get('mode','LIVE_MT5')!='LIVE_MT5' or not trade or trade.get('mode')!='LIVE_MT5' or not trade.get('symbol') or not trade.get('timeframe'):
+                        skipped+=1;continue
+                    if payload.get('position_id') and payload['position_id']!=trade.get('position_id'):
+                        skipped+=1;continue
+                    if any(payload.get(k) is not None and payload[k]!=trade.get(k) for k in ('account_login','account_server')):
+                        skipped+=1;continue
+                    if (symbol,timeframe)==(trade['symbol'],trade['timeframe']):continue
+                    payload['context_repair']=dict(version=1,original_symbol=symbol,original_timeframe=timeframe,trade_id=trade_id)
+                    db.execute('UPDATE diagnostic_events SET symbol=?,timeframe=?,payload=? WHERE id=?',
+                        (trade['symbol'],trade['timeframe'],encode_payload(payload),event_id))
+                    repaired+=1
+                except (ValueError,TypeError,KeyError):skipped+=1
+        return dict(repaired=repaired,skipped=skipped)
+
+    def storage_status(self):
+        """Cheap metadata only; no full payload scan or VACUUM during trading."""
+        def file_size(path):
+            try:return path.stat().st_size
+            except FileNotFoundError:return 0
+        with self.connection() as db:
+            page_size=db.execute('PRAGMA page_size').fetchone()[0]
+            pages=db.execute('PRAGMA page_count').fetchone()[0]
+            free=db.execute('PRAGMA freelist_count').fetchone()[0]
+        return dict(database_bytes=file_size(self.path),wal_bytes=file_size(Path(str(self.path)+'-wal')),
+            allocated_bytes=page_size*pages,reusable_bytes=page_size*free,new_diagnostic_codec='zlib-json-v1',
+            historical_compaction_automatic=False,financial_history_preserved=True)

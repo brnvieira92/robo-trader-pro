@@ -73,3 +73,71 @@ def test_disabled_telegram_never_requires_credentials(tmp_path,monkeypatch):
 def test_public_status_never_returns_token(notifier):
     bot,_=notifier
     assert 'token' not in repr(bot.public_status()).lower()
+
+
+def test_previously_exhausted_message_is_retried_and_sent_once(notifier):
+    bot,_=notifier;calls=[]
+    bot.enqueue('legacy-five','Mensagem antiga')
+    with bot.journal.connection() as db:db.execute('UPDATE telegram_outbox SET attempts=5,next_try=0')
+    assert bot.public_status()['pending']==1
+    bot.api.call=lambda *a:calls.append(a)
+    asyncio.run(bot._deliver());asyncio.run(bot._deliver())
+    assert len(calls)==1 and bot.public_status()['pending']==0
+    assert 'momento original' in calls[0][1]['text']
+
+
+def test_transient_delivery_keeps_retrying_beyond_five_with_bounded_backoff(notifier):
+    import time
+    bot,_=notifier;bot.enqueue('retry','Mensagem')
+    bot.api.call=lambda *a:(_ for _ in ()).throw(TelegramError('Rede indisponível','NETWORK_ERROR'))
+    for attempt in range(8):
+        with bot.journal.connection() as db:db.execute('UPDATE telegram_outbox SET next_try=0')
+        asyncio.run(bot._deliver())
+    with bot.journal.connection() as db:
+        attempts,next_try,sent=db.execute('SELECT attempts,next_try,sent FROM telegram_outbox').fetchone()
+    assert attempts==8 and not sent and 0<next_try-time.time()<=300
+    bot._success('poll')
+    assert not bot.public_status()['connected'] and bot.public_status()['last_error_code']=='NETWORK_ERROR'
+    bot.api.call=lambda *a:{}
+    with bot.journal.connection() as db:db.execute('UPDATE telegram_outbox SET next_try=0')
+    asyncio.run(bot._deliver())
+    assert bot.public_status()['connected'] and bot.public_status()['last_error'] is None
+
+
+@pytest.mark.parametrize('error,code',[
+    (__import__('ssl').SSLCertVerificationError(1,'secret certificate URL'),'TLS_CERTIFICATE_VERIFY_FAILED'),
+    (__import__('socket').gaierror(-2,'secret DNS URL'),'DNS_RESOLUTION'),
+    (TimeoutError('secret timeout URL'),'NETWORK_TIMEOUT')])
+def test_network_error_categories_are_precise_without_exception_content(monkeypatch,error,code):
+    def fail(*a,**k):raise urllib.error.URLError(error)
+    monkeypatch.setattr('urllib.request.urlopen',fail)
+    with pytest.raises(TelegramError) as result:TelegramAPI('secret-bot-token').call('getMe')
+    assert result.value.code==code and 'secret' not in str(result.value)
+
+
+def test_tls_verification_stays_required(monkeypatch):
+    import ssl
+    import io
+    seen=[]
+    def success(*a,**k):
+        seen.append(k['context'])
+        return io.BytesIO(b'{"ok":true,"result":{}}')
+    monkeypatch.setattr('urllib.request.urlopen',success)
+    TelegramAPI('secret').call('getMe')
+    assert seen[0].verify_mode==ssl.CERT_REQUIRED and seen[0].check_hostname
+
+
+def test_rate_limit_uses_server_retry_delay_without_exposing_response(monkeypatch,notifier):
+    import io
+    def fail(*a,**k):raise urllib.error.HTTPError('https://secret-token-url',429,'secret',{},io.BytesIO(b'{"parameters":{"retry_after":600},"description":"secret"}'))
+    monkeypatch.setattr('urllib.request.urlopen',fail)
+    with pytest.raises(TelegramError) as result:TelegramAPI('secret').call('getMe')
+    assert result.value.code=='RATE_LIMIT' and result.value.retry_after==600
+    assert 'secret' not in str(result.value)
+
+
+def test_unknown_queue_count_is_not_reported_as_zero(notifier,monkeypatch):
+    import sqlite3
+    bot,_=notifier
+    monkeypatch.setattr(bot.journal,'connection',lambda:(_ for _ in ()).throw(sqlite3.OperationalError('locked')))
+    assert bot.public_status()['pending'] is None and bot.public_status()['queue']['error']
