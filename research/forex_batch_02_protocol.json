@@ -1,0 +1,69 @@
+{
+  "protocol_id": "forex-batch-02-v1",
+  "registered_at_utc": "2026-10-24T13:35:47.121959+00:00",
+  "dataset_sha256": "213adfe7b47e64a0eb861d23d0ac7e7072971175887cf1b5fcf3714bbc047382",
+  "development_dates": [
+    "2026-10-15",
+    "2026-10-16"
+  ],
+  "confirmation_dates": [
+    "2026-10-19"
+  ],
+  "previously_used_dates": [
+    "2026-10-20",
+    "2026-10-21",
+    "2026-10-22",
+    "2026-10-23"
+  ],
+  "timezone": "America/Sao_Paulo",
+  "window_start": "03:00",
+  "window_last_bar": "17:56",
+  "initial_balance_each_case": 10000,
+  "slippage_points_per_fill": [
+    2,
+    5
+  ],
+  "commission_per_lot_side": 0,
+  "swap_per_lot_day": 0,
+  "candidates": {
+    "forex_range_reentry": {
+      "family": "Mean reversion after closed-bar Bollinger re-entry",
+      "bb_period": 20,
+      "bb_std": 2,
+      "efficiency_lookback": 20,
+      "max_efficiency": 0.35,
+      "entry": "Previous close outside band; current close back inside, directional body, close in favorable 35%, RSI on matching half",
+      "stop": "Last three closed candles plus shared ATR floor/buffer",
+      "target": "Current Bollinger mean minus shared target buffer; mandatory cap",
+      "score": "80 mandatory, +10 prior RSI extreme, +10 close strength"
+    },
+    "forex_squeeze_breakout": {
+      "family": "Volatility compression breakout",
+      "bb_period": 20,
+      "bb_std": 2,
+      "prior_bandwidth_history": 60,
+      "prior_bandwidth_quantile": 0.35,
+      "breakout_lookback": 10,
+      "breakout_margin_atr": 0.05,
+      "min_history": 100,
+      "entry": "Prior bandwidth at/below past quantile; current close beyond previous 10-bar extreme; directional body and favorable 30% close",
+      "stop": "Last three closed candles plus shared ATR floor/buffer",
+      "target": "Shared ATR/2R, capped by confirmed opposing pivot",
+      "score": "80 mandatory, +10 above-mean tick activity, +10 close in favorable 15%"
+    }
+  },
+  "shared_guards": "Score >=78; net RR >=1.5; max stop4ATR; max2 confirmed positions; original global budget/cooldown/daily/streak/account/spec checks; no martingale; fixed exits; known friction priced before lot sizing",
+  "screening_pass": "Every development date/cost case: realized PnL>0 AND equity change>0 AND at least one closed trade; at least20 closed trades across development at EACH cost profile",
+  "selection_rule": "Among screening passes only: highest worst-case equity change; then highest mean equity change; then lowest worst drawdown; then strategy id",
+  "confirmation_rule": "Evaluate only one frozen selected candidate, once, on 19/10 at both cost profiles; do not open confirmation if none passes screening. Positive each case, >=10 closed each profile; otherwise reject/insufficient. Do not retune after confirmation.",
+  "operational_promotion": "No automatic operational change. A screening/confirmation pass on this short dataset is not proof; require further independent data and meaningful forward demo evidence.",
+  "no_optimization": true,
+  "no_force_closing_at_sample_end": true,
+  "no_parameter_changes_after_development_results": true,
+  "limitations": [
+    "OHLC and spread approximation; current monetary specifications frozen.",
+    "Two-day development and one reserved day are a screening procedure, not adequate financial validation.",
+    "Previously used dates are not an independent holdout.",
+    "Failed/insufficient cases must remain in report."
+  ]
+}
