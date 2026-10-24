@@ -17,6 +17,7 @@ from backend.fibonacci import fibonacci_context
 from backend.forex_quality import entry_confirmation, POLICY_VERSION
 from backend.forex_trend import continuation_signal
 from backend.forex_triple_atr import triple_atr_signal
+from backend.forex_research_candidates import research_signal, CANDIDATES
 from backend.config import strategy_requires_ml, FOREX_TECHNICAL_STRATEGIES
 
 
@@ -402,7 +403,8 @@ class StrategyEngine:
             if market_type!='MT5_FOREX' or timeframe!='M1':
                 reason='Continuidade Forex exige MT5 Forex e timeframe M1.'
             else:
-                trend_signal=(triple_atr_signal(df,params,atr) if strategy_id=='forex_triple_atr' else
+                trend_signal=(research_signal(df,params,atr,strategy_id) if strategy_id in CANDIDATES else
+                              triple_atr_signal(df,params,atr) if strategy_id=='forex_triple_atr' else
                               continuation_signal(df,params,atr,pullback_only=strategy_id=='forex_pullback_retest'))
                 action,confidence,reason=trend_signal['action'],trend_signal['score'],trend_signal['reason']
                 indicators_snapshot.update(trend_signal['structure'])

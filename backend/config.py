@@ -2,10 +2,10 @@
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-STRATEGIES = Literal['bollinger_rsi_reversal', 'ema_rsi_crossover', 'price_action_breakout', 'multi_confluence', 'ml_random_forest', 'forex_trend_continuation', 'forex_pullback_retest','forex_triple_atr']
+STRATEGIES = Literal['bollinger_rsi_reversal', 'ema_rsi_crossover', 'price_action_breakout', 'multi_confluence', 'ml_random_forest', 'forex_trend_continuation', 'forex_pullback_retest','forex_triple_atr','forex_range_reentry','forex_squeeze_breakout']
 
-FOREX_TECHNICAL_STRATEGIES=('forex_trend_continuation','forex_pullback_retest','forex_triple_atr')
-RESEARCH_ONLY_STRATEGIES=('forex_pullback_retest',)
+FOREX_TECHNICAL_STRATEGIES=('forex_trend_continuation','forex_pullback_retest','forex_triple_atr','forex_range_reentry','forex_squeeze_breakout')
+RESEARCH_ONLY_STRATEGIES=('forex_pullback_retest','forex_range_reentry','forex_squeeze_breakout')
 DEMO_ONLY_STRATEGIES=('forex_triple_atr',)
 
 def strategy_requires_ml(strategy_id,params):

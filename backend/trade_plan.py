@@ -62,6 +62,12 @@ def price_plan(config, signal, entry, min_stop_distance=0., min_target_distance=
         space=(obstacle+structure_shift-entry)*direction-atr*p['target_buffer_atr']
         target_distance=min(target_distance,space)
         target_basis='antes da resistência observada' if buy else 'antes do suporte observado'
+    if config.get('strategy_id')=='forex_range_reentry':
+        mean=ind.get('mandatory_mean_target')
+        if mean is None or not math.isfinite(float(mean)) or (float(mean)-reference_bid)*direction<=0:
+            raise TradePlanError('Média de retorno indisponível ou já ultrapassada.')
+        target_distance=min(target_distance,(float(mean)+structure_shift-entry)*direction-atr*p['target_buffer_atr'])
+        target_basis='antes da média Bollinger; alvo obrigatório de retorno à média'
     if target_distance<float(min_target_distance) or target_distance<=0:
         raise TradePlanError('Sem espaço até o próximo obstáculo para um take profit válido.')
     sl=entry-direction*stop_distance;tp=entry+direction*target_distance
