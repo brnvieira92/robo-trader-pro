@@ -20,6 +20,7 @@ from backend.strategies import StrategyEngine
 from backend.portfolio_risk import position_limit
 from backend.forex_statistics import financial_breakdown
 from backend.forex_exit_research import ResearchExitManagement, update_research_stop
+from backend.profit_exit import closed_observation, decision as profit_exit_decision
 
 
 class HistoricalBar(Candle):
@@ -259,6 +260,25 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
                 observe(position,[mark])
                 result=exit_on_bar(position,current,markets[position['symbol']].specification,request.adverse_slippage_points)
                 if result and result[1].startswith('GAP_'):settle(position,*result,ts)
+        if config['profit_exit']['enabled']:
+            # Evaluate only last CLOSED bars and executable next-open Bid/Ask.
+            # Current candle high/low/close cannot influence this decision.
+            for position in list(positions):
+                symbol=position['symbol'];bar=bars[symbol][ts];spec=markets[symbol].specification
+                policy=config['profit_exit'];buy=position['action']=='BUY'
+                frame=frames[symbol];history=frame[frame['time']<pd.Timestamp(ts,unit='s')].tail(60)
+                try:observation=closed_observation(history,ts,position['entry_time'],config['timeframe'])
+                except ValueError:continue
+                slip=max(request.adverse_slippage_points,min(policy['slippage_points'],config['mt5_deviation_points']))
+                quote=bar.open+(0 if buy else bar.spread_points*spec.point)
+                fill=quote+(-1 if buy else 1)*slip*spec.point
+                adapter=HistoricalExecutor(config,markets[symbol],bar,balance,request.account_currency)
+                gross=adapter.profit(0 if buy else 1,symbol,position['volume'],position['entry_price'],fill)
+                net=gross-position['entry_commission']-request.commission_per_lot_side*position['volume']-position['swap_cost']-policy['cost_buffer']
+                profit_peak=max(position.get('peak_exit_net',0),net);position['peak_exit_net']=profit_peak
+                gate=profit_exit_decision(position['action'],observation,net,profit_peak,bar.open,policy)
+                position['last_profit_exit_decision']=gate
+                if gate['eligible']:settle(position,fill,'EARLY_PROFIT_WEAKNESS',False,ts)
         candidates=[];available_atr={}
         for symbol in order:
             bar=bars[symbol].get(ts)
@@ -395,7 +415,7 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
     for trade in [*trades,*positions]:
         for key in ('mode','protected','position_id','account_login','account_server'):
             trade.pop(key,None)
-    return dict(kind='FOREX_SL_TP',version=4,cost_sizing_version='known-friction-before-lot-v1',
+    return dict(kind='FOREX_SL_TP',version=5,cost_sizing_version='known-friction-before-lot-v1',
         request_hash=digest(request.model_dump()),currency=request.account_currency,
         config=config,assumptions=request.model_dump(exclude={'markets'}),
         datasets=[dict(symbol=m.symbol,source=m.source,first_time=m.candles[0].time,last_time=m.candles[-1].time,
@@ -413,6 +433,7 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
         trades=trades,analyses=analyses,equity_curve=curve,per_pair=per_pair,
         evidence='EXPLORATORY_ONLY' if trades else 'NO_CLOSED_TRADES' if positions else 'NO_TRADES',
         limitations=[
+            'Saída antecipada por fraqueza, se habilitada: usa somente velas fechadas e a abertura seguinte, com custos/slippage. Não equivale ao monitoramento de ticks do MT5.',
             'Custos/slippage assumidos entram no cálculo do lote antes da reserva; isso pode alterar resultados de versões anteriores que rejeitavam o lote sem recalculá-lo.',
             'Saídas dinâmicas são pesquisa: ativação pelo fechamento, ajuste válido na próxima vela, reserva original mantida. Não alteram stops do MT5.',
             'OHLC Bid; Ask aproximado pelo spread de cada vela. Sem sequência intravela nem ticks históricos.',

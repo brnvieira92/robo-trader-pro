@@ -1,6 +1,7 @@
 """Validated research configuration; explicit paper or native MT5 execution."""
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from backend.profit_exit import ProfitExitConfig
 
 STRATEGIES = Literal['bollinger_rsi_reversal', 'ema_rsi_crossover', 'price_action_breakout', 'multi_confluence', 'ml_random_forest', 'forex_trend_continuation', 'forex_pullback_retest','forex_triple_atr','forex_range_reentry','forex_squeeze_breakout','forex_structure_retest']
 
@@ -92,10 +93,13 @@ class TradingConfig(BaseModel):
     martingale_factor: float = Field(2, ge=1, le=3)
     max_martingale_steps: Literal[0] = 0
     cooldown_seconds: int = Field(60, ge=5, le=3600)
+    profit_exit: ProfitExitConfig = Field(default_factory=ProfitExitConfig)
     strategy_params: StrategyParams = Field(default_factory=StrategyParams)
 
     @model_validator(mode='after')
     def native_execution_market(self):
+        if self.profit_exit.enabled and (self.market_type!='MT5_FOREX' or self.execution_mode!='LIVE_MT5'):
+            raise ValueError('Saída antecipada com lucro exige MT5 Forex com execução LIVE_MT5.')
         if self.strategy_id in FOREX_TECHNICAL_STRATEGIES and (self.market_type!='MT5_FOREX' or self.timeframe!='M1' or self.min_confidence<78):
             raise ValueError('Estratégias técnicas Forex exigem MT5 Forex, M1 e score técnico mínimo de 78.')
         if self.strategy_id=='forex_structure_retest' and not (self.strategy_params.use_structure_stops and self.strategy_params.use_structure_targets):

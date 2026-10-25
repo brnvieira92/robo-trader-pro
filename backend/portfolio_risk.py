@@ -29,12 +29,14 @@ def global_budget(config, equity, remaining_loss):
 def context(trades):
     keys = ('id','mode','status','account_login','account_server','symbol','action',
             'protected','position_id','amount','risk_budget','reserved_risk','sync_error','deal_time_warning',
-            'stop_loss','take_profit','filled_volume','entry_price','cost_buffer')
+            'stop_loss','take_profit','filled_volume','entry_price','cost_buffer','close_intent')
     return [{k:t[k] for k in keys if k in t} for t in active_trades(trades)]
 
 
 def local_block(config, trades, symbol=None):
     active = active_trades(trades)
+    if any((t.get('close_intent') or {}).get('status') in ('SUBMITTING','PENDING','PARTIAL_REVIEW') for t in active):
+        return 'Fechamento em confirmação; novas entradas aguardam reconciliação global.'
     if any(t['status'] != 'OPEN' or not t.get('protected') or not t.get('position_id') or t.get('sync_error') or t.get('deal_time_warning') for t in active):
         return 'Exposição incerta ou proteção não confirmada; aguarde reconciliação global.'
     if len(active) >= position_limit(config):

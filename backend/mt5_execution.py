@@ -435,7 +435,7 @@ class MT5Executor:
                 profit=float(getattr(d,'profit',0)),commission=float(getattr(d,'commission',0)),
                 swap=float(getattr(d,'swap',0)),fee=float(getattr(d,'fee',0)),
                 price=float(getattr(d,'price',0)),volume=float(getattr(d,'volume',0)),
-                entry=getattr(d,'entry',None),reason=getattr(d,'reason',None)))
+                entry=getattr(d,'entry',None),reason=getattr(d,'reason',None),order=int(getattr(d,'order',0)),comment=str(getattr(d,'comment',''))))
         entry_volume=sum(float(d.volume) for d in incoming)
         exit_volume=sum(float(d.volume) for d in outgoing)
         entry_price=sum(float(d.price)*float(d.volume) for d in incoming)/entry_volume
@@ -477,7 +477,7 @@ class MT5Executor:
             except (TypeError,ValueError):
                 quote=None
             return dict(**common,status='OPEN',floating_pnl=sum(float(getattr(p,'profit',0))+float(getattr(p,'swap',0)) for p in open_positions),
-                        observed_exit_quote=quote,
+                        observed_exit_quote=quote,remaining_volume=sum(float(getattr(p,'volume',entry_volume-exit_volume)) for p in open_positions),closed_volume=exit_volume,
                         protected=protected,sync_note='Posição confirmada no terminal.' if protected else 'Proteções não confirmadas: novas entradas bloqueadas; monitoramento ativo. Verifique SL/TP no terminal.')
         if exit_volume+1e-8 < entry_volume:
             return dict(**common,status='PENDING',sync_note='Posição ausente, mas fechamento ainda incompleto no histórico. Aguardando sincronização.')

@@ -542,6 +542,12 @@
               <div class="risk-controls">
                 <label>Moeda da meta diária<select id="cfgGoalCurrency" onchange="saveConfig()"><option value="ACCOUNT">Moeda da conta (PAPER: BRL)</option><option value="BRL">Reais — BRL</option></select></label>
                 <label>Símbolo de câmbio da corretora (opcional)<input id="cfgGoalFx" type="text" placeholder="USDBRL ou USDBRL.s" onchange="saveConfig()"></label>
+                <label><input id="cfgProfitExitEnabled" type="checkbox" onchange="saveConfig()"> Saída antecipada com lucro por enfraquecimento (MT5 Forex)</label>
+                <label>Lucro líquido mínimo estimado para saída (moeda da conta)<input id="cfgProfitExitMin" type="number" min="0.1" step="0.1" value="1" onchange="saveConfig()"></label>
+                <label>Reserva extra de custos da saída (moeda da conta)<input id="cfgProfitExitBuffer" type="number" min="0" step="0.05" value="0.25" onchange="saveConfig()"></label>
+                <label>Devolução do lucro observado para confirmar fraqueza (%)<input id="cfgProfitExitGiveback" type="number" min="10" max="80" value="35" onchange="saveConfig()"></label>
+                <label>Reserva de slippage da saída (pontos MT5)<input id="cfgProfitExitSlip" type="number" min="0" max="1000" value="2" onchange="saveConfig()"></label>
+                <p>Fecha a posição inteira somente com lucro líquido estimado e enfraquecimento confirmado em vela fechada. Enquanto o movimento estiver favorável, mantém o TP. SL/TP continuam protegendo no MT5. Exige conta hedge confirmada. Aplica-se apenas a novas operações; não garante lucro e o resultado depende do preenchimento real.</p>
                 <label>Teto de lucro projetado por entrada (moeda da conta)<input id="cfgProfitCap" type="number" min="0.01" step="0.01" value="15" onchange="saveConfig()"></label>
                 <label>Custo por operação PAPER (BRL virtual)<input id="cfgPaperCost" type="number" min="0" step="0.01" value="0" onchange="saveConfig()"></label>
               </div>
@@ -908,7 +914,7 @@
       try {
         const data = await (await apiFetch('/api/trades/history?limit=200')).json();
         output.textContent = `${data.items.length} de ${data.total} registros. Exporte o JSON para obter todos.\n` + data.items.map(t =>
-          `${t.day} ${t.time || ''} • ${t.symbol} • ${t.status} • ${t.pnl ?? 0} ${t.currency || ''} • ${t.entry_policy_version || 'legado'}${t.sync_error ? '\n'+t.sync_error : ''}`
+          `${t.day} ${t.time || ''} • ${t.symbol} • ${t.status} • ${t.pnl ?? 0} ${t.currency || ''} • ${t.entry_policy_version || 'legado'}${t.close_intent ? '\nFechamento antecipado: '+t.close_intent.status : ''}${t.sync_error ? '\n'+t.sync_error : ''}`
         ).join('\n');
       } catch (error) { output.textContent = error.message; }
     }
@@ -1095,6 +1101,11 @@
         goal_currency: document.getElementById('cfgGoalCurrency').value,
         goal_fx_symbol: document.getElementById('cfgGoalFx').value.trim(),
         profit_per_trade_cap: Number(document.getElementById('cfgProfitCap').value),
+        profit_exit: {enabled:document.getElementById('cfgProfitExitEnabled').checked,
+          min_net_profit:Number(document.getElementById('cfgProfitExitMin').value),
+          cost_buffer:Number(document.getElementById('cfgProfitExitBuffer').value),
+          giveback_fraction:Number(document.getElementById('cfgProfitExitGiveback').value)/100,
+          slippage_points:Number(document.getElementById('cfgProfitExitSlip').value)},
         paper_cost_per_trade: Number(document.getElementById('cfgPaperCost').value),
         strategy_params: {
           sl_atr_mult: Number(document.getElementById('cfgSlAtr').value),
@@ -1256,6 +1267,12 @@
           document.getElementById('cfgStopGain').value = state.config.stop_gain ?? 150;
           for (const [id,key] of Object.entries({cfgGoalCurrency:'goal_currency',cfgGoalFx:'goal_fx_symbol',cfgProfitCap:'profit_per_trade_cap',cfgPaperCost:'paper_cost_per_trade',cfgExpiration:'expiration_minutes'})) document.getElementById(id).value = state.config[key];
           for (const [id,key] of Object.entries({cfgSlAtr:'sl_atr_mult',cfgTpAtr:'tp_atr_mult',cfgMinRR:'min_reward_risk',cfgStructureBars:'structure_lookback'})) document.getElementById(id).value = state.config.strategy_params[key];
+          const pe=state.config.profit_exit || {};
+          document.getElementById('cfgProfitExitEnabled').checked=!!pe.enabled;
+          document.getElementById('cfgProfitExitMin').value=pe.min_net_profit ?? 1;
+          document.getElementById('cfgProfitExitBuffer').value=pe.cost_buffer ?? .25;
+          document.getElementById('cfgProfitExitGiveback').value=100*(pe.giveback_fraction ?? .35);
+          document.getElementById('cfgProfitExitSlip').value=pe.slippage_points ?? 2;
           document.getElementById('cfgStructureStops').checked = state.config.strategy_params.use_structure_stops;
           document.getElementById('cfgStructureTargets').checked = state.config.strategy_params.use_structure_targets;
           document.getElementById('cfgStopLoss').value = state.config.stop_loss ?? 250;
@@ -1479,7 +1496,9 @@
             } else if (t.mode === 'PAPER' && t.exit_policy === 'SL_TP') {
               statusMarkup = `<div class="text-right text-xs">ABERTA • SL/TP<br>${escapeHtml(formatMoney(t.floating_pnl || 0,'BRL'))}<br><button type="button" class="underline text-primary" data-close-paper="${escapeHtml(t.id)}">Encerrar PAPER</button></div>`;
             } else if (t.mode === 'LIVE_MT5') {
-              statusMarkup = `<div class="text-right text-xs">${escapeHtml(t.status)}<br>${t.filled_volume != null ? 'Volume '+escapeHtml(t.filled_volume) : 'Aguardando confirmação'}</div>`;
+              const closePhase=t.close_intent?.status;
+              const label=closePhase==='PARTIAL_REVIEW' ? 'FECHAMENTO PARCIAL • REVISAR' : ['SUBMITTING','PENDING'].includes(closePhase) ? 'FECHAMENTO EM CONFIRMAÇÃO' : t.status;
+              statusMarkup = `<div class="text-right text-xs">${escapeHtml(label)}<br>${t.filled_volume != null ? (closePhase==='PARTIAL_REVIEW' ? 'Volume restante ' : 'Volume ')+escapeHtml(t.remaining_volume ?? t.filled_volume) : 'Aguardando confirmação'}</div>`;
             } else {
               const remTxt = t.remaining_sec ? `${t.remaining_sec}s` : 'Ativa';
               statusMarkup = `<div class="text-right flex flex-col items-end"><span class="inline-flex items-center gap-1 font-code-log text-[11px] text-primary font-bold animate-pulse"><span class="material-symbols-outlined text-[13px]">timer</span> ${remTxt}</span><span class="font-code-log text-[9px] text-on-surface-variant">Em Andamento</span></div>`;

@@ -21,6 +21,7 @@ def run():
         from backend.mt5_execution import MT5Executor
         from test_mt5_live import FakeMT5
         sdk = FakeMT5()
+        sdk.info.margin_mode=2
         original = sdk.symbol_info
 
         def info(symbol):

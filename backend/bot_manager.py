@@ -20,6 +20,8 @@ from backend.portfolio_risk import position_limit, active_trades, reserved_risk,
 from backend.telegram_bot import TelegramBot
 from backend.trade_plan import price_plan, goal_limited_budget, TradePlanError
 from backend.trade_diagnostics import observe_exit_quote
+from backend.profit_exit import closed_observation,decision as profit_exit_decision,VERSION as PROFIT_EXIT_VERSION,PENDING_CLOSE,ProfitExitConfig
+from backend import mt5_profit_close
 
 from backend.strategies import StrategyEngine, SignalResult
 from backend.mt5_connector import MT5Connector
@@ -48,6 +50,8 @@ class BotManager:
         self._order_lock = asyncio.Lock()
         self._mt5_busy=False
         self._last_snapshot=None
+        self._profit_exit_cache={}
+        self._profit_exit_retry_at={}
         self._multi = None
         self._last_signal_bar = None
         self._settlement_tasks = set()
@@ -257,6 +261,8 @@ class BotManager:
     def _runtime_block(self):
         if not self.audit.healthy:
             return self.audit.error
+        if any((t.get('close_intent') or {}).get('status') in PENDING_CLOSE for t in active_trades(self.trade_history)):
+            return 'Fechamento em confirmação; novas entradas aguardam histórico MT5.'
         if self._pending_trade_saves or self._intent_uncertain:
             return 'Persistência de operações pendente; novas entradas bloqueadas até recuperação.'
         if any(t.get('mode') == 'LIVE_MT5' and t.get('deal_time_warning') for t in self.trade_history):
@@ -316,6 +322,8 @@ class BotManager:
         merged = {**self.config, **payload}
         if not clock_only and merged.get('strategy_id') in RESEARCH_ONLY_STRATEGIES:
             raise ValueError('Estratégia experimental disponível somente no laboratório Forex. A configuração de execução foi preservada.')
+        if 'profit_exit' in payload:
+            merged['profit_exit']={**self.config['profit_exit'],**payload['profit_exit']}
         if 'strategy_params' in payload:
             merged['strategy_params'] = {**self.config['strategy_params'], **payload['strategy_params']}
         if merged.get('execution_mode')=='LIVE_MT5':
@@ -323,6 +331,10 @@ class BotManager:
                 raise ValueError('Selecione MT5 B3 ou Forex antes de ativar envio ao terminal.')
             account=self.live.account(self.config['mt5_account_login'],self.config['mt5_account_server'],trading=True) if self.config['execution_mode']=='LIVE_MT5' else self.live.account(trading=True)
             self.live.require_strategy_account(merged)
+            if merged.get('profit_exit',{}).get('enabled'):
+                info=self.live.sdk.account_info()
+                if getattr(info,'margin_mode',None)!=getattr(self.live.sdk,'ACCOUNT_MARGIN_MODE_RETAIL_HEDGING',2):
+                    raise ValueError('Saída antecipada exige conta hedge confirmada; configuração anterior preservada.')
             merged['mt5_account_login']=account['login']
             merged['mt5_account_server']=account['server']
         validated = TradingConfig.model_validate(merged).model_dump()
@@ -345,6 +357,7 @@ class BotManager:
             for component in ('analysis','market_data','preflight'):
                 self.recovery.clear(component)
             self._last_snapshot=None
+            self._profit_exit_cache={}
             self.safirion.reset_candles()
             self._last_signal_bar = None
         self._diagnostic_event('CONFIG','CONFIG_UPDATED',dict(config=self.config,config_version=digest(self.config)))
@@ -463,7 +476,8 @@ class BotManager:
         return dict(version='forex-price-exits-v1',mode=self.config['execution_mode'],market=self.config['market_type'],
                     exit_policy='SL_TP' if forex else 'BINARY_EXPIRATION',native_available=self.live.sdk is not None,
                     terminal_permissions=permissions,native_orders_enabled=native and permissions,
-                    reason=reason,terminal_error=permission_error,
+                    reason=reason,terminal_error=permission_error,profit_exit=self.config['profit_exit'],
+                    profit_exit_note='Se habilitada, saída integral por fraqueza apenas em novas posições Forex hedge; confirmação pelo histórico. SL/TP continuam ativos.',
                     clock=self.live.clock_diagnostics(self.config['symbol'],self.config['timeframe']))
 
     def plan_preview(self, signal, entry=None):
@@ -955,7 +969,8 @@ class BotManager:
                    forex_multi=bool(config.get('forex_multi_enabled')),
                    mode='LIVE_MT5',source='MT5_LIVE',status='SUBMITTING',pnl=0.,remaining_sec=0,
                    action=signal['action'],amount=prepared['estimated_risk'],risk_budget=prepared['risk_budget'],
-                   exit_policy='SL_TP',plan=prepared['plan'],
+                   exit_policy='SL_TP',plan=prepared['plan'],profit_exit_policy=copy.deepcopy(config['profit_exit']),
+                   profit_exit_state=dict(version=PROFIT_EXIT_VERSION,peak_estimated_net_profit=0.),
                    entry_diagnostics=prepared['entry_diagnostics'],signal_snapshot=copy.deepcopy(signal),
                    plan_parameters=copy.deepcopy(config['strategy_params']),
                    entry_policy_version=signal.get('indicators',{}).get('entry_policy_version','legacy'),
@@ -1011,6 +1026,70 @@ class BotManager:
         self._notify(trade['id']+':submission',f"MT5 {trade['account_type']} {trade['action']} {trade['symbol']}\nConta {trade['account_login']} / {trade['account_server']}\nVolume solicitado: {trade['requested_volume']} | SL {trade['stop_loss']} | TP {trade['take_profit']}\n{result['message']}")
         return {**result,'mode':'LIVE_MT5','ticket':trade['id']}
 
+    def _profit_observation(self, trade):
+        key=(trade['id'],int(time.time()//60))
+        if key not in self._profit_exit_cache:
+            if self.mt5.simulation_mode or not self.mt5.connected:
+                raise ValueError('MT5 real indisponível para saída antecipada.')
+            history=self.mt5.get_candles(trade['symbol'],trade['timeframe'],count=61)
+            # Exclude the forming candle even if its timestamp is misleading.
+            opened=max([trade['created_at']]+[float(d['time']) for d in trade.get('deals',[]) if d.get('entry')==0])
+            value=closed_observation(history.iloc[:-1],time.time(),opened,trade['timeframe'])
+            self._profit_exit_cache={k:v for k,v in self._profit_exit_cache.items() if k[1]==key[1]}
+            self._profit_exit_cache[key]=value
+        return self._profit_exit_cache[key]
+
+    async def manage_profit_exits(self):
+        # Exit management remains active while new entries are paused, just as
+        # native SL/TP and reconciliation do. Policy is frozen per NEW trade.
+        if self._mt5_busy:return
+        async with self._order_lock:
+            for trade in list(self.trade_history):
+                policy=trade.get('profit_exit_policy') or {}
+                if trade.get('mode')!='LIVE_MT5' or trade.get('market')!='MT5_FOREX' or trade['status']!='OPEN' or not policy.get('enabled'):
+                    continue
+                if (trade.get('close_intent') or {}).get('status') in PENDING_CLOSE:continue
+                if time.time()<self._profit_exit_retry_at.get(trade['id'],0):continue
+                cfg={**self.config,'symbol':trade['symbol'],'timeframe':trade['timeframe'],
+                    'execution_mode':'LIVE_MT5','mt5_account_login':trade['account_login'],'mt5_account_server':trade['account_server']}
+                self._mt5_busy=True
+                try:
+                    policy=ProfitExitConfig.model_validate(policy).model_dump()
+                    if trade.get('profit_exit_state',{}).get('version')!=PROFIT_EXIT_VERSION:
+                        raise ValueError('Versão da política de saída desconhecida; SL/TP mantidos.')
+                    observation=await self._native_call(self._profit_observation,trade)
+                    tag='PXC-'+uuid.uuid4().hex[:20]
+                    quote=await self._native_call(mt5_profit_close.quote,self.live,trade,cfg,policy,tag)
+                    state=trade.setdefault('profit_exit_state',{})
+                    peak=max(float(state.get('peak_estimated_net_profit',0)),quote['estimated_net_profit'])
+                    result=profit_exit_decision(trade['action'],observation,quote['estimated_net_profit'],peak,quote['bid'],policy)
+                    state.update(peak_estimated_net_profit=peak,last_decision=result,last_checked_at=time.time())
+                    if not self._save_trade(trade):continue
+                    if not result['eligible'] or (trade.get('close_intent') or {}).get('bar_time')==observation['bar_time']:continue
+                    prepared=await self._native_call(mt5_profit_close.prepare,self.live,trade,cfg,policy,tag)
+                    if not self.audit.healthy:continue
+                    intent=dict(status='SUBMITTING',client_tag=tag,created_at=time.time(),bar_time=observation['bar_time'],
+                        request=prepared['request'],observation=observation,decision=result,estimated_net_profit=prepared['estimated_net_profit'])
+                    trade['close_intent']=intent
+                    if not self._save_trade(trade):
+                        intent.update(status='REJECTED',reason='Intenção não persistida; fechamento não enviado.')
+                        continue # No order before durable intent.
+                    self._diagnostic_event('EXIT','PROFIT_CLOSE_SUBMITTING',dict(trade_id=trade['id'],position_id=trade['position_id'],intent=copy.deepcopy(intent)),context=cfg)
+                    if not self.audit.healthy:
+                        intent.update(status='REJECTED',reason='Auditoria indisponível; fechamento não enviado.')
+                        self._save_trade(trade);continue
+                    reply=await self._native_call(mt5_profit_close.send,self.live,trade,cfg,policy)
+                    intent.update(reply,submitted_at=time.time())
+                    self._save_trade(trade)
+                    self._diagnostic_event('EXIT','PROFIT_CLOSE_'+reply['status'],dict(trade_id=trade['id'],position_id=trade['position_id'],intent=copy.deepcopy(intent)),context=cfg)
+                    self.add_log('MT5',reply['reason'])
+                except Exception as exc:
+                    self._profit_exit_retry_at[trade['id']]=time.time()+5
+                    reason=str(exc) if isinstance(exc,(ValueError,MT5ExecutionError)) else 'Avaliação de saída antecipada indisponível; SL/TP mantidos.'
+                    self._diagnostic_event('EXIT','PROFIT_EXIT_BLOCKED',dict(trade_id=trade['id'],reason=reason),
+                        event_key=digest(['profit-exit',trade['id'],reason,int(time.time()//60)]),context=cfg)
+                finally:self._mt5_busy=False
+
     async def reconcile_live(self):
         if self._mt5_busy:
             return
@@ -1024,6 +1103,22 @@ class BotManager:
             try:
                 update=await self._native_call(self.live.reconcile,trade)
                 trade.update(update)
+                intent=trade.get('close_intent')
+                old_close_phase=intent.get('status') if intent else None
+                if intent and intent.get('status') in PENDING_CLOSE:
+                    matching=[d for d in trade.get('deals',[]) if d.get('entry') in (1,3) and
+                        (d.get('comment')==intent['client_tag'] or (intent.get('order_ticket') and d.get('order')==intent['order_ticket']) or
+                         (intent.get('deal_ticket') and d['ticket']==intent['deal_ticket']))]
+                    if trade['status'] in ('WIN','LOSS','DRAW'):
+                        intent.update(status='CONFIRMED' if matching else 'RESOLVED_BY_HISTORY',confirmed_at=time.time())
+                        if matching:
+                            closed_by_request=sum(float(d.get('volume',0)) for d in matching)
+                            trade['exit_reason']='EARLY_PROFIT_WEAKNESS' if closed_by_request+1e-8>=trade['filled_volume'] else 'EARLY_PROFIT_PARTIAL_THEN_HISTORY'
+                    elif matching and 0<update.get('closed_volume',0)<trade['filled_volume']-1e-8:
+                        intent.update(status='PARTIAL_REVIEW',reason='MT5 fechou parte do volume; saldo restante mantém proteção. Sem reenvio automático.')
+                if intent and intent.get('status')!=old_close_phase:
+                    self._diagnostic_event('EXIT','PROFIT_CLOSE_'+intent['status'],dict(trade_id=trade['id'],close_intent=copy.deepcopy(intent)),context=trade_context)
+                    if intent['status']=='PARTIAL_REVIEW':self.add_log('ALERT',intent['reason'])
                 trade['last_reconciled_at'] = time.time()
                 if trade['status']=='OPEN':
                     observe_exit_quote(trade,update.get('observed_exit_quote'),trade['last_reconciled_at'],'MT5_POSITION_POLL')
@@ -1052,7 +1147,7 @@ class BotManager:
                     self._last_trade_timestamp=datetime.now().timestamp()
                     closed = datetime.fromtimestamp(trade['settled_at'], timezone.utc).isoformat(timespec='seconds')
                     confirmed = datetime.fromtimestamp(trade['closure_confirmed_at'], timezone.utc).isoformat(timespec='seconds')
-                    self._notify(trade['id']+':closed',f"MT5 {trade['status']} {trade['symbol']}\nPosição {trade.get('position_id')} | PnL confirmado {trade['pnl']:.2f} {trade['currency']}\nFechamento UTC: {closed}\nConfirmação pelo robô UTC: {confirmed}\n{trade['sync_note']}")
+                    self._notify(trade['id']+':closed',f"MT5 {trade['status']} {trade['symbol']}\nPosição {trade.get('position_id')} | PnL confirmado {trade['pnl']:.2f} {trade['currency']}\nFechamento UTC: {closed}\nConfirmação pelo robô UTC: {confirmed}\n{trade['sync_note']}"+(f"\nMotivo: {trade['exit_reason']}" if trade.get('exit_reason') else ''))
                 elif trade['status']=='REJECTED':
                     self._fault('preflight','BROKER_REJECTED',trade.get('sync_note','Ordem rejeitada pelo histórico.'),context=trade_context)
                     self._notify(trade['id']+':rejected',f"MT5 {trade['symbol']}: {trade['sync_note']}")
@@ -1123,6 +1218,7 @@ class BotManager:
         self._flush_notifications()
         self._flush_trade_saves()
         await self.reconcile_live()
+        await self.manage_profit_exits()
         day = datetime.now(timezone.utc).date().isoformat()
         if day != self._session_day and not self._has_open_trade:
             self._session_day = day

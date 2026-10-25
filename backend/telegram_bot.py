@@ -152,7 +152,7 @@ class TelegramBot:
             reply=self.status_callback()
         elif command in ('/pausar','/pause'):
             self.pause_callback()
-            reply='Robô pausado. Nenhuma nova entrada automática. Posições já abertas continuam com SL/TP e monitoramento no MT5; não foram fechadas por este comando.'
+            reply='Robô pausado. Nenhuma nova entrada automática. Posições já abertas continuam com SL/TP e monitoramento no MT5; não foram fechadas por este comando. O gerenciamento de saídas já autorizado para essas posições continua ativo.'
         elif command in ('/start','/ajuda','/help'):
             reply='ProspeTraderBot\n/status — modo, conta, risco e operações\n/pausar — pausa novas entradas automáticas\nOrdens e reativação são feitas somente no painel local.'
         else:
