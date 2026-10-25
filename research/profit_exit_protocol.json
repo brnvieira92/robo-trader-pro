@@ -1,0 +1,11 @@
+{
+  "version": "profit-weakness-v1",
+  "scope": "Full close of owned confirmed MT5 Forex position; preserve original native SL/TP; freeze policy per new trade; legacy trades unaffected; configurable enabled flag default false for compatibility",
+  "defaults": {"enabled": true,"min_net_profit":1,"giveback_fraction":0.35,"slippage_points":2,"cost_buffer":0.25},
+  "signal": "Last closed candle after last entry fill, directional adverse body, adverse close versus previous close, close in adverse35%; AND close lost EMA9 OR net profit gave back at least35% of sampled peak. Do not close if current Bid recovered past adverse candle high(BUY)/low(SELL). Minimum estimated executable net >=1 account currency.",
+  "costs": "Fresh Bid/Ask, MT5 order_calc_profit, incoming related cashflow and open swap, another side of observed opening commission/fee, extra0.25 buffer, adverse exit slippage up to2 MT5 points bounded by configured deviation. Actual fills/costs may differ; only broker history defines net result.",
+  "durability": "Persist close intent before native send; position ticket mandatory. Unknown response blocks duplicate close/new entries until broker proof. Full close requested; partial broker fill stays open/protected and requires review, no fictional WIN or automatic residual resend. Policy management continues for existing opted-in positions when new entries paused.",
+  "historical_comparison": "Known20-23October2026,03:00-17:56 America/Sao_Paulo,4 uploaded pairs M1,ContinuityM1/M5,synthetic10000 eachday,costslip2/5,commission/swap0 assumptions. Entry and risk rules unchanged; conservative early exit at next open using past closed bars only. Stress fill slippage=max(research assumption,policy). Existing verified matching FIXED baseline may be reused with source documented. No19October holdout opened. No tuning after results.",
+  "no_guaranteed_profit": true,
+  "no_relabeling_open_or_partial_positions_as_win": true
+}
