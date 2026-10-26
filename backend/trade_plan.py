@@ -7,8 +7,12 @@ import math
 from backend.config import FOREX_TECHNICAL_STRATEGIES
 from decimal import Decimal, ROUND_FLOOR, ROUND_CEILING
 
+PRICING_VERSION = 'bid-ask-structure-v3'
+
 class TradePlanError(ValueError):
-    pass
+    def __init__(self, message, diagnostics=None):
+        super().__init__(message)
+        self.diagnostics = diagnostics or {}
 
 def price_plan(config, signal, entry, min_stop_distance=0., min_target_distance=0., tick_size=None, digits=8, spread=0.):
     p=config['strategy_params']
@@ -19,13 +23,27 @@ def price_plan(config, signal, entry, min_stop_distance=0., min_target_distance=
     atr=float(ind.get('atr',0))
     if not math.isfinite(entry) or entry<=0 or not math.isfinite(atr) or atr<=0:
         raise TradePlanError('ATR/preço indisponível: aguarde histórico antes de planejar uma posição.')
-    anchor=float(ind.get('price',signal.get('price',entry)))
-    if not math.isfinite(anchor) or abs(entry-anchor)>p['max_entry_drift_atr']*atr:
-        raise TradePlanError('Preço se afastou do sinal fechado; aguarde outra oportunidade, sem perseguir a entrada.')
     buy=action=='BUY';direction=1 if buy else -1
     spread=float(spread)
     if not math.isfinite(spread) or spread<0:
         raise TradePlanError('Spread inválido para o plano de preços.')
+    # Closed candles are Bid. BUY executes at Ask; SELL executes at Bid.
+    # Compare Bid to Bid so spread is not mislabeled as post-signal movement.
+    # Execution, stops, targets and sizing still use the actual entry price.
+    anchor=float(ind.get('price',signal.get('price',entry)))
+    reference_bid=entry-spread if buy else entry
+    if not math.isfinite(anchor) or anchor<=0 or reference_bid<=0:
+        raise TradePlanError('Preço de referência inválido para medir afastamento.')
+    distance=abs(reference_bid-anchor)
+    limit=p['max_entry_drift_atr']*atr
+    drift=dict(version='bid-drift-v1',reference_quote='BID',anchor_bid=anchor,
+               current_bid=reference_bid,execution_price=entry,
+               execution_quote='ASK' if buy else 'BID',spread_price=spread,
+               distance_price=distance,distance_atr=distance/atr,
+               maximum_distance_price=limit,maximum_distance_atr=p['max_entry_drift_atr'])
+    if distance>limit and not math.isclose(distance,limit,rel_tol=1e-10,abs_tol=1e-12):
+        raise TradePlanError('Preço se afastou do sinal fechado; aguarde outra oportunidade, sem perseguir a entrada.',
+                             diagnostics=dict(entry_drift=drift))
     support=ind.get('support');resistance=ind.get('resistance')
     support=float(support) if support is not None else None
     resistance=float(resistance) if resistance is not None else None
@@ -57,7 +75,6 @@ def price_plan(config, signal, entry, min_stop_distance=0., min_target_distance=
         raise TradePlanError('Estrutura de alvo inválida.')
     # A BUY pays Ask, but its opposing resistance is observed in Bid. A barrier
     # between Bid and Ask is still ahead of the market: it leaves no target room.
-    reference_bid=entry-spread if buy else entry
     if p['use_structure_targets'] and obstacle is not None and (obstacle-reference_bid)*direction>0:
         space=(obstacle+structure_shift-entry)*direction-atr*p['target_buffer_atr']
         target_distance=min(target_distance,space)
@@ -90,7 +107,7 @@ def price_plan(config, signal, entry, min_stop_distance=0., min_target_distance=
         raise TradePlanError(f'Espaço até o alvo insuficiente: retorno/risco {rr:.2f}, mínimo {p["min_reward_risk"]:.2f}.')
     return dict(entry_price=entry,stop_loss=sl,take_profit=tp,risk_distance=risk,reward_distance=reward,
                 reward_risk=round(rr,6),stop_basis=stop_basis,target_basis=target_basis,
-                pricing_version='bid-ask-structure-v2',structure_quote='BID',exit_quote='BID' if buy else 'ASK',
+                pricing_version=PRICING_VERSION,entry_drift=drift,structure_quote='BID',exit_quote='BID' if buy else 'ASK',
                 structure_shift=structure_shift,atr=atr,support_bid=support,resistance_bid=resistance,
                 structural_stop_bid=level,structural_target_bid=obstacle,
                 spread_price=spread,spread_to_stop=spread/risk,spread_to_atr=spread/atr,

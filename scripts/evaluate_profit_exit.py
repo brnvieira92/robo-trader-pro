@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 from backend.config import TradingConfig
 from backend.strategies import StrategyEngine
 from backend.forex_backtest import ForexBacktestRequest,run_forex_backtest
+from backend.trade_plan import PRICING_VERSION
 
 
 def run(source,output):
@@ -38,7 +39,8 @@ def run(source,output):
                         old=json.loads(prior.read_text())
                         from backend.diagnostics import digest
                         hashes=[digest(m.model_dump()) for m in request.markets]
-                        if (TradingConfig.model_validate(old['config']).model_dump()==request.config.model_dump() and
+                        if (old.get('version')==6 and old.get('pricing_version')==PRICING_VERSION and
+                            TradingConfig.model_validate(old['config']).model_dump()==request.config.model_dump() and
                             old['start']==begin and old['end']==end+60 and old['currency']==request.account_currency and
                             old['assumptions'].get('goal_fx_account_per_brl')==request.goal_fx_account_per_brl and old['assumptions']['initial_balance']==10000 and
                             old['assumptions']['adverse_slippage_points']==cost and old['assumptions']['commission_per_lot_side']==0 and

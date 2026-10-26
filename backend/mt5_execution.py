@@ -14,7 +14,9 @@ from backend.config import RESEARCH_ONLY_STRATEGIES, DEMO_ONLY_STRATEGIES
 ACTIVE_LIVE = {'SUBMITTING', 'PENDING', 'OPEN', 'NEEDS_REVIEW'}
 
 class MT5ExecutionError(ValueError):
-    pass
+    def __init__(self, message, diagnostics=None):
+        super().__init__(message)
+        self.diagnostics = diagnostics or {}
 
 class MT5Executor:
     historical_research=False
@@ -262,7 +264,7 @@ class MT5Executor:
             plan=price_plan(config,signal,price,minimum+(tick.ask-tick.bid),minimum,size,int(info.digits),
                             spread=float(tick.ask-tick.bid))
         except TradePlanError as exc:
-            raise MT5ExecutionError(str(exc)) from exc
+            raise MT5ExecutionError(str(exc), diagnostics=exc.diagnostics) from exc
         sl=plan['stop_loss'];tp=plan['take_profit']
         if config['market_type']=='MT5_FOREX' and plan['spread_to_stop']>config.get('mt5_max_spread_stop_ratio',.30):
             raise MT5ExecutionError(f"Spread/stop {plan['spread_to_stop']:.1%} acima do limite {config.get('mt5_max_spread_stop_ratio',.30):.1%}; entrada descartada.")
@@ -323,6 +325,7 @@ class MT5Executor:
                     portfolio=portfolio, portfolio_context=context(portfolio_trades or []),
                     volume=volume, price=price, stop_loss=sl, take_profit=tp, spread_points=round(spread,2),
                     entry_diagnostics=dict(bid=float(tick.bid),ask=float(tick.ask),
+                        entry_drift=plan['entry_drift'],
                         quote_utc=self._quote_timestamp(tick),point=point,tick_size=size,digits=int(info.digits),
                         spread_points=float(spread),spread_price=float(tick.ask-tick.bid),
                         trade_stops_level=int(info.trade_stops_level),volume_min=minimum_volume,volume_step=step,

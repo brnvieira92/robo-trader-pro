@@ -954,7 +954,7 @@ class BotManager:
             code=self._preflight_code(note)
             global_failure = not isinstance(exc, MT5ExecutionError) or code in ('ACCOUNT_PERMISSIONS','ACCOUNT_BINDING','EXTERNAL_EXPOSURE') or 'exposição global' in note
             self._fault('preflight' if global_failure else preflight_key,code,note,context=config)
-            self._diagnostic_event('DECISION',code,dict(attempt_id=client_tag,analysis_id=signal.get('analysis_id') or snapshot.get('analysis_id'),action=signal['action'],input_signal=signal,reason=note,checks=[dict(code='NATIVE_PREFLIGHT',status='FAIL',reason=note)]),bar_time=signal.get('bar_time'), context=config)
+            self._diagnostic_event('DECISION',code,dict(attempt_id=client_tag,analysis_id=signal.get('analysis_id') or snapshot.get('analysis_id'),action=signal['action'],input_signal=signal,reason=note,entry_diagnostics=getattr(exc,'diagnostics',{}),checks=[dict(code='NATIVE_PREFLIGHT',status='FAIL',reason=note)]),bar_time=signal.get('bar_time'), context=config)
             return dict(success=False,message=note)
         finally:
             self._mt5_busy=False

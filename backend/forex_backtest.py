@@ -21,6 +21,7 @@ from backend.portfolio_risk import position_limit
 from backend.forex_statistics import financial_breakdown
 from backend.forex_exit_research import ResearchExitManagement, update_research_stop
 from backend.profit_exit import closed_observation, decision as profit_exit_decision
+from backend.trade_plan import PRICING_VERSION
 
 
 class HistoricalBar(Candle):
@@ -415,7 +416,7 @@ def run_forex_backtest(request: ForexBacktestRequest, progress=None):
     for trade in [*trades,*positions]:
         for key in ('mode','protected','position_id','account_login','account_server'):
             trade.pop(key,None)
-    return dict(kind='FOREX_SL_TP',version=5,cost_sizing_version='known-friction-before-lot-v1',
+    return dict(kind='FOREX_SL_TP',version=6,pricing_version=PRICING_VERSION,cost_sizing_version='known-friction-before-lot-v1',
         request_hash=digest(request.model_dump()),currency=request.account_currency,
         config=config,assumptions=request.model_dump(exclude={'markets'}),
         datasets=[dict(symbol=m.symbol,source=m.source,first_time=m.candles[0].time,last_time=m.candles[-1].time,
