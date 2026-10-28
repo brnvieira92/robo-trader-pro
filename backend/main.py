@@ -7,16 +7,21 @@ com a guia aberta da Safirion (Binárias, Digital, Blitz e OTC), funcionando mes
 import asyncio
 import re
 import uuid
+import csv
+import io
+import json
+import sqlite3
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from urllib.parse import urlsplit
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, ValidationError
 from typing import Literal
@@ -24,15 +29,28 @@ from contextlib import suppress
 
 from backend.bot_manager import BotManager
 from backend.backtest import BacktestRequest, run_backtest
+from backend.forex_backtest import ForexBacktestRequest, run_forex_backtest
+from backend.forex_history import capture_forex_history
+from backend.pair_report import pair_report
+from backend.runtime_info import RuntimeIdentity
 
 load_dotenv(Path(__file__).resolve().parent.parent / '.env', override=False)
+runtime_identity=RuntimeIdentity()
+context_repair_at_start=dict(repaired=0,skipped=0,error=None)
 bot = BotManager()
 research_lock = asyncio.Lock()
+forex_jobs = {}
+forex_tasks = set()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     bot.journal.acquire_runtime_lock()
+    try:
+        context_repair_at_start.update(error=None,**(await asyncio.to_thread(bot.journal.repair_reconciliation_context)))
+    except Exception:
+        context_repair_at_start['error']='Reparo de rótulos históricos indisponível; operações financeiras preservadas.'
+        bot.add_log('ALERT',context_repair_at_start['error'])
     bot.notifier.start()
     loop_task = asyncio.create_task(bot.run_loop())
     try:
@@ -41,6 +59,8 @@ async def lifespan(app: FastAPI):
         loop_task.cancel()
         with suppress(asyncio.CancelledError):
             await loop_task
+        if forex_tasks:
+            await asyncio.gather(*list(forex_tasks), return_exceptions=True)
         await bot.close()
 
 
@@ -136,17 +156,122 @@ async def get_state():
         raise HTTPException(503, detail="Dados de mercado indisponíveis; nenhuma ordem enviada.") from exc
 
 
+@app.get("/api/forex/radar")
+async def forex_radar():
+    # Read model only: no analysis, SDK calls or trading side effects.
+    if not bot.config.get('forex_multi_enabled'):
+        return dict(enabled=False, rows=[], read_only=True)
+    return bot.get_market_snapshot()['forex_radar']
+
+
+def persisted_trade_history():
+    """All dates, scoped to the selected mode/account; never changes session risk."""
+    mode = bot.config['execution_mode']
+    try:
+        return [t for t in bot.journal.all_trades()
+                if t.get('mode', 'PAPER') == mode and
+                (mode != 'LIVE_MT5' or
+                 (t.get('account_login'), t.get('account_server')) ==
+                 (bot.config['mt5_account_login'], bot.config['mt5_account_server']))]
+    except sqlite3.Error as exc:
+        raise HTTPException(503, detail='Histórico temporariamente indisponível; registros não foram apagados.') from exc
+
+
+@app.get('/api/trades/history')
+async def trade_history(limit: int=Query(200, ge=1, le=500), offset: int=Query(0, ge=0)):
+    trades = persisted_trade_history()
+    return dict(items=trades[offset:offset+limit], total=len(trades), offset=offset,
+                mode=bot.config['execution_mode'], read_only=True)
+
+
+@app.get('/api/trades/history.json')
+async def trade_history_export():
+    return JSONResponse(dict(exported_at=datetime.now(timezone.utc).isoformat(),
+                             mode=bot.config['execution_mode'], trades=persisted_trade_history()),
+                        headers={'Content-Disposition':'attachment; filename="historico-operacoes.json"'})
+
+
+@app.get('/api/runtime')
+async def runtime_status():
+    return await asyncio.to_thread(runtime_identity.status)
+
+
+@app.get('/api/diagnostics/storage')
+async def diagnostic_storage():
+    try:
+        result=await asyncio.to_thread(bot.journal.storage_status)
+        return {**result,'reconciliation_context_repair':context_repair_at_start}
+    except sqlite3.Error:
+        raise HTTPException(503,detail='Não foi possível consultar o armazenamento de diagnósticos.') from None
+
+
+@app.get("/api/diagnostics/events")
+async def diagnostic_events(symbol: Optional[str]=None,kind: Optional[str]=None,
+                            limit: int=Query(100,ge=1,le=500),before: Optional[int]=Query(None,ge=1)):
+    try:
+        items=bot.journal.diagnostics(symbol,kind,limit,before)
+        return dict(items=items,next_before=items[-1]['id'] if len(items)==limit else None,
+                    operational=bot.operational_status())
+    except sqlite3.Error as exc:
+        raise HTTPException(503,detail='Diário temporariamente indisponível; monitoramento e recuperação continuam.') from exc
+
+
+@app.get("/api/diagnostics/summary")
+async def diagnostic_summary():
+    try:
+        return dict(items=bot.journal.diagnostic_summary(),operational=bot.operational_status())
+    except sqlite3.Error as exc:
+        raise HTTPException(503,detail='Resumo de diagnósticos temporariamente indisponível.') from exc
+
+
+@app.get("/api/diagnostics/export.csv")
+async def diagnostic_export(symbol: Optional[str]=None,kind: Optional[str]=None,
+                            limit: int=Query(1000,ge=1,le=5000),before: Optional[int]=Query(None,ge=1)):
+    try:
+        rows=bot.journal.diagnostics(symbol,kind,limit,before)
+    except sqlite3.Error as exc:
+        raise HTTPException(503,detail='Exportação temporariamente indisponível.') from exc
+    content=io.StringIO();writer=csv.writer(content)
+    writer.writerow(['id','symbol','timeframe','bar_time_source','kind','code','first_seen_utc','last_seen_utc','observations','payload_json'])
+    def cell(value):
+        value=str(value or '')
+        return "'"+value if value.startswith(('=','+','-','@')) else value
+    for row in rows:
+        writer.writerow([row['id'],cell(row['symbol']),row['timeframe'],cell(row['bar_time']),row['kind'],row['code'],
+            datetime.fromtimestamp(row['first_seen'],timezone.utc).isoformat(),datetime.fromtimestamp(row['last_seen'],timezone.utc).isoformat(),
+            row['observations'],json.dumps(row['payload'],ensure_ascii=False)])
+    headers={'Content-Disposition':'attachment; filename="diagnosticos.csv"'}
+    if len(rows)==limit:headers['X-Next-Before']=str(rows[-1]['id'])
+    return Response(content='\ufeff'+content.getvalue(),media_type='text/csv; charset=utf-8',headers=headers)
+
+
+@app.get('/api/diagnostics/pairs')
+async def pair_comparison(start: float=Query(0,ge=0), end: Optional[float]=Query(None,ge=0),
+                          mode: Literal['PAPER','LIVE_MT5']='LIVE_MT5'):
+    import time
+    end=time.time() if end is None else end
+    if end<start:raise HTTPException(422,detail='Fim deve ser posterior ao início.')
+    if mode=='LIVE_MT5' and bot.config.get('mt5_account_login') is None:
+        raise HTTPException(409,detail='Vincule a conta MT5 para consultar o relatório LIVE sem misturar contas.')
+    try:
+        return await asyncio.to_thread(pair_report,bot.journal,start,end,mode,
+            bot.config.get('mt5_account_login') if mode=='LIVE_MT5' else None,
+            bot.config.get('mt5_account_server') if mode=='LIVE_MT5' else None)
+    except sqlite3.Error as exc:
+        raise HTTPException(503,detail='Diário temporariamente indisponível.') from exc
+
+
 @app.post("/api/bot/toggle")
 async def toggle_bot():
     if research_lock.locked() or (bot._mt5_busy and not bot.is_running):
         raise HTTPException(409, detail='Aguarde o laboratório encerrar antes de iniciar o robô.')
     if not bot.is_running:
         blocked = bot._risk_block(manual=True)
-        if blocked:
-            raise HTTPException(409, detail=blocked)
+    else:
+        blocked=None
     bot.is_running = not bot.is_running
     if bot.is_running:
-        bot.stats["status_reason"] = f"Robô ATIVO monitorando {bot.config['symbol']} ({bot.config['timeframe']})..."
+        bot.stats["status_reason"] = ("Monitoramento ativo; entradas bloqueadas: "+blocked) if blocked else f"Robô ATIVO monitorando {bot.config['symbol']} ({bot.config['timeframe']})..."
         bot.add_log("START", f"Robô iniciado automaticamente em {bot.config['symbol']} ({bot.config['market_type']}).")
     else:
         bot.stats["status_reason"] = "Robô PAUSADO pelo usuário."
@@ -157,6 +282,8 @@ async def toggle_bot():
 
 @app.post("/api/config")
 async def update_config(payload: Dict[str, Any]):
+    if research_lock.locked():
+        raise HTTPException(409,detail='Aguarde o laboratório concluir antes de alterar a configuração.')
     try:
         updated = bot.update_config(payload)
     except ValidationError as exc:
@@ -224,6 +351,8 @@ async def connect_safirion(req: SafirionConnectRequest):
 
 @app.post("/api/order/manual")
 async def manual_order(req: ManualOrderRequest):
+    if research_lock.locked():
+        raise HTTPException(409,detail='Laboratório em execução; aguarde concluir antes de enviar ordens.')
     snapshot = bot.get_market_snapshot()
     signal = {**snapshot["signal"], "action": req.action}
     res = await bot.execute_trade_from_signal(signal, manual=True)
@@ -286,6 +415,102 @@ async def research_backtest(payload: BacktestRequest):
         raise HTTPException(409, detail='Pause a operação e aguarde o processamento atual antes de executar o laboratório.')
     async with research_lock:
         return await asyncio.to_thread(run_backtest, payload)
+
+
+async def _wait_forex_research_ready():
+    """A paused monitoring cycle may still own the SDK; wait without overlap."""
+    loop=asyncio.get_running_loop();deadline=loop.time()+5
+    while True:
+        if research_lock.locked() or bot.is_running or bot._has_open_trade:
+            raise HTTPException(409,detail='Pause e aguarde posições/laboratório antes de iniciar a pesquisa Forex.')
+        if not bot._mt5_busy:return
+        if loop.time()>=deadline:
+            raise HTTPException(409,detail='MT5 ainda processando. Aguarde concluir antes de iniciar a pesquisa Forex.')
+        await asyncio.sleep(.05)
+
+
+@app.post('/api/research/forex/history')
+async def forex_history(count: int=Query(1000,ge=150,le=10000)):
+    await _wait_forex_research_ready()
+    async with research_lock:
+        bot._mt5_busy=True
+        try:
+            return await bot._native_call(capture_forex_history,bot,count)
+        except (ValueError,RuntimeError,AttributeError,TypeError) as exc:
+            raise HTTPException(409,detail='Falha ao carregar dados reais: '+str(exc)) from exc
+        finally:
+            bot._mt5_busy=False
+
+
+async def _run_forex_job(job_id, payload, owner):
+    job=forex_jobs[job_id]
+    def progress(done,total):job.update(completed_bars=done,total_bars=total)
+    try:
+        result=await asyncio.to_thread(run_forex_backtest,payload,progress)
+        job.update(state='DONE',result=result)
+        try:
+            await asyncio.to_thread(owner.journal.set_setting,'forex_backtest_last',dict(id=job_id,**job))
+        except Exception:
+            job['persistence_warning']='Resultado disponível nesta sessão; falha ao salvar no diário. Exporte o JSON.'
+    except Exception as exc:
+        job.update(state='FAILED',error=str(exc))
+    finally:
+        owner._research_busy=False
+        research_lock.release()
+
+
+@app.post('/api/research/forex/jobs',status_code=202)
+async def start_forex_job(payload: ForexBacktestRequest):
+    await _wait_forex_research_ready()
+    await research_lock.acquire()
+    job_id=uuid.uuid4().hex
+    while len(forex_jobs)>=3:forex_jobs.pop(next(iter(forex_jobs)))
+    forex_jobs[job_id]=dict(state='RUNNING',completed_bars=0,total_bars=payload.evaluated_bars)
+    bot._research_busy=True
+    task=asyncio.create_task(_run_forex_job(job_id,payload,bot));forex_tasks.add(task)
+    task.add_done_callback(forex_tasks.discard)
+    return dict(id=job_id,**forex_jobs[job_id])
+
+
+def _forex_job(job_id):
+    if job_id in forex_jobs:return forex_jobs[job_id]
+    saved=bot.journal.setting('forex_backtest_last',{})
+    if saved.get('id')==job_id:return saved
+    raise HTTPException(404,detail='Avaliação não encontrada nesta sessão ou no último resultado persistido.')
+
+
+@app.get('/api/research/forex/latest')
+async def latest_forex_job():
+    return bot.journal.setting('forex_backtest_last',{})
+
+
+@app.get('/api/research/forex/jobs/{job_id}')
+async def forex_job(job_id: str):
+    return dict(id=job_id,**_forex_job(job_id))
+
+
+@app.get('/api/research/forex/jobs/{job_id}/export')
+async def export_forex_job(job_id: str, kind: Literal['json','trades','analyses']='json'):
+    job=_forex_job(job_id)
+    if job['state']!='DONE':raise HTTPException(409,detail='Aguarde o resultado concluir.')
+    if kind=='json':
+        return Response(json.dumps(job['result'],ensure_ascii=False,allow_nan=False),media_type='application/json',
+            headers={'Content-Disposition':'attachment; filename="backtest-forex.json"'})
+    rows=job['result'][kind];output=io.StringIO()
+    base=['symbol','action','entry_time','exit_time','status','net_pnl'] if kind=='trades' else []
+    fields=list(dict.fromkeys([*base,*(k for row in rows for k in row)]))
+    writer=csv.DictWriter(output,fieldnames=fields);writer.writeheader()
+    for row in rows:
+        clean={}
+        for key,value in row.items():
+            if isinstance(value,(int,float)) and not isinstance(value,bool):
+                clean[key]=value
+            else:
+                value=json.dumps(value,ensure_ascii=False) if isinstance(value,(dict,list)) else '' if value is None else str(value)
+                clean[key]="'"+value if value.startswith(('=','+','-','@')) else value
+        writer.writerow(clean)
+    return Response('\ufeff'+output.getvalue(),media_type='text/csv; charset=utf-8',
+        headers={'Content-Disposition':f'attachment; filename="forex-{kind}.csv"'})
 
 
 @app.get("/")

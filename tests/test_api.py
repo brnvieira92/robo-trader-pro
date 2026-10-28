@@ -33,6 +33,34 @@ def test_api_reports_manual_success_and_conflict(client):
 def test_scoreboard_reset_cannot_erase_risk_history(client):
     assert client.post('/api/stats/reset').status_code==409
 
+
+def test_persistent_history_keeps_old_results_scoped_and_exportable_after_restart(client, monkeypatch):
+    import backend.main as main
+    from backend.config import TradingConfig
+    from datetime import datetime, timezone
+    midnight = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    main.bot.config = TradingConfig(execution_mode='LIVE_MT5', market_type='MT5_FOREX',
+                                   mt5_account_login=123, mt5_account_server='Demo').model_dump()
+    main.bot.journal.save_config(main.bot.config)
+    base = dict(mode='LIVE_MT5', day='2020-01-01', symbol='EURUSD#', currency='USD',
+                account_login=123, account_server='Demo', created_at=midnight-90000,
+                settled_at=midnight-89900)
+    for id, status, pnl in [('gain', 'WIN', 12.5), ('loss', 'LOSS', -9.1)]:
+        main.bot.journal.save(dict(base, id=id, status=status, pnl=pnl))
+    main.bot.journal.save(dict(base, id='other', status='WIN', pnl=999, account_login=999))
+    monkeypatch.setattr(main, 'bot', BotManager())
+    assert main.bot.trade_history == [] and main.bot.stats['daily_pnl'] == 0
+    response = client.get('/api/trades/history?limit=1')
+    assert response.status_code == 200
+    assert response.json()['total'] == 2 and response.json()['items'][0]['id'] == 'loss'
+    assert client.get('/api/trades/history?offset=1').json()['items'][0]['id'] == 'gain'
+    export = client.get('/api/trades/history.json')
+    assert 'attachment' in export.headers['content-disposition']
+    assert {t['id']: t['pnl'] for t in export.json()['trades']} == {'gain':12.5, 'loss':-9.1}
+    assert main.bot.stats['daily_pnl'] == 0 and not main.bot.is_running
+    assert client.post('/api/stats/reset').status_code == 409
+    assert len(main.bot.journal.all_trades()) == 3
+
 def test_bad_backtest_is_rejected(client):
     assert client.post('/api/research/backtest',json={'candles':[]}).status_code==422
 

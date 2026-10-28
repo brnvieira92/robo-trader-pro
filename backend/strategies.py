@@ -13,6 +13,13 @@ import numpy as np
 import pandas as pd
 from backend.ml_engine import ml_engine
 from backend.market_data import validate_candles
+from backend.fibonacci import fibonacci_context
+from backend.forex_quality import entry_confirmation, POLICY_VERSION
+from backend.forex_trend import continuation_signal
+from backend.forex_triple_atr import triple_atr_signal
+from backend.forex_structure import structure_retest_signal
+from backend.forex_research_candidates import research_signal, CANDIDATES
+from backend.config import strategy_requires_ml, FOREX_TECHNICAL_STRATEGIES
 
 
 @dataclass
@@ -29,6 +36,7 @@ class SignalResult:
     expiration_minutes: Optional[int]
     indicators: Dict[str, Any]
     reason: str
+    diagnostic: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -111,6 +119,8 @@ class StrategyEngine:
         timeframe: str,
         strategy_id: str,
         params: Optional[Dict[str, Any]] = None,
+        model_engine=None,
+        model_context=None,
     ) -> SignalResult:
         params = params or {}
         validate_candles(df)
@@ -137,9 +147,17 @@ class StrategyEngine:
         atr = float(curr["atr"]) if float(curr["atr"]) > 0 else price * 0.0015
 
         # Executa o motor de Machine Learning (Random Forest scikit-learn) nas velas enriquecidas
-        ml_pred = ml_engine.predict_next_candle(df, context=f"{market_type}:{symbol}:{timeframe}:{params.get('data_source', 'unknown')}")
+        quality_enabled=market_type=='MT5_FOREX' and strategy_id=='ml_random_forest'
+        if strategy_id in FOREX_TECHNICAL_STRATEGIES:
+            ml_pred=dict(enabled=False,validated=False,prob_up=50.,prob_down=50.,ml_action='NEUTRAL',
+                         ml_confidence=0.,accuracy=0.,samples=0,current_features=[],
+                         reason='Estratégia técnica independente; RF não utilizado.',not_applicable=True)
+        else:
+            ml_pred = (model_engine or ml_engine).predict_next_candle(df, context=f"{model_context or market_type}:{symbol}:{timeframe}:{params.get('data_source', 'unknown')}",
+                validation_mode='walk_forward_v2' if quality_enabled else 'single_split')
 
         indicators_snapshot = {
+            "fibonacci": fibonacci_context(df, atr) if market_type == 'MT5_FOREX' else None,
             "support": float(df['low'].tail(params.get('structure_lookback',20)).min()),
             "resistance": float(df['high'].tail(params.get('structure_lookback',20)).max()),
             "price": round(price, 5),
@@ -382,6 +400,25 @@ class StrategyEngine:
         # -------------------------------------------------------------------------
         # ESTRATÉGIA 5: Inteligência Artificial Pura (Machine Learning Random Forest)
         # -------------------------------------------------------------------------
+        elif strategy_id in FOREX_TECHNICAL_STRATEGIES:
+            if market_type!='MT5_FOREX' or timeframe!='M1':
+                reason='Continuidade Forex exige MT5 Forex e timeframe M1.'
+            else:
+                trend_signal=(structure_retest_signal(df,params,atr) if strategy_id=='forex_structure_retest' else
+                              research_signal(df,params,atr,strategy_id) if strategy_id in CANDIDATES else
+                              triple_atr_signal(df,params,atr) if strategy_id=='forex_triple_atr' else
+                              continuation_signal(df,params,atr,pullback_only=strategy_id=='forex_pullback_retest'))
+                action,confidence,reason=trend_signal['action'],trend_signal['score'],trend_signal['reason']
+                indicators_snapshot.update(trend_signal['structure'])
+                indicators_snapshot['entry_confirmation']=trend_signal['confirmation']
+                indicators_snapshot['entry_policy_version']=trend_signal['confirmation']['version']
+                indicators_snapshot['score_kind']='technical_rules_not_win_probability'
+                if strategy_id=='forex_structure_retest':
+                    indicators_snapshot['regime']='ESTRUTURA / '+trend_signal['confirmation']['trend']
+                    indicators_snapshot['regime_basis']='PIVOT_RETEST_M1_M5_CONTEXT'
+                if strategy_id=='forex_triple_atr':
+                    indicators_snapshot['regime']='TENDÊNCIA ATR' if trend_signal['confirmation']['trend'] in ('UP','DOWN') else 'MISTO ATR'
+                    indicators_snapshot['regime_basis']='TRIPLE_ATR_M1_CONSENSUS'
         elif strategy_id == "ml_random_forest":
             p_up = ml_pred["prob_up"]
             p_down = ml_pred["prob_down"]
@@ -402,22 +439,33 @@ class StrategyEngine:
             else:
                 reason = (
                     f"🧠 IA analisando padrões: Prob. Alta {p_up}% | Prob. Queda {p_down}% "
-                    f"(Aguardando vantagem estatística >= 58%)."
+                    f"(Aguardando validação temporal aprovada e força direcional mínima do modelo; "
+                    f"o score mínimo configurado também será exigido na entrada)."
                 )
 
         # Model estimates never inflate a heuristic technical score.
         # Refuse automated signals without independent chronological evidence.
-        if action in ("BUY", "SELL") and bool(params.get("use_ml_filter", True)):
+        raw_action, raw_confidence = action, confidence
+        directional_estimate = ml_pred['prob_up'] if action=='BUY' else (ml_pred['prob_down'] if action=='SELL' else ml_pred.get('ml_confidence',50.))
+        if action in ("BUY", "SELL") and strategy_requires_ml(strategy_id,params):
             directional = ml_pred["prob_up"] if action == "BUY" else ml_pred["prob_down"]
             if not ml_pred.get("validated") or directional < 60.0:
                 action, confidence = "NEUTRAL", 0.0
-                reason = "Filtro temporal: " + ml_pred["reason"]
+                reason = "Filtro temporal: " + (ml_pred["reason"] if not ml_pred.get('validated') else f'Estimativa direcional {directional:.1f}% abaixo de 60%.')
 
-        indicators_snapshot["score_kind"] = "technical_confluence_not_win_probability"
-        indicators_snapshot["regime"] = ("TENDÊNCIA" if abs(float(curr["ema_fast"])-float(curr["ema_slow"])) / atr > .7 else "LATERAL")
+        indicators_snapshot.setdefault("score_kind", "technical_confluence_not_win_probability")
+        indicators_snapshot.setdefault("regime", "TENDÊNCIA" if abs(float(curr["ema_fast"])-float(curr["ema_slow"])) / atr > .7 else "LATERAL")
         indicators_snapshot["atr_pct"] = round(atr / max(price, 1e-9) * 100, 4)
         if float(curr["high"])-float(curr["low"]) > atr * 3:
             action, confidence, reason = "NEUTRAL", 0.0, "Volatilidade extrema: candle acima de 3 ATR."
+
+        if quality_enabled:
+            confirmation=entry_confirmation(df,timeframe,raw_action,atr)
+            indicators_snapshot['entry_confirmation']=confirmation
+            indicators_snapshot['entry_policy_version']=POLICY_VERSION
+            if action in ('BUY','SELL') and confirmation['passed'] is False:
+                action,confidence='NEUTRAL',0.
+                reason='Filtro Forex: '+' '.join(c['reason'] for c in confirmation['checks'] if not c['passed'])
 
         # Cálculo de Stop Loss, Take Profit (para MT5) ou Expiração (para Safirion OB)
         stop_loss = None
@@ -436,7 +484,11 @@ class StrategyEngine:
                 stop_loss = round(price + (atr * sl_atr_mult), 5)
                 take_profit = round(price - (atr * tp_atr_mult), 5)
 
-        return SignalResult(
+        diagnostic=dict(candidate_action=raw_action,candidate_confidence=round(raw_confidence,1),
+                        directional_estimate=directional_estimate,ml_estimated_direction=('BUY' if ml_pred['prob_up']>ml_pred['prob_down'] else ('SELL' if ml_pred['prob_down']>ml_pred['prob_up'] else 'NEUTRAL')),
+                        extreme_volatility=bool(float(curr['high'])-float(curr['low'])>atr*3),
+                        candle_range=float(curr['high'])-float(curr['low']), atr=atr)
+        result = SignalResult(
             symbol=symbol,
             market_type=market_type,
             timeframe=timeframe,
@@ -450,3 +502,5 @@ class StrategyEngine:
             indicators=indicators_snapshot,
             reason=reason,
         )
+        result.diagnostic=diagnostic
+        return result

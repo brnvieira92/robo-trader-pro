@@ -8,19 +8,106 @@ import time
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_FLOOR
 from backend.trade_plan import price_plan, goal_limited_budget, TradePlanError
+from backend.portfolio_risk import inspect_portfolio, position_limit, context
+from backend.config import RESEARCH_ONLY_STRATEGIES, DEMO_ONLY_STRATEGIES
 
 ACTIVE_LIVE = {'SUBMITTING', 'PENDING', 'OPEN', 'NEEDS_REVIEW'}
 
 class MT5ExecutionError(ValueError):
-    pass
+    def __init__(self, message, diagnostics=None):
+        super().__init__(message)
+        self.diagnostics = diagnostics or {}
 
 class MT5Executor:
+    historical_research=False
+    def require_strategy_account(self, config):
+        if config.get('strategy_id') not in DEMO_ONLY_STRATEGIES or self.historical_research:return
+        info=self.sdk.account_info() if self.sdk is not None else None
+        mode=getattr(info,'trade_mode',None)
+        if mode!=getattr(self.sdk,'ACCOUNT_TRADE_MODE_DEMO',0):
+            raise MT5ExecutionError('Triplo ATR experimental exige conta DEMO confirmada pelo MT5; conta real ou tipo desconhecido não pode enviar ordens nessa estratégia.')
+
     def __init__(self, connector, sdk=None):
         if sdk is None:
             from backend.mt5_connector import mt5
             sdk = mt5
         self.connector = connector
         self.sdk = sdk
+
+    @staticmethod
+    def normalize_trade_times(trade, explicit_offset_minutes=None):
+        """Normalize independently of ticks/bars, preserving raw broker epochs.
+
+        Auto calibration requires an immediate market fill and its exact deal
+        ticket. Never infer a timezone from the time reconciliation happened.
+        """
+        if trade.get('deal_times_version') == 1 or not trade.get('deals'):
+            return {}
+        deals = trade['deals']
+        if explicit_offset_minutes is not None:
+            offset = int(explicit_offset_minutes) * 60
+            basis = 'EXPLICIT'
+        elif trade.get('deal_time_offset_seconds') is not None:
+            offset = trade['deal_time_offset_seconds']
+            basis = trade.get('deal_time_basis', 'SAVED')
+        else:
+            entry = next((d for d in deals if d['ticket'] == trade.get('deal_ticket')), None)
+            if entry is None:
+                raise MT5ExecutionError('Relógio dos negócios não confirmado; configure o ajuste de timestamp dos negócios, independente de tick/velas.')
+            raw = entry.get('time_raw', entry['time'])
+            delta = raw - trade['created_at']
+            offset = round(delta / 900) * 900
+            immediate = trade.get('retcode') in (10009, 10010)
+            # A long/unknown fill delay cannot be mistaken for a timezone.
+            response_delay = trade.get('submission_confirmed_at', trade['created_at']) - trade['created_at']
+            if abs(offset) > 14*3600 or abs(delta-offset) > 60 or (offset and (not immediate or response_delay > 60)):
+                raise MT5ExecutionError('Relógio dos negócios ambíguo; configure explicitamente o ajuste de timestamp dos negócios. Nenhuma ordem será reenviada.')
+            basis = 'IMMEDIATE_FILL_ANCHOR'
+        normalized = [dict(d, time_raw=d.get('time_raw', d['time']), time=d.get('time_raw', d['time'])-offset) for d in deals]
+        result = dict(deals=normalized, deal_time_offset_seconds=offset, deal_time_basis=basis, deal_times_version=1)
+        if trade.get('settled_at') is not None:
+            raw = trade.get('settled_at_raw', trade['settled_at'])
+            result.update(settled_at_raw=raw, settled_at=raw-offset)
+        return result
+
+    def _discovery_deals(self, trade, queries=None):
+        """Identifiers first; bounded clock-independent discovery as fallback."""
+        sdk = self.sdk
+        queries = queries if queries is not None else []
+        def query(method, *args, **kwargs):
+            try:
+                deals = sdk.history_deals_get(*args, **kwargs)
+            except Exception as exc:
+                queries.append(dict(method=method, error=str(exc)))
+                return None
+            if deals is None:
+                # Read immediately: another SDK call can overwrite last_error.
+                try:
+                    error = sdk.last_error()
+                except Exception:
+                    error = 'Código de erro MT5 indisponível'
+                queries.append(dict(method=method, error=error))
+            else:
+                queries.append(dict(method=method, count=len(deals)))
+            return deals
+        if trade.get('position_id'):
+            deals = query('position', position=int(trade['position_id']))
+            if deals:
+                return deals
+        if trade.get('order_ticket'):
+            # MetaTrader's ticket= argument filters DEAL_ORDER (order ticket),
+            # not DEAL_TICKET. Keep both identifiers for ownership validation.
+            deals = query('order_ticket', ticket=int(trade['order_ticket']))
+            if deals:
+                return deals
+        # Some accepted/ambiguous sends do not provide a deal ticket. Search
+        # across possible broker clock offsets, still requiring exact ownership.
+        begin = datetime.fromtimestamp(trade['created_at']-15*3600, timezone.utc)
+        end = datetime.fromtimestamp(time.time()+15*3600, timezone.utc)
+        deals = query('time_window', begin, end)
+        if deals is None:
+            raise MT5ExecutionError(f'Histórico MT5 indisponível; intenção permanece pendente. Consultas: {queries}')
+        return deals
 
     def account(self, expected_login=None, expected_server=None, trading=False):
         sdk = self.sdk
@@ -74,11 +161,15 @@ class MT5Executor:
         age = time.time()-timestamp
         return age if math.isfinite(age) else None
 
+    def _quote_timestamp(self, tick):
+        return self.connector.tick_timestamp(tick)
+
     def clock_diagnostics(self, symbol, timeframe):
         now = time.time()
         result = dict(computer_utc=datetime.fromtimestamp(now,timezone.utc).isoformat(),
                       tick_offset_minutes=self.connector.tick_time_offset_minutes,
-                      bar_offset_minutes=self.connector.bar_time_offset_minutes)
+                      bar_offset_minutes=self.connector.bar_time_offset_minutes,
+                      deal_offset_minutes=getattr(self.connector, 'deal_time_offset_minutes', None))
         if self.sdk is None or not self.connector.connected or self.connector.simulation_mode:
             return result
         tick = self.sdk.symbol_info_tick(symbol)
@@ -118,9 +209,25 @@ class MT5Executor:
             return 1/mid,symbol
         raise MT5ExecutionError('O símbolo de conversão não corresponde à moeda da conta/BRL.')
 
-    def prepare(self, config, signal, remaining_loss_budget, client_tag, remaining_goal_account=None):
+    def prepare(self, config, signal, remaining_loss_budget, client_tag, remaining_goal_account=None, portfolio_trades=None):
+        if config.get('strategy_id') in RESEARCH_ONLY_STRATEGIES and not self.historical_research:
+            raise MT5ExecutionError('Estratégia experimental disponível somente no laboratório Forex; nenhuma ordem preparada.')
         sdk = self.sdk
         account = self.account(config['mt5_account_login'], config['mt5_account_server'], trading=True)
+        self.require_strategy_account(config)
+        portfolio = None
+        if config.get('forex_multi_enabled'):
+            positions, orders = sdk.positions_get(), sdk.orders_get()
+            if positions is None or orders is None:
+                raise MT5ExecutionError('Não foi possível confirmar exposição global da conta.')
+            if position_limit(config) > 1:
+                try:
+                    portfolio = inspect_portfolio(config, portfolio_trades or [], positions, orders, account,
+                        remaining_loss_budget, sdk.order_calc_profit, symbol=config['symbol'])
+                except ValueError as exc:
+                    raise MT5ExecutionError(str(exc)) from exc
+            elif positions or orders:
+                raise MT5ExecutionError('Já há posição ou ordem na conta; exposição global bloqueada.')
         symbol = config['symbol']
         if not sdk.symbol_select(symbol, True):
             raise MT5ExecutionError('Símbolo não disponível. Use o código negociável exato da corretora, incluindo sufixos.')
@@ -154,14 +261,19 @@ class MT5Executor:
         price = float(tick.ask if buy else tick.bid)
         minimum = (max(0, int(info.trade_stops_level))+1)*point
         try:
-            plan=price_plan(config,signal,price,minimum+(tick.ask-tick.bid),minimum,size,int(info.digits))
+            plan=price_plan(config,signal,price,minimum+(tick.ask-tick.bid),minimum,size,int(info.digits),
+                            spread=float(tick.ask-tick.bid))
         except TradePlanError as exc:
-            raise MT5ExecutionError(str(exc)) from exc
+            raise MT5ExecutionError(str(exc), diagnostics=exc.diagnostics) from exc
         sl=plan['stop_loss'];tp=plan['take_profit']
+        if config['market_type']=='MT5_FOREX' and plan['spread_to_stop']>config.get('mt5_max_spread_stop_ratio',.30):
+            raise MT5ExecutionError(f"Spread/stop {plan['spread_to_stop']:.1%} acima do limite {config.get('mt5_max_spread_stop_ratio',.30):.1%}; entrada descartada.")
         order_type=sdk.ORDER_TYPE_BUY if buy else sdk.ORDER_TYPE_SELL
         budget=min(float(remaining_loss_budget), max(0,account['equity'])*config['risk_per_trade_pct']/100)
         if config['bankroll_mode'] != 'PERCENT':
             budget=min(budget,config['entry_amount'])
+        if portfolio is not None:
+            budget=min(budget, portfolio['remaining_risk'], portfolio['per_position_cap'])
         try:
             budget=goal_limited_budget(config,budget,remaining_goal_account,plan['reward_risk'])
         except TradePlanError as exc:
@@ -210,13 +322,45 @@ class MT5Executor:
             code=getattr(checked,'retcode','sem resposta')
             raise MT5ExecutionError(f'Pré-validação MT5 recusou a ordem (código {code}).')
         return dict(request=request, account=account, risk_budget=budget, estimated_risk=abs(float(estimated))+buffer,
+                    portfolio=portfolio, portfolio_context=context(portfolio_trades or []),
                     volume=volume, price=price, stop_loss=sl, take_profit=tp, spread_points=round(spread,2),
+                    entry_diagnostics=dict(bid=float(tick.bid),ask=float(tick.ask),
+                        entry_drift=plan['entry_drift'],
+                        quote_utc=self._quote_timestamp(tick),point=point,tick_size=size,digits=int(info.digits),
+                        spread_points=float(spread),spread_price=float(tick.ask-tick.bid),
+                        trade_stops_level=int(info.trade_stops_level),volume_min=minimum_volume,volume_step=step,
+                        volume_max=float(info.volume_max),margin_required=float(margin),
+                        currency_profit=getattr(info,'currency_profit',None),
+                        contract_size=getattr(info,'trade_contract_size',None),
+                        tick_value_profit=getattr(info,'trade_tick_value_profit',None),
+                        tick_value_loss=getattr(info,'trade_tick_value_loss',None),
+                        cost_buffer=float(buffer),estimated_loss=total_risk,estimated_profit=net_reward),
                     plan={**plan,'estimated_profit':net_reward,'estimated_loss':total_risk,'net_reward_risk':net_reward/total_risk})
 
     def send(self, trade):
         """Called once, only after the SUBMITTING intent has been committed."""
         sdk=self.sdk
-        self.account(trade['account_login'],trade['account_server'],trading=True)
+        account=self.account(trade['account_login'],trade['account_server'],trading=True)
+        try:
+            self.require_strategy_account({'strategy_id':trade.get('strategy')})
+        except MT5ExecutionError as exc:
+            return dict(status='REJECTED',success=False,pending=False,
+                        message='Envio cancelado antes de order_send: '+str(exc))
+        if trade.get('forex_multi'):
+            positions, orders = sdk.positions_get(), sdk.orders_get()
+            if positions is None or orders is None:
+                return dict(status='REJECTED', success=False, pending=False,
+                    message='Envio cancelado antes de order_send: exposição global não confirmada.')
+            if trade.get('max_open_positions', 1) > 1:
+                try:
+                    inspect_portfolio(trade['portfolio_config'], trade['portfolio_context'], positions, orders, account,
+                        trade['remaining_loss_budget'], sdk.order_calc_profit, symbol=trade['symbol'],
+                        proposed_risk=trade['reserved_risk'])
+                except ValueError as exc:
+                    return dict(status='REJECTED', success=False, pending=False, message='Envio cancelado antes de order_send: '+str(exc))
+            elif positions or orders:
+                return dict(status='REJECTED', success=False, pending=False,
+                    message='Envio cancelado antes de order_send: surgiu posição ou ordem na conta.')
         try:
             result=sdk.order_send(trade['request'])
         except Exception:
@@ -240,14 +384,12 @@ class MT5Executor:
         orders=sdk.orders_get()
         if positions is None or orders is None:
             raise MT5ExecutionError('Posições/ordens não puderam ser consultadas; novas entradas bloqueadas.')
-        if trade.get('position_id'):
-            deals=sdk.history_deals_get(position=int(trade['position_id']))
-        else:
-            begin=datetime.fromtimestamp(trade['created_at']-60,timezone.utc)
-            deals=sdk.history_deals_get(begin,datetime.now(timezone.utc))
+        queries=[]
+        deals=self._discovery_deals(trade, queries)
+        trade['history_queries']=queries
         if deals is None:
             raise MT5ExecutionError('Histórico MT5 indisponível; nenhum resultado será estimado.')
-        own=[d for d in deals if int(getattr(d,'magic',0))==trade['magic'] and
+        own=[d for d in deals if getattr(d,'symbol',trade['symbol'])==trade['symbol'] and int(getattr(d,'magic',0))==trade['magic'] and
              (getattr(d,'comment','')==trade['client_tag'] or int(getattr(d,'order',0))==trade.get('order_ticket',-1)
               or int(getattr(d,'ticket',0))==trade.get('deal_ticket',-1)) and
              int(getattr(d,'type',-1)) in (sdk.DEAL_TYPE_BUY,sdk.DEAL_TYPE_SELL)]
@@ -260,8 +402,8 @@ class MT5Executor:
             # A final, unfilled cancelled order can be resolved only by broker history.
             history_method=getattr(sdk,'history_orders_get',None)
             if history_method is not None:
-                begin=datetime.fromtimestamp(trade['created_at']-60,timezone.utc)
-                history=history_method(begin,datetime.now(timezone.utc))
+                begin=datetime.fromtimestamp(trade['created_at']-15*3600,timezone.utc)
+                history=history_method(begin,datetime.fromtimestamp(time.time()+15*3600,timezone.utc))
                 if history is None:
                     raise MT5ExecutionError('Histórico de ordens MT5 indisponível; envio permanece pendente.')
                 matched=[o for o in history if int(getattr(o,'ticket',0))==trade.get('order_ticket',-1) or
@@ -292,7 +434,11 @@ class MT5Executor:
             pnl=sum(float(getattr(d,key,0)) for key in ('profit','commission','swap','fee'))
             if not math.isfinite(pnl):
                 raise MT5ExecutionError('Resultado financeiro não finito no histórico MT5.')
-            serialized.append(dict(ticket=int(d.ticket),time=int(d.time),pnl=pnl))
+            serialized.append(dict(ticket=int(d.ticket),time=int(d.time),time_raw=int(d.time),pnl=pnl,
+                profit=float(getattr(d,'profit',0)),commission=float(getattr(d,'commission',0)),
+                swap=float(getattr(d,'swap',0)),fee=float(getattr(d,'fee',0)),
+                price=float(getattr(d,'price',0)),volume=float(getattr(d,'volume',0)),
+                entry=getattr(d,'entry',None),reason=getattr(d,'reason',None),order=int(getattr(d,'order',0)),comment=str(getattr(d,'comment',''))))
         entry_volume=sum(float(d.volume) for d in incoming)
         exit_volume=sum(float(d.volume) for d in outgoing)
         entry_price=sum(float(d.price)*float(d.volume) for d in incoming)/entry_volume
@@ -301,6 +447,21 @@ class MT5Executor:
                         (getattr(o,'magic',0)==trade['magic'] and getattr(o,'comment','')==trade['client_tag'])]
         common=dict(position_id=position_id,filled_volume=entry_volume,entry_price=entry_price,deals=serialized,
                     realized_pnl=sum(x['pnl'] for x in serialized))
+        direction=1 if trade['action']=='BUY' else -1
+        requested_entry=(trade.get('request') or {}).get('price')
+        common['execution_summary']=dict(
+            requested_entry=requested_entry,filled_entry=entry_price,
+            entry_slippage_price=(entry_price-float(requested_entry))*direction if requested_entry is not None else None,
+            actual_stop_distance=(entry_price-trade['stop_loss'])*direction,
+            actual_target_distance=(trade['take_profit']-entry_price)*direction,
+            costs={key:sum(d[key] for d in serialized) for key in ('commission','swap','fee')})
+        clock_trade = {**trade, **common, 'deal_times_version': 0}
+        if not clock_trade.get('deal_ticket'):
+            # A lost send response may omit tickets; incoming ownership was
+            # independently checked above before using this timestamp anchor.
+            clock_trade['deal_ticket'] = int(min(incoming, key=lambda d: d.time).ticket)
+        clock = self.normalize_trade_times(clock_trade, getattr(self.connector, 'deal_time_offset_minutes', None))
+        common.update(clock)
         if open_positions or pending_orders:
             buy=trade['action']=='BUY'
             protected=bool(open_positions)
@@ -312,12 +473,20 @@ class MT5Executor:
                                            float(getattr(position,'volume',entry_volume)),float(getattr(position,'price_open',entry_price)),sl) if sl>0 else None
                 within_budget=loss is not None and math.isfinite(float(loss)) and max(0,-float(loss))<=trade['risk_budget']+1e-8
                 protected=protected and sl>0 and stop_not_widened and target_direction and within_budget
+            quote=getattr(open_positions[0],'price_current',None) if len(open_positions)==1 else None
+            try:
+                quote=float(quote)
+                if not math.isfinite(quote) or quote<=0:quote=None
+            except (TypeError,ValueError):
+                quote=None
             return dict(**common,status='OPEN',floating_pnl=sum(float(getattr(p,'profit',0))+float(getattr(p,'swap',0)) for p in open_positions),
-                        protected=protected,sync_note='Posição confirmada no terminal.' if protected else 'Proteções não confirmadas: robô pausado; verifique SL/TP no terminal.')
+                        observed_exit_quote=quote,remaining_volume=sum(float(getattr(p,'volume',entry_volume-exit_volume)) for p in open_positions),closed_volume=exit_volume,
+                        protected=protected,sync_note='Posição confirmada no terminal.' if protected else 'Proteções não confirmadas: novas entradas bloqueadas; monitoramento ativo. Verifique SL/TP no terminal.')
         if exit_volume+1e-8 < entry_volume:
             return dict(**common,status='PENDING',sync_note='Posição ausente, mas fechamento ainda incompleto no histórico. Aguardando sincronização.')
         total=common['realized_pnl']
         return dict(**common,status='WIN' if total>0 else ('LOSS' if total<0 else 'DRAW'),pnl=round(total,8),
                     exit_price=sum(float(d.price)*float(d.volume) for d in outgoing)/exit_volume,
-                    settled_at=max(float(d.time) for d in outgoing),floating_pnl=0.,
+                    settled_at=max(float(d.time) for d in outgoing)-clock['deal_time_offset_seconds'],
+                    settled_at_raw=max(float(d.time) for d in outgoing),floating_pnl=0.,
                     sync_note='Fechamento confirmado pelo histórico MT5; inclui profit, commission, swap e fee disponíveis nos negócios.')

@@ -1,0 +1,23 @@
+{
+  "policy_version": "forex-structure-retest-v1",
+  "strategy_id": "forex_structure_retest",
+  "purpose": "User-authorized selectable automatic MT5 strategy, separate from existing strategies; no shadow runner",
+  "basis": "Closed-bar 1-2-3 pivot, polarity retest and confirmed resumption; inspired by Lemos chapters 2, 4, 18, 19, 21, 22 and 23",
+  "pivot_confirmation_bars_each_side": 2,
+  "max_pattern_span_bars": 60,
+  "minimum_first_leg_atr": 1.0,
+  "maximum_wait_breakout_bars": 20,
+  "breakout_margin_atr": 0.05,
+  "retest_zone_atr": 0.20,
+  "maximum_wait_retest_bars": 12,
+  "maximum_wait_confirmation_bars_after_retest": 4,
+  "ordering": "All bars closed. Confirm pivot first, then evaluate lifecycle. Breakout requires crossing from previous close. Retest strictly after breakout; confirmation strictly after first retest. Never infer intrabar order.",
+  "invalidation": "Point 3 breached/touched before entry, any closed low for BUY/high for SELL, or lifecycle expires. Frozen setup ATR defines margins. Confirmed pattern cannot be reused after first directional confirmation even if account/risk/M5 gate rejects it.",
+  "context": "Existing complete M5 EMA9/21 and slope; require UP for BUY, DOWN for SELL. No new ADX/volume/Fibonacci filter.",
+  "confirmation": "Close exceeds preceding high/low plus 0.05 frozen ATR, above/below breakout level; directional body and close in favorable 35%.",
+  "score": "80 mandatory, +10 favorable RSI50-75 BUY/25-50 SELL, +10 close favorable25%; technical score, not calibrated win probability; threshold at least78.",
+  "exits": "Point3 structural stop plus existing ATR floor/buffer; opposing confirmed pivot caps common ATR/2R projection. Require structure stops and targets. Shared max stop, net RR, entry drift, spread, sizing, portfolio, cooldown and account checks unchanged. No native trailing/partial/time exit added.",
+  "activation": "New explicit Setup option; selectable in LIVE_MT5 on linked permitted demo or real account. No automatic migration of saved configuration or auto-start on update.",
+  "simulation": "Fixed unoptimized rules; known 20-23 October uploaded 10k base, 03:00-17:56 America/Sao_Paulo, synthetic10000 each day, adverse slippage2/5points, explicit commission/swap0 assumptions. These dates have been studied and are NOT independent confirmation. No profitability guarantee, no silent retuning after outcomes.",
+  "promotion": "Functional execution availability is distinct from evidence of a profitable edge; report financial failures and insufficient samples. Reserved19October not opened by this study."
+}
